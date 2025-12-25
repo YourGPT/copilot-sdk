@@ -37,6 +37,16 @@ export {
   type AgentLoopOptions,
 } from "./server";
 
+// Knowledge Base (server-side)
+export {
+  searchKnowledgeBase,
+  formatKnowledgeResultsForAI,
+  KNOWLEDGE_BASE_SYSTEM_INSTRUCTION,
+  type YourGPTKBConfig,
+  type KBSearchResult,
+  type KBSearchResponse,
+} from "./server";
+
 // Adapters
 export type {
   LLMAdapter,

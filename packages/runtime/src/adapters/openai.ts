@@ -1,7 +1,7 @@
 import type { LLMConfig, StreamEvent } from "@yourgpt/core";
 import { generateMessageId, generateToolCallId } from "@yourgpt/core";
 import type { LLMAdapter, ChatCompletionRequest } from "./base";
-import { formatMessages, formatTools } from "./base";
+import { formatMessagesForOpenAI, formatTools } from "./base";
 
 /**
  * OpenAI adapter configuration
@@ -47,22 +47,80 @@ export class OpenAIAdapter implements LLMAdapter {
     // Use raw messages if provided (for agent loop with tool calls), otherwise format from Message[]
     let messages: Array<Record<string, unknown>>;
     if (request.rawMessages && request.rawMessages.length > 0) {
+      console.log(
+        "[OpenAI Adapter] Processing",
+        request.rawMessages.length,
+        "raw messages",
+      );
+      // Process raw messages - convert any attachments to OpenAI vision format
+      const processedMessages = request.rawMessages.map((msg, idx) => {
+        // Check if message has attachments (images)
+        const hasAttachments =
+          msg.attachments &&
+          Array.isArray(msg.attachments) &&
+          msg.attachments.length > 0;
+        console.log(
+          `[OpenAI Adapter] Message ${idx}: role=${msg.role}, hasAttachments=${hasAttachments}`,
+        );
+        if (hasAttachments) {
+          console.log(
+            `[OpenAI Adapter] Converting ${(msg.attachments as Array<unknown>).length} attachments to vision format`,
+          );
+          // Convert to OpenAI multimodal content format
+          const content: Array<Record<string, unknown>> = [];
+
+          // Add text content if present
+          if (msg.content) {
+            content.push({ type: "text", text: msg.content });
+          }
+
+          // Add image attachments
+          for (const attachment of msg.attachments as Array<{
+            type: string;
+            data: string;
+            mimeType?: string;
+          }>) {
+            if (attachment.type === "image") {
+              // Convert to OpenAI image_url format
+              let imageUrl = attachment.data;
+              if (!imageUrl.startsWith("data:")) {
+                imageUrl = `data:${attachment.mimeType || "image/png"};base64,${attachment.data}`;
+              }
+              console.log(
+                `[OpenAI Adapter] Added image, data length: ${imageUrl.length}`,
+              );
+              content.push({
+                type: "image_url",
+                image_url: { url: imageUrl, detail: "auto" },
+              });
+            }
+          }
+
+          return { ...msg, content, attachments: undefined };
+        }
+        return msg;
+      });
+
       // Add system prompt at the start if provided and not already present
       if (request.systemPrompt) {
-        const hasSystem = request.rawMessages.some((m) => m.role === "system");
+        const hasSystem = processedMessages.some((m) => m.role === "system");
         if (!hasSystem) {
           messages = [
             { role: "system", content: request.systemPrompt },
-            ...request.rawMessages,
+            ...processedMessages,
           ];
         } else {
-          messages = request.rawMessages;
+          messages = processedMessages;
         }
       } else {
-        messages = request.rawMessages;
+        messages = processedMessages;
       }
     } else {
-      messages = formatMessages(request.messages, request.systemPrompt);
+      // Format from Message[] with multimodal support (images, attachments)
+      messages = formatMessagesForOpenAI(
+        request.messages,
+        request.systemPrompt,
+      ) as Array<Record<string, unknown>>;
     }
 
     const tools = request.actions?.length

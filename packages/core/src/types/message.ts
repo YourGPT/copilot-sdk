@@ -1,3 +1,5 @@
+import { generateMessageId } from "../utils/id";
+
 /**
  * Message roles in a conversation
  */
@@ -71,6 +73,8 @@ export interface Message {
   role: MessageRole;
   /** Text content */
   content: string;
+  /** Thinking/reasoning content (for models like Claude, DeepSeek with extended thinking) */
+  thinking?: string;
   /** Tool calls made by assistant */
   toolCalls?: ToolCall[];
   /** Tool result if this is a tool message */
@@ -92,9 +96,10 @@ export function createMessage(
   partial: Partial<Message> & Pick<Message, "role" | "content">,
 ): Message {
   return {
-    id: partial.id ?? generateId(),
+    id: partial.id ?? generateMessageId(),
     role: partial.role,
     content: partial.content,
+    thinking: partial.thinking,
     toolCalls: partial.toolCalls,
     toolResult: partial.toolResult,
     sources: partial.sources,
@@ -102,11 +107,4 @@ export function createMessage(
     metadata: partial.metadata,
     createdAt: partial.createdAt ?? new Date(),
   };
-}
-
-/**
- * Generate a unique ID
- */
-function generateId(): string {
-  return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }

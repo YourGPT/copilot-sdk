@@ -13,22 +13,37 @@ import type {
   ToolDefinition,
   ToolExecution,
   ToolResponse,
+  ToolApprovalStatus,
+  PermissionLevel,
+  ToolPermission,
 } from "@yourgpt/core";
 import type { ContextTreeNode } from "../utils/context-tree";
 
 /**
- * Chat state interface
+ * Chat UI state interface (UI-only state, not message data)
+ * Message data is stored in ThreadsState as the single source of truth
  */
 export interface ChatState {
-  /** All messages in the conversation */
+  /** Whether a response is being generated */
+  isLoading: boolean;
+  /** Current error if any */
+  error: Error | null;
+}
+
+/**
+ * Combined chat state for context consumers
+ * Includes derived data from threads for convenience
+ */
+export interface CombinedChatState {
+  /** All messages in the conversation (from active thread) */
   messages: Message[];
   /** Whether a response is being generated */
   isLoading: boolean;
   /** Current error if any */
   error: Error | null;
-  /** Thread/conversation ID */
+  /** Thread/conversation ID (from active thread) */
   threadId: string | null;
-  /** Sources from knowledge base */
+  /** Sources from knowledge base (from active thread) */
   sources: Source[];
 }
 
@@ -103,8 +118,8 @@ export interface YourGPTContextValue {
   config: YourGPTConfig;
   /** Tools configuration */
   toolsConfig: ToolsConfig | null;
-  /** Chat state */
-  chat: ChatState;
+  /** Chat state (combined from UI state + active thread) */
+  chat: CombinedChatState;
   /** Tools state (Smart Context) */
   tools: ToolsState;
   /** Agent loop state (Agentic tools) */
@@ -131,6 +146,38 @@ export interface YourGPTContextValue {
   updateToolExecution?: (id: string, update: Partial<ToolExecution>) => void;
   /** Clear all tool executions */
   clearToolExecutions?: () => void;
+
+  // Tool approval handlers (for needsApproval tools)
+
+  /** Approve a tool execution that requires approval */
+  approveToolExecution?: (
+    executionId: string,
+    permissionLevel?: PermissionLevel,
+  ) => void;
+  /** Reject a tool execution that requires approval */
+  rejectToolExecution?: (
+    executionId: string,
+    reason?: string,
+    permissionLevel?: PermissionLevel,
+  ) => void;
+  /** Tool executions waiting for user approval */
+  pendingApprovals: ToolExecution[];
+
+  // Permission management (for persistent tool approvals)
+
+  /** All stored permissions */
+  storedPermissions: ToolPermission[];
+  /** Whether permissions have been loaded from storage */
+  permissionsLoaded: boolean;
+  /** Get permission level for a specific tool */
+  getToolPermission: (toolName: string) => Promise<PermissionLevel>;
+  /** Set permission level for a tool */
+  setToolPermission: (
+    toolName: string,
+    level: PermissionLevel,
+  ) => Promise<void>;
+  /** Clear all stored permissions */
+  clearAllPermissions: () => Promise<void>;
   /** Add context for AI (returns context ID) */
   addContext: (context: string, parentId?: string) => string;
   /** Remove context by ID */
@@ -142,14 +189,11 @@ export interface YourGPTContextValue {
 }
 
 /**
- * Initial chat state
+ * Initial chat UI state
  */
 export const initialChatState: ChatState = {
-  messages: [],
   isLoading: false,
   error: null,
-  threadId: null,
-  sources: [],
 };
 
 /**

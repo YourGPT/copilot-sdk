@@ -100,6 +100,7 @@ export function useToolExecutor(): UseToolExecutorReturn {
         args: toolCall.input,
         status: "executing",
         timestamp: Date.now(),
+        approvalStatus: "none",
       };
 
       // Add to execution list

@@ -8,6 +8,9 @@ export type StreamEventType =
   | "message:start"
   | "message:delta"
   | "message:end"
+  | "thinking:start"
+  | "thinking:delta"
+  | "thinking:end"
   | "source:add"
   | "action:start"
   | "action:args"
@@ -50,6 +53,33 @@ export interface MessageDeltaEvent extends BaseEvent {
  */
 export interface MessageEndEvent extends BaseEvent {
   type: "message:end";
+}
+
+// ============================================
+// Thinking/Reasoning Events
+// ============================================
+
+/**
+ * Thinking/reasoning started (for models like Claude, DeepSeek)
+ */
+export interface ThinkingStartEvent extends BaseEvent {
+  type: "thinking:start";
+}
+
+/**
+ * Thinking content delta (incremental update)
+ */
+export interface ThinkingDeltaEvent extends BaseEvent {
+  type: "thinking:delta";
+  /** Thinking content chunk */
+  content: string;
+}
+
+/**
+ * Thinking finished
+ */
+export interface ThinkingEndEvent extends BaseEvent {
+  type: "thinking:end";
 }
 
 /**
@@ -223,6 +253,9 @@ export type StreamEvent =
   | MessageStartEvent
   | MessageDeltaEvent
   | MessageEndEvent
+  | ThinkingStartEvent
+  | ThinkingDeltaEvent
+  | ThinkingEndEvent
   | SourceAddEvent
   | ActionStartEvent
   | ActionArgsEvent

@@ -1,7 +1,20 @@
 import type { LLMConfig, StreamEvent } from "@yourgpt/core";
 import { generateMessageId } from "@yourgpt/core";
 import type { LLMAdapter, ChatCompletionRequest } from "./base";
-import { formatMessages } from "./base";
+import {
+  formatMessagesForAnthropic,
+  messageToAnthropicContent,
+  type AnthropicContentBlock,
+} from "./base";
+
+/**
+ * Extended thinking configuration
+ */
+export interface ThinkingConfig {
+  type: "enabled";
+  /** Budget for thinking tokens (minimum 1024) */
+  budgetTokens?: number;
+}
 
 /**
  * Anthropic adapter configuration
@@ -9,6 +22,8 @@ import { formatMessages } from "./base";
 export interface AnthropicAdapterConfig extends Partial<LLMConfig> {
   apiKey: string;
   model?: string;
+  /** Enable extended thinking (for Claude 3.7 Sonnet, Claude 4) */
+  thinking?: ThinkingConfig;
 }
 
 /**
@@ -127,14 +142,58 @@ export class AnthropicAdapter implements LLMAdapter {
           pendingToolResults.length = 0;
         }
 
-        // Add user message
-        messages.push({
-          role: "user",
-          content:
-            typeof msg.content === "string"
-              ? msg.content
-              : JSON.stringify(msg.content),
-        });
+        // Check if message has attachments (images)
+        if (
+          msg.attachments &&
+          Array.isArray(msg.attachments) &&
+          msg.attachments.length > 0
+        ) {
+          // Convert to Anthropic multimodal content format
+          const content: Array<Record<string, unknown>> = [];
+
+          // Add text content if present
+          if (msg.content && typeof msg.content === "string") {
+            content.push({ type: "text", text: msg.content });
+          }
+
+          // Add image attachments
+          for (const attachment of msg.attachments as Array<{
+            type: string;
+            data: string;
+            mimeType?: string;
+          }>) {
+            if (attachment.type === "image") {
+              // Convert to Anthropic image format
+              let base64Data = attachment.data;
+              if (base64Data.startsWith("data:")) {
+                // Extract base64 from data URL
+                const commaIndex = base64Data.indexOf(",");
+                if (commaIndex !== -1) {
+                  base64Data = base64Data.slice(commaIndex + 1);
+                }
+              }
+              content.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: attachment.mimeType || "image/png",
+                  data: base64Data,
+                },
+              });
+            }
+          }
+
+          messages.push({ role: "user", content });
+        } else {
+          // Add user message without attachments
+          messages.push({
+            role: "user",
+            content:
+              typeof msg.content === "string"
+                ? msg.content
+                : JSON.stringify(msg.content),
+          });
+        }
       }
     }
 
@@ -165,14 +224,9 @@ export class AnthropicAdapter implements LLMAdapter {
       // Convert OpenAI-style messages to Anthropic format
       messages = this.convertToAnthropicMessages(request.rawMessages);
     } else {
-      // Format from Message[]
-      const allMessages = formatMessages(request.messages, undefined);
-      messages = allMessages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: m.content,
-        }));
+      // Format from Message[] with multimodal support (images, attachments)
+      const formatted = formatMessagesForAnthropic(request.messages, undefined);
+      messages = formatted.messages as Array<Record<string, unknown>>;
     }
 
     // Convert actions to Anthropic tool format
@@ -207,19 +261,32 @@ export class AnthropicAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
-      const stream = await client.messages.stream({
+      // Build request options
+      const requestOptions: Record<string, unknown> = {
         model: request.config?.model || this.model,
         max_tokens: request.config?.maxTokens || this.config.maxTokens || 4096,
         system: systemMessage,
         messages,
         tools: tools?.length ? tools : undefined,
-      });
+      };
+
+      // Add thinking configuration if enabled
+      if (this.config.thinking?.type === "enabled") {
+        requestOptions.thinking = {
+          type: "enabled",
+          budget_tokens: this.config.thinking.budgetTokens || 10000,
+        };
+      }
+
+      const stream = await client.messages.stream(requestOptions);
 
       let currentToolUse: {
         id: string;
         name: string;
         input: string;
       } | null = null;
+
+      let isInThinkingBlock = false;
 
       for await (const event of stream) {
         // Check for abort
@@ -240,12 +307,19 @@ export class AnthropicAdapter implements LLMAdapter {
                 id: currentToolUse.id,
                 name: currentToolUse.name,
               };
+            } else if (event.content_block.type === "thinking") {
+              // Start of thinking block
+              isInThinkingBlock = true;
+              yield { type: "thinking:start" };
             }
             break;
 
           case "content_block_delta":
             if (event.delta.type === "text_delta") {
               yield { type: "message:delta", content: event.delta.text };
+            } else if (event.delta.type === "thinking_delta") {
+              // Thinking content delta
+              yield { type: "thinking:delta", content: event.delta.thinking };
             } else if (
               event.delta.type === "input_json_delta" &&
               currentToolUse
@@ -262,6 +336,10 @@ export class AnthropicAdapter implements LLMAdapter {
                 args: currentToolUse.input,
               };
               currentToolUse = null;
+            }
+            if (isInThinkingBlock) {
+              yield { type: "thinking:end" };
+              isInThinkingBlock = false;
             }
             break;
 

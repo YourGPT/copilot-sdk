@@ -72,6 +72,7 @@ export type {
   // Message types
   MessageRole,
   Message,
+  MessageAttachment,
   Source,
   ToolCall,
   ToolResult,
@@ -105,12 +106,16 @@ export type {
   LoopCompleteEvent,
   ErrorEvent,
   DoneEvent,
-  // Knowledge Base types
+  // Knowledge Base types (generic)
   KnowledgeBaseProvider,
   KnowledgeBaseConfig,
   KnowledgeBaseResult,
   KnowledgeBaseSearchRequest,
   KnowledgeBaseSearchResponse,
+  // YourGPT Knowledge Base types (internal API)
+  YourGPTKnowledgeBaseConfig,
+  YourGPTKnowledgeBaseResult,
+  YourGPTKnowledgeBaseSearchResponse,
   // Thread types
   Thread,
   ThreadData,
@@ -128,9 +133,15 @@ export type {
   UnifiedToolCall,
   UnifiedToolResult,
   ToolExecutionStatus,
+  ToolApprovalStatus,
   ToolExecution,
   AgentLoopConfig,
   AgentLoopState,
+  // Permission types (for persistent tool approvals)
+  PermissionLevel,
+  ToolPermission,
+  PermissionStorageConfig,
+  PermissionStorageAdapter,
 } from "./types";
 
 // Thread title generation

@@ -22,7 +22,11 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "html2canvas": "^1.4.1"
+  },
   "devDependencies": {
+    "@types/html2canvas": "^1.0.0",
     "tsup": "^8.0.2",
     "typescript": "^5.4.0"
   },

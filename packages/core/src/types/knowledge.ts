@@ -109,3 +109,57 @@ export interface KnowledgeBaseSearchResponse {
   /** Search duration in ms */
   durationMs?: number;
 }
+
+// ============================================
+// YourGPT Knowledge Base Types
+// (For YourGPT's internal KB API)
+// ============================================
+
+/**
+ * YourGPT Knowledge Base configuration
+ * Used for YourGPT's internal searchIndexDocument API
+ */
+export interface YourGPTKnowledgeBaseConfig {
+  /** Project UID for the knowledge base */
+  projectUid: string;
+  /** Auth token for API calls */
+  token: string;
+  /** App ID (default: "1") */
+  appId?: string;
+  /** Results limit (default: 5) */
+  limit?: number;
+  /** Whether KB is enabled (default: true) */
+  enabled?: boolean;
+}
+
+/**
+ * YourGPT Knowledge Base search result
+ */
+export interface YourGPTKnowledgeBaseResult {
+  /** Document ID */
+  id: string;
+  /** Document title */
+  title?: string;
+  /** Matched content snippet */
+  content: string;
+  /** Relevance score */
+  score?: number;
+  /** Source URL if available */
+  url?: string;
+  /** Additional metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * YourGPT Knowledge Base search response
+ */
+export interface YourGPTKnowledgeBaseSearchResponse {
+  /** Whether the search was successful */
+  success: boolean;
+  /** Search results */
+  results: YourGPTKnowledgeBaseResult[];
+  /** Total number of results */
+  total?: number;
+  /** Error message if failed */
+  error?: string;
+}

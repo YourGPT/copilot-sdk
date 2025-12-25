@@ -125,6 +125,24 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   render?: (props: ToolRenderProps<TParams>) => unknown;
   /** Whether the tool is available (for conditional registration) */
   available?: boolean;
+
+  /**
+   * Require user approval before execution.
+   * Can be:
+   * - `true`: Always require approval
+   * - `false` or `undefined`: No approval needed (default)
+   * - `(params) => boolean`: Conditional approval based on input
+   *
+   * Similar to Vercel AI SDK v6's needsApproval pattern.
+   */
+  needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
+
+  /**
+   * Custom message shown in the approval UI.
+   * Can be a string or a function that generates a message from params.
+   * If not provided, a default message with the tool name is shown.
+   */
+  approvalMessage?: string | ((params: TParams) => string);
 }
 
 // ============================================
@@ -171,6 +189,81 @@ export type ToolExecutionStatus =
   | "error";
 
 /**
+ * Tool approval status (for human-in-the-loop)
+ *
+ * Similar to Vercel AI SDK v6's tool approval pattern.
+ */
+export type ToolApprovalStatus =
+  | "none" // No approval needed (default)
+  | "required" // Waiting for user decision
+  | "approved" // User approved, execution can proceed
+  | "rejected"; // User rejected, execution skipped
+
+// ============================================
+// Permission Persistence Types
+// ============================================
+
+/**
+ * Permission level for tool execution
+ *
+ * Controls whether approval is needed and how the choice is remembered:
+ * - "ask" - Always prompt user (default)
+ * - "allow_always" - Auto-approve, persisted to storage
+ * - "deny_always" - Auto-reject, persisted to storage
+ * - "session" - Auto-approve for current session only
+ */
+export type PermissionLevel =
+  | "ask"
+  | "allow_always"
+  | "deny_always"
+  | "session";
+
+/**
+ * Stored tool permission record
+ */
+export interface ToolPermission {
+  /** Tool name (unique identifier) */
+  toolName: string;
+  /** Permission level */
+  level: PermissionLevel;
+  /** When permission was set */
+  createdAt: number;
+  /** Last time this permission was used */
+  lastUsedAt?: number;
+}
+
+/**
+ * Permission storage configuration
+ */
+export interface PermissionStorageConfig {
+  /**
+   * Storage type:
+   * - "localStorage" - Persists across browser sessions
+   * - "sessionStorage" - Clears when tab closes
+   * - "memory" - In-memory only (for SSR or testing)
+   */
+  type: "localStorage" | "sessionStorage" | "memory";
+  /** Storage key prefix (default: "yourgpt-permissions") */
+  keyPrefix?: string;
+}
+
+/**
+ * Permission storage adapter interface (for custom implementations)
+ */
+export interface PermissionStorageAdapter {
+  /** Get permission for a tool */
+  get(toolName: string): Promise<ToolPermission | null>;
+  /** Set permission for a tool */
+  set(permission: ToolPermission): Promise<void>;
+  /** Remove permission for a tool */
+  remove(toolName: string): Promise<void>;
+  /** Get all permissions */
+  getAll(): Promise<ToolPermission[]>;
+  /** Clear all permissions */
+  clear(): Promise<void>;
+}
+
+/**
  * Tool execution record (for UI tracking)
  */
 export interface ToolExecution {
@@ -190,6 +283,15 @@ export interface ToolExecution {
   timestamp: number;
   /** Duration in ms (set when completed) */
   duration?: number;
+
+  // Approval fields (for needsApproval tools)
+
+  /** Approval status for this execution */
+  approvalStatus: ToolApprovalStatus;
+  /** Message shown in approval UI (from tool's approvalMessage) */
+  approvalMessage?: string;
+  /** Timestamp when user responded to approval request */
+  approvalTimestamp?: number;
 }
 
 // ============================================

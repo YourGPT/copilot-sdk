@@ -3,6 +3,7 @@ export {
   type ToolExecutionListProps,
   type ToolExecutionData,
   type ToolExecutionStatus,
+  type ToolApprovalStatus,
 } from "./tool-execution-list";
 
 export {

@@ -2,7 +2,7 @@
  * Screenshot Capture Tool
  *
  * Captures screenshots of the current viewport or specific elements.
- * Framework-agnostic implementation using native browser APIs.
+ * Uses html2canvas for reliable DOM-to-canvas conversion.
  */
 
 import type { ScreenshotOptions, ScreenshotResult } from "./types";
@@ -23,12 +23,25 @@ const DEFAULT_OPTIONS: Required<ScreenshotOptions> = {
   includeCursor: false,
 };
 
+// Lazy-loaded html2canvas instance
+let html2canvasPromise: Promise<typeof import("html2canvas").default> | null =
+  null;
+
+/**
+ * Dynamically import html2canvas (only when needed)
+ */
+async function getHtml2Canvas(): Promise<typeof import("html2canvas").default> {
+  if (!html2canvasPromise) {
+    html2canvasPromise = import("html2canvas").then((mod) => mod.default);
+  }
+  return html2canvasPromise;
+}
+
 /**
  * Capture a screenshot of an element or the viewport
  *
- * This implementation uses a lightweight approach:
- * 1. For simple use cases, uses foreignObject in SVG
- * 2. For complex use cases, recommend html2canvas
+ * Uses html2canvas for reliable DOM-to-canvas conversion.
+ * Handles complex CSS, images, flexbox, grid, etc.
  *
  * @param options - Screenshot options
  * @returns Promise resolving to screenshot result
@@ -49,6 +62,8 @@ const DEFAULT_OPTIONS: Required<ScreenshotOptions> = {
 export async function captureScreenshot(
   options: ScreenshotOptions = {},
 ): Promise<ScreenshotResult> {
+  console.log("[YourGPT:Screenshot] captureScreenshot called", options);
+
   if (!isBrowser) {
     throw new Error(
       "Screenshot capture is only available in browser environment",
@@ -57,75 +72,91 @@ export async function captureScreenshot(
 
   const opts = { ...DEFAULT_OPTIONS, ...options };
   const element = opts.element || document.body;
+  console.log(
+    "[YourGPT:Screenshot] Element:",
+    element.tagName,
+    element.id || element.className,
+  );
 
   // Get element dimensions
   const rect = element.getBoundingClientRect();
   let width = rect.width || window.innerWidth;
   let height = rect.height || window.innerHeight;
+  console.log("[YourGPT:Screenshot] Dimensions:", { width, height });
 
   // Scale down if needed
   const scale = Math.min(opts.maxWidth / width, opts.maxHeight / height, 1);
-
   width = Math.round(width * scale);
   height = Math.round(height * scale);
+  console.log("[YourGPT:Screenshot] Scaled dimensions:", {
+    width,
+    height,
+    scale,
+  });
 
-  // Create canvas
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  let canvas: HTMLCanvasElement;
 
-  if (!ctx) {
-    throw new Error("Failed to create canvas context");
-  }
-
-  // Set background
-  ctx.fillStyle = getComputedStyle(element).backgroundColor || "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-
-  // Try to capture using different methods
-  let captured = false;
-
-  // Method 1: Try using SVG foreignObject (works for simple DOM)
   try {
-    captured = await captureWithSVG(element, ctx, width, height, scale);
-  } catch {
-    // Silently fail, try next method
-  }
+    // Load html2canvas dynamically
+    console.log("[YourGPT:Screenshot] Loading html2canvas...");
+    const html2canvas = await getHtml2Canvas();
 
-  // Method 2: If SVG failed, try capturing visible viewport
-  if (!captured) {
-    try {
-      captured = await captureViewport(ctx, width, height);
-    } catch {
-      // Viewport capture also failed
+    // Capture using html2canvas
+    console.log("[YourGPT:Screenshot] Capturing with html2canvas...");
+    canvas = await html2canvas(element, {
+      scale: scale,
+      useCORS: true, // Enable cross-origin images
+      allowTaint: false, // Don't allow tainted canvas
+      backgroundColor: null, // Transparent background (uses element's bg)
+      logging: false, // Disable internal logging
+      width: rect.width,
+      height: rect.height,
+      windowWidth: window.innerWidth,
+      windowHeight: window.innerHeight,
+      scrollX: 0,
+      scrollY: 0,
+      x: rect.left + window.scrollX,
+      y: rect.top + window.scrollY,
+    });
+
+    console.log("[YourGPT:Screenshot] html2canvas capture successful");
+  } catch (error) {
+    console.error("[YourGPT:Screenshot] html2canvas error:", error);
+
+    // Fallback to placeholder if html2canvas fails
+    canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      createPlaceholder(ctx, width, height, element, String(error));
     }
-  }
-
-  // Method 3: Create a placeholder if all else fails
-  if (!captured) {
-    createPlaceholder(ctx, width, height, element);
   }
 
   // Convert to data URL
   const mimeType = `image/${opts.format === "jpeg" ? "jpeg" : opts.format}`;
-
   let data: string;
+
   try {
     data = canvas.toDataURL(mimeType, opts.quality);
   } catch (e) {
-    // Handle tainted canvas (cross-origin images) - create a fresh placeholder canvas
+    // Handle tainted canvas (cross-origin images)
     if (e instanceof DOMException && e.name === "SecurityError") {
       console.warn(
-        "Screenshot blocked due to cross-origin content. Creating placeholder.",
+        "[YourGPT:Screenshot] Canvas tainted by cross-origin content. Creating placeholder.",
       );
-      // Create a new clean canvas for the placeholder
       const cleanCanvas = document.createElement("canvas");
       cleanCanvas.width = width;
       cleanCanvas.height = height;
       const cleanCtx = cleanCanvas.getContext("2d");
       if (cleanCtx) {
-        createPlaceholder(cleanCtx, width, height, element);
+        createPlaceholder(
+          cleanCtx,
+          width,
+          height,
+          element,
+          "Cross-origin content blocked",
+        );
         data = cleanCanvas.toDataURL(mimeType, opts.quality);
       } else {
         throw new Error("Failed to create placeholder canvas");
@@ -135,144 +166,17 @@ export async function captureScreenshot(
     }
   }
 
+  console.log(
+    "[YourGPT:Screenshot] Returning result, data length:",
+    data.length,
+  );
   return {
     data,
     format: opts.format,
-    width,
-    height,
+    width: canvas.width,
+    height: canvas.height,
     timestamp: Date.now(),
   };
-}
-
-/**
- * Capture element using SVG foreignObject
- */
-async function captureWithSVG(
-  element: HTMLElement,
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  scale: number,
-): Promise<boolean> {
-  // Clone the element to avoid modifying the original
-  const clone = element.cloneNode(true) as HTMLElement;
-
-  // Inline all styles
-  await inlineStyles(element, clone);
-
-  // Create SVG with foreignObject
-  const serializer = new XMLSerializer();
-  const html = serializer.serializeToString(clone);
-
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-      <foreignObject width="100%" height="100%" transform="scale(${scale})">
-        <div xmlns="http://www.w3.org/1999/xhtml">
-          ${html}
-        </div>
-      </foreignObject>
-    </svg>
-  `;
-
-  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
-
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-      resolve(true);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(false);
-    };
-    img.src = url;
-  });
-}
-
-/**
- * Inline computed styles from source to target element
- */
-async function inlineStyles(
-  source: HTMLElement,
-  target: HTMLElement,
-): Promise<void> {
-  const computedStyle = getComputedStyle(source);
-  const importantStyles = [
-    "color",
-    "background-color",
-    "background",
-    "font-family",
-    "font-size",
-    "font-weight",
-    "padding",
-    "margin",
-    "border",
-    "border-radius",
-    "display",
-    "flex-direction",
-    "justify-content",
-    "align-items",
-    "gap",
-  ];
-
-  importantStyles.forEach((prop) => {
-    target.style.setProperty(prop, computedStyle.getPropertyValue(prop));
-  });
-
-  // Recursively inline styles for children
-  const sourceChildren = source.children;
-  const targetChildren = target.children;
-
-  for (let i = 0; i < sourceChildren.length && i < targetChildren.length; i++) {
-    if (
-      sourceChildren[i] instanceof HTMLElement &&
-      targetChildren[i] instanceof HTMLElement
-    ) {
-      await inlineStyles(
-        sourceChildren[i] as HTMLElement,
-        targetChildren[i] as HTMLElement,
-      );
-    }
-  }
-}
-
-/**
- * Capture viewport using getDisplayMedia (if available)
- */
-async function captureViewport(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-): Promise<boolean> {
-  // Check if screen capture API is available
-  if (!navigator.mediaDevices?.getDisplayMedia) {
-    return false;
-  }
-
-  try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { width, height },
-    });
-
-    const video = document.createElement("video");
-    video.srcObject = stream;
-    await video.play();
-
-    // Wait for video to be ready
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    ctx.drawImage(video, 0, 0, width, height);
-
-    // Stop all tracks
-    stream.getTracks().forEach((track) => track.stop());
-
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -283,6 +187,7 @@ function createPlaceholder(
   width: number,
   height: number,
   element: HTMLElement,
+  errorMessage?: string,
 ): void {
   // Gray background
   ctx.fillStyle = "#f0f0f0";
@@ -302,19 +207,29 @@ function createPlaceholder(
   const tagName = element.tagName.toLowerCase();
   const id = element.id ? `#${element.id}` : "";
   const className = element.className
-    ? `.${element.className.split(" ")[0]}`
+    ? `.${String(element.className).split(" ")[0]}`
     : "";
 
   ctx.fillText(
     `Screenshot: <${tagName}${id}${className}>`,
     width / 2,
-    height / 2 - 10,
+    height / 2 - 20,
   );
   ctx.fillText(
-    `${Math.round(width / window.devicePixelRatio)}×${Math.round(height / window.devicePixelRatio)}px`,
+    `${Math.round(width)}×${Math.round(height)}px`,
     width / 2,
-    height / 2 + 10,
+    height / 2,
   );
+
+  if (errorMessage) {
+    ctx.fillStyle = "#999";
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillText(
+      `Error: ${errorMessage.slice(0, 50)}`,
+      width / 2,
+      height / 2 + 20,
+    );
+  }
 }
 
 /**

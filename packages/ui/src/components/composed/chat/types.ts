@@ -1,13 +1,34 @@
 import React from "react";
-import type { ToolExecutionData } from "../tools";
+import type { ToolExecutionData, ToolApprovalStatus } from "../tools";
+import type { PermissionLevel } from "../../ui/permission-confirmation";
+
+/**
+ * Message attachment (images, files, etc.)
+ */
+export type MessageAttachment = {
+  /** Type of attachment */
+  type: "image" | "file" | "audio" | "video";
+  /** Base64 data or URL */
+  data: string;
+  /** MIME type */
+  mimeType: string;
+  /** Optional filename */
+  filename?: string;
+};
 
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  /** Thinking/reasoning content (for models with extended thinking) */
+  thinking?: string;
   /** Tool executions associated with this message */
   toolExecutions?: ToolExecutionData[];
+  /** Attachments (images, files) */
+  attachments?: MessageAttachment[];
 };
+
+export type { ToolApprovalStatus, PermissionLevel };
 
 export type ChatProps = {
   // === Core Props ===
@@ -71,6 +92,19 @@ export type ChatProps = {
   loopMaxIterations?: number;
   /** Whether the loop is running */
   loopRunning?: boolean;
+
+  // === Tool Approval (Human-in-the-loop) ===
+  /** Called when user approves a tool execution */
+  onApproveToolExecution?: (
+    executionId: string,
+    permissionLevel?: PermissionLevel,
+  ) => void;
+  /** Called when user rejects a tool execution */
+  onRejectToolExecution?: (
+    executionId: string,
+    reason?: string,
+    permissionLevel?: PermissionLevel,
+  ) => void;
 
   // === Custom Rendering ===
   /** Custom message renderer */

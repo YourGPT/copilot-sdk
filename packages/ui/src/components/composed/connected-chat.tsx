@@ -19,6 +19,8 @@ export type CopilotChatProps = Omit<
   | "loopIteration"
   | "loopMaxIterations"
   | "loopRunning"
+  | "onApproveToolExecution"
+  | "onRejectToolExecution"
 > & {
   /**
    * Show tool executions in the chat (default: true when tools are being executed)
@@ -51,27 +53,17 @@ export type CopilotChatProps = Omit<
  */
 export function CopilotChat(props: CopilotChatProps) {
   // Auto-connect to context internally
-  const { chat, actions, agentLoop, isPremium } = useYourGPTContext();
+  const {
+    chat,
+    actions,
+    agentLoop,
+    isPremium,
+    approveToolExecution,
+    rejectToolExecution,
+  } = useYourGPTContext();
 
   // Auto-hide powered by for premium users (unless explicitly set)
   const showPoweredBy = props.showPoweredBy ?? !isPremium;
-
-  // Filter messages to only show user/assistant/system (not tool messages)
-  const visibleMessages = chat.messages
-    .filter(
-      (m) => m.role === "user" || m.role === "assistant" || m.role === "system",
-    )
-    .map((m) => ({
-      id: m.id,
-      role: m.role as "user" | "assistant" | "system",
-      content: m.content,
-    }));
-
-  // Show suggestions only when no messages
-  const suggestions =
-    visibleMessages.length === 0 && props.suggestions?.length
-      ? props.suggestions
-      : [];
 
   // Convert tool executions to the expected format
   const toolExecutions: ToolExecutionData[] = agentLoop.toolExecutions.map(
@@ -84,8 +76,37 @@ export function CopilotChat(props: CopilotChatProps) {
       error: exec.error,
       timestamp: exec.timestamp,
       duration: exec.duration,
+      approvalStatus: exec.approvalStatus,
+      approvalMessage: exec.approvalMessage,
     }),
   );
+
+  // Filter messages to only show user/assistant/system (not tool messages)
+  // Attach tool executions to the last assistant message
+  const visibleMessages = chat.messages
+    .filter(
+      (m) => m.role === "user" || m.role === "assistant" || m.role === "system",
+    )
+    .map((m, index, arr) => {
+      const isLastAssistant =
+        m.role === "assistant" && index === arr.length - 1;
+      return {
+        id: m.id,
+        role: m.role as "user" | "assistant" | "system",
+        content: m.content,
+        thinking: (m as { thinking?: string }).thinking,
+        // Include attachments (images, files)
+        attachments: m.attachments,
+        // Attach tool executions to last assistant message
+        toolExecutions: isLastAssistant ? toolExecutions : undefined,
+      };
+    });
+
+  // Show suggestions only when no messages
+  const suggestions =
+    visibleMessages.length === 0 && props.suggestions?.length
+      ? props.suggestions
+      : [];
 
   // Show tool executions when there are any (they get cleared on new message)
   const showToolExecutions =
@@ -109,6 +130,9 @@ export function CopilotChat(props: CopilotChatProps) {
       loopIteration={agentLoop.iteration}
       loopMaxIterations={agentLoop.maxIterations}
       loopRunning={loopRunning}
+      // Tool approval props
+      onApproveToolExecution={approveToolExecution}
+      onRejectToolExecution={rejectToolExecution}
     />
   );
 }

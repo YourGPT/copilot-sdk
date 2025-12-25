@@ -50,6 +50,67 @@ export {
 // Source primitives
 export { Source, SourceContent, SourceTrigger } from "./components/ui/source";
 
+// Reasoning primitives
+export {
+  Reasoning,
+  ReasoningTrigger,
+  ReasoningContent,
+  SimpleReasoning,
+  type ReasoningProps,
+  type ReasoningTriggerProps,
+  type ReasoningContentProps,
+  type SimpleReasoningProps,
+} from "./components/ui/reasoning";
+
+// Tool steps primitives
+export {
+  ToolSteps,
+  ToolStep,
+  InlineToolSteps,
+  type ToolStepsProps,
+  type ToolStepProps,
+  type InlineToolStepsProps,
+  type ToolStepData,
+  type ToolStepStatus,
+} from "./components/ui/tool-steps";
+
+// Confirmation primitives (Tool approval)
+export {
+  Confirmation,
+  ConfirmationPending,
+  ConfirmationApproved,
+  ConfirmationRejected,
+  ConfirmationMessage,
+  ConfirmationActions,
+  SimpleConfirmation,
+  type ConfirmationProps,
+  type ConfirmationState,
+  type ConfirmationPendingProps,
+  type ConfirmationApprovedProps,
+  type ConfirmationRejectedProps,
+  type ConfirmationMessageProps,
+  type ConfirmationActionsProps,
+  type SimpleConfirmationProps,
+} from "./components/ui/confirmation";
+
+// Permission confirmation primitives (with "don't ask again" support)
+export {
+  PermissionConfirmation,
+  CompactPermissionConfirmation,
+  DEFAULT_PERMISSION_OPTIONS,
+  type PermissionConfirmationProps,
+  type CompactPermissionConfirmationProps,
+  type PermissionLevel,
+  type PermissionOption,
+} from "./components/ui/permission-confirmation";
+
+// DevLogger (Development debugging tool)
+export {
+  DevLogger,
+  type DevLoggerProps,
+  type DevLoggerState,
+} from "./components/ui/dev-logger";
+
 // ============================================
 // Composed Components (Ready-to-use)
 // ============================================
@@ -81,6 +142,8 @@ export {
   RefreshIcon,
   UserIcon,
   BotIcon,
+  XIcon,
+  AlertTriangleIcon,
 } from "./components/icons";
 
 // ============================================

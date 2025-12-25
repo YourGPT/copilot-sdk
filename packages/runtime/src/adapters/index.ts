@@ -1,6 +1,19 @@
 // Base adapter
 export type { LLMAdapter, ChatCompletionRequest, AdapterFactory } from "./base";
-export { formatMessages, formatTools } from "./base";
+export {
+  formatMessages,
+  formatTools,
+  // Multimodal/Vision support
+  formatMessagesForAnthropic,
+  formatMessagesForOpenAI,
+  messageToAnthropicContent,
+  messageToOpenAIContent,
+  hasImageAttachments,
+  attachmentToAnthropicImage,
+  attachmentToOpenAIImage,
+  type AnthropicContentBlock,
+  type OpenAIContentBlock,
+} from "./base";
 
 // OpenAI
 export {

@@ -48,3 +48,10 @@ export {
   type UseAgentOptions,
   type UseAgentReturn,
 } from "./useAgent";
+export {
+  useKnowledgeBase,
+  type UseKnowledgeBaseConfig,
+} from "./useKnowledgeBase";
+
+// Note: useScreenshotTool is NOT exported - screenshot tool is auto-registered
+// when toolsConfig.screenshot = true in YourGPTProvider

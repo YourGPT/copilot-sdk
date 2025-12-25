@@ -14,6 +14,15 @@ export type ToolExecutionStatus =
   | "error";
 
 /**
+ * Tool approval status (for human-in-the-loop)
+ */
+export type ToolApprovalStatus =
+  | "none" // No approval needed (default)
+  | "required" // Waiting for user decision
+  | "approved" // User approved
+  | "rejected"; // User rejected
+
+/**
  * Tool execution data
  */
 export interface ToolExecutionData {
@@ -30,6 +39,10 @@ export interface ToolExecutionData {
   error?: string;
   timestamp: number;
   duration?: number;
+  /** Approval status for human-in-the-loop tools */
+  approvalStatus?: ToolApprovalStatus;
+  /** Message shown in approval UI */
+  approvalMessage?: string;
 }
 
 /**

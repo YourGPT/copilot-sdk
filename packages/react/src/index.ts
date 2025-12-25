@@ -16,6 +16,7 @@ export {
   useYourGPTContext,
   type YourGPTContextValue,
   type ChatState,
+  type CombinedChatState,
   type ChatActions,
   type ToolsState,
   type ToolsActions,
@@ -47,6 +48,7 @@ export {
   useToolWithSchema,
   useToolsWithSchema,
   useToolExecutor,
+  // Note: Screenshot/Console/Network tools are auto-registered via toolsConfig
   type UseAIChatReturn,
   type AIContextItem,
   type UseAIToolsOptions,
@@ -60,6 +62,27 @@ export {
   type UseToolWithSchemaConfig,
   type UseToolExecutorReturn,
 } from "./hooks";
+
+// Knowledge Base
+export {
+  useKnowledgeBase,
+  searchKnowledgeBase,
+  formatKnowledgeResultsForAI,
+  type UseKnowledgeBaseConfig,
+  type KnowledgeBaseConfig,
+  type KnowledgeBaseResult,
+  type KnowledgeBaseSearchResponse,
+} from "./hooks/useKnowledgeBase";
+
+// Permission Storage
+export {
+  createPermissionStorage,
+  createSessionPermissionCache,
+} from "./utils/permission-storage";
+
+// DevLogger (Development debugging tool)
+// Use with: import { DevLogger } from "@yourgpt/ui";
+export { useDevLogger, type DevLoggerState } from "./hooks/useDevLogger";
 
 // Re-export core types for convenience
 export type {
@@ -90,4 +113,9 @@ export type {
   ToolExecutionStatus,
   UnifiedToolCall,
   AgentLoopConfig,
+  // Permission types
+  PermissionLevel,
+  ToolPermission,
+  PermissionStorageConfig,
+  PermissionStorageAdapter,
 } from "@yourgpt/core";

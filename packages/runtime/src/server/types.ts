@@ -57,6 +57,16 @@ export interface RuntimeConfigWithAdapter {
 export type RuntimeConfig = RuntimeConfigWithLLM | RuntimeConfigWithAdapter;
 
 /**
+ * Message attachment (images, files, etc.)
+ */
+export interface MessageAttachment {
+  type: "image" | "file" | "audio" | "video";
+  data: string;
+  mimeType?: string;
+  filename?: string;
+}
+
+/**
  * Chat request body
  */
 export interface ChatRequest {
@@ -64,6 +74,16 @@ export interface ChatRequest {
   messages: Array<{
     role: string;
     content: string;
+    /** Attachments like images (for vision support) */
+    attachments?: MessageAttachment[];
+    /** Tool call ID (for tool result messages) */
+    tool_call_id?: string;
+    /** Tool calls from assistant (for continuing agent loop) */
+    tool_calls?: Array<{
+      id: string;
+      type: string;
+      function: { name: string; arguments: string };
+    }>;
   }>;
   /** Thread/conversation ID */
   threadId?: string;
@@ -91,6 +111,17 @@ export interface ChatRequest {
   }>;
   /** Enable agentic loop mode */
   useAgentLoop?: boolean;
+  /** YourGPT Knowledge Base configuration (enables search_knowledge tool) */
+  knowledgeBase?: {
+    /** Project UID for the knowledge base */
+    projectUid: string;
+    /** Auth token for API calls */
+    token: string;
+    /** App ID (default: "1") */
+    appId?: string;
+    /** Results limit (default: 5) */
+    limit?: number;
+  };
 }
 
 /**

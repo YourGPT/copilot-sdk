@@ -11,6 +11,7 @@ import React, {
 import type {
   YourGPTConfig,
   Message,
+  MessageAttachment,
   ActionDefinition,
   StreamEvent,
   ToolsConfig,
@@ -25,12 +26,18 @@ import type {
   ToolExecution,
   ToolResponse,
   ToolCallInfo,
+  ToolCall,
   AssistantToolMessage,
+  PermissionLevel,
+  ToolPermission,
+  PermissionStorageConfig,
+  PermissionStorageAdapter,
 } from "@yourgpt/core";
 import { generateThreadTitle } from "@yourgpt/core";
 import {
   generateMessageId,
   generateThreadId,
+  createMessage,
   streamSSE,
   // Tools
   detectIntent,
@@ -66,6 +73,10 @@ import {
   type ThreadsContextValue,
 } from "../context/ThreadsContext";
 import { localStoragePersistence, noopPersistence } from "../utils/persistence";
+import {
+  createPermissionStorage,
+  createSessionPermissionCache,
+} from "../utils/permission-storage";
 
 /**
  * Provider props
@@ -108,21 +119,42 @@ export interface YourGPTProviderProps {
    * Default: disabled
    */
   persistence?: PersistenceConfig;
+  /**
+   * Knowledge base configuration
+   * When provided, registers a search_knowledge tool automatically
+   */
+  knowledgeBase?: {
+    /** Project UID for the knowledge base */
+    projectUid: string;
+    /** Auth token for API calls */
+    token: string;
+    /** App ID (default: "1") */
+    appId?: string;
+    /** Results limit (default: 5) */
+    limit?: number;
+    /** Whether to enable (default: true) */
+    enabled?: boolean;
+  };
+  /**
+   * Permission storage configuration for persistent tool approvals
+   * Controls how "don't ask again" choices are stored
+   */
+  permissionStorage?: PermissionStorageConfig;
+  /**
+   * Custom permission storage adapter
+   * Use for custom storage backends (e.g., server-side)
+   */
+  customPermissionStorage?: PermissionStorageAdapter;
   /** Children */
   children: ReactNode;
 }
 
 /**
- * Chat state reducer actions
+ * Chat UI state reducer actions (UI state only - messages are in threadsState)
  */
 type ChatAction =
   | { type: "SET_LOADING"; payload: boolean }
   | { type: "SET_ERROR"; payload: Error | null }
-  | { type: "SET_MESSAGES"; payload: Message[] }
-  | { type: "ADD_MESSAGE"; payload: Message }
-  | { type: "UPDATE_MESSAGE"; payload: { id: string; content: string } }
-  | { type: "SET_THREAD_ID"; payload: string }
-  | { type: "ADD_SOURCE"; payload: { messageId: string; source: unknown } }
   | { type: "CLEAR" };
 
 /**
@@ -135,7 +167,7 @@ type ToolsAction =
   | { type: "SET_CAPTURING"; payload: boolean };
 
 /**
- * Chat state reducer
+ * Chat UI state reducer (UI state only - messages are in threadsState)
  */
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -143,39 +175,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, isLoading: action.payload };
     case "SET_ERROR":
       return { ...state, error: action.payload };
-    case "SET_MESSAGES":
-      return { ...state, messages: action.payload };
-    case "ADD_MESSAGE":
-      return { ...state, messages: [...state.messages, action.payload] };
-    case "UPDATE_MESSAGE":
-      return {
-        ...state,
-        messages: state.messages.map((msg) =>
-          msg.id === action.payload.id
-            ? { ...msg, content: msg.content + action.payload.content }
-            : msg,
-        ),
-      };
-    case "SET_THREAD_ID":
-      return { ...state, threadId: action.payload };
-    case "ADD_SOURCE":
-      return {
-        ...state,
-        sources: [...state.sources, action.payload.source as Source],
-        messages: state.messages.map((msg) =>
-          msg.id === action.payload.messageId
-            ? {
-                ...msg,
-                sources: [
-                  ...(msg.sources || []),
-                  action.payload.source as Source,
-                ],
-              }
-            : msg,
-        ),
-      };
     case "CLEAR":
-      return { ...initialChatState, threadId: generateThreadId() };
+      return { ...initialChatState };
     default:
       return state;
   }
@@ -286,12 +287,28 @@ type ThreadsAction =
       payload: { threadId: string; message: Message };
     }
   | {
+      type: "REMOVE_MESSAGE_FROM_THREAD";
+      payload: { threadId: string; messageId: string };
+    }
+  | {
       type: "UPDATE_MESSAGE_IN_THREAD";
       payload: { threadId: string; messageId: string; content: string };
     }
   | {
+      type: "UPDATE_THINKING_IN_THREAD";
+      payload: { threadId: string; messageId: string; thinking: string };
+    }
+  | {
+      type: "SET_TOOL_CALLS_IN_THREAD";
+      payload: { threadId: string; messageId: string; toolCalls: ToolCall[] };
+    }
+  | {
       type: "ADD_SOURCE_TO_THREAD";
       payload: { threadId: string; messageId: string; source: Source };
+    }
+  | {
+      type: "SET_MESSAGES_IN_THREAD";
+      payload: { threadId: string; messages: Message[] };
     };
 
 /**
@@ -437,6 +454,21 @@ function threadsReducer(
       return { ...state, threads };
     }
 
+    case "REMOVE_MESSAGE_FROM_THREAD": {
+      const threads = new Map(state.threads);
+      const thread = threads.get(action.payload.threadId);
+      if (thread) {
+        threads.set(action.payload.threadId, {
+          ...thread,
+          messages: thread.messages.filter(
+            (msg) => msg.id !== action.payload.messageId,
+          ),
+          updatedAt: new Date(),
+        });
+      }
+      return { ...state, threads };
+    }
+
     case "UPDATE_MESSAGE_IN_THREAD": {
       const threads = new Map(state.threads);
       const thread = threads.get(action.payload.threadId);
@@ -446,6 +478,43 @@ function threadsReducer(
           messages: thread.messages.map((msg) =>
             msg.id === action.payload.messageId
               ? { ...msg, content: msg.content + action.payload.content }
+              : msg,
+          ),
+          updatedAt: new Date(),
+        });
+      }
+      return { ...state, threads };
+    }
+
+    case "UPDATE_THINKING_IN_THREAD": {
+      const threads = new Map(state.threads);
+      const thread = threads.get(action.payload.threadId);
+      if (thread) {
+        threads.set(action.payload.threadId, {
+          ...thread,
+          messages: thread.messages.map((msg) =>
+            msg.id === action.payload.messageId
+              ? {
+                  ...msg,
+                  thinking: (msg.thinking || "") + action.payload.thinking,
+                }
+              : msg,
+          ),
+          updatedAt: new Date(),
+        });
+      }
+      return { ...state, threads };
+    }
+
+    case "SET_TOOL_CALLS_IN_THREAD": {
+      const threads = new Map(state.threads);
+      const thread = threads.get(action.payload.threadId);
+      if (thread) {
+        threads.set(action.payload.threadId, {
+          ...thread,
+          messages: thread.messages.map((msg) =>
+            msg.id === action.payload.messageId
+              ? { ...msg, toolCalls: action.payload.toolCalls }
               : msg,
           ),
           updatedAt: new Date(),
@@ -475,6 +544,19 @@ function threadsReducer(
       return { ...state, threads };
     }
 
+    case "SET_MESSAGES_IN_THREAD": {
+      const threads = new Map(state.threads);
+      const thread = threads.get(action.payload.threadId);
+      if (thread) {
+        threads.set(action.payload.threadId, {
+          ...thread,
+          messages: action.payload.messages,
+          updatedAt: new Date(),
+        });
+      }
+      return { ...state, threads };
+    }
+
     default:
       return state;
   }
@@ -496,6 +578,9 @@ export function YourGPTProvider({
   threadId: explicitThreadId,
   onThreadChange,
   persistence,
+  knowledgeBase,
+  permissionStorage,
+  customPermissionStorage,
   children,
 }: YourGPTProviderProps) {
   // Check if user has premium features
@@ -525,6 +610,33 @@ export function YourGPTProvider({
     }
     return localStoragePersistence;
   }, [persistence]);
+
+  // Permission storage adapter
+  const permissionStorageAdapter = useMemo(() => {
+    if (customPermissionStorage) {
+      return customPermissionStorage;
+    }
+    return createPermissionStorage(permissionStorage || { type: "memory" });
+  }, [permissionStorage, customPermissionStorage]);
+
+  // Session-only permissions (in-memory, cleared on unmount)
+  const sessionPermissionsRef = useRef<Map<string, PermissionLevel>>(
+    createSessionPermissionCache(),
+  );
+
+  // Stored permissions state
+  const [storedPermissions, setStoredPermissions] = React.useState<
+    Map<string, ToolPermission>
+  >(new Map());
+  const [permissionsLoaded, setPermissionsLoaded] = React.useState(false);
+
+  // Load stored permissions on mount
+  useEffect(() => {
+    permissionStorageAdapter.getAll().then((permissions) => {
+      setStoredPermissions(new Map(permissions.map((p) => [p.toolName, p])));
+      setPermissionsLoaded(true);
+    });
+  }, [permissionStorageAdapter]);
 
   // Load threads from persistence on mount
   const [isLoadingPersistence, setIsLoadingPersistence] = React.useState(
@@ -569,28 +681,14 @@ export function YourGPTProvider({
     onThreadChange?.(threadsState.activeThreadId);
   }, [threadsState.activeThreadId, onThreadChange]);
 
-  // Get current thread data
+  // Derived values from threadsState (single source of truth for messages)
   const currentThread = threadsState.threads.get(threadsState.activeThreadId);
   const currentMessages = currentThread?.messages || [];
   const currentSources = currentThread?.sources || [];
+  const currentThreadId = threadsState.activeThreadId;
 
-  // Chat state (derived from current thread)
-  const [chatState, chatDispatch] = useReducer(chatReducer, {
-    ...initialChatState,
-    messages: initialMessages.length > 0 ? initialMessages : currentMessages,
-    threadId: threadsState.activeThreadId,
-  });
-
-  // Sync chatState with current thread (for legacy compatibility)
-  useEffect(() => {
-    if (currentThread) {
-      chatDispatch({ type: "SET_MESSAGES", payload: currentThread.messages });
-      chatDispatch({
-        type: "SET_THREAD_ID",
-        payload: threadsState.activeThreadId,
-      });
-    }
-  }, [threadsState.activeThreadId, currentThread?.messages.length]);
+  // Chat UI state (only loading/error - messages come from threadsState)
+  const [chatState, chatDispatch] = useReducer(chatReducer, initialChatState);
 
   // Tools state
   const [toolsState, toolsDispatch] = useReducer(toolsReducer, {
@@ -605,6 +703,12 @@ export function YourGPTProvider({
     agentLoopReducer,
     initialAgentLoopState,
   );
+
+  // Ref to always have latest agentLoopState (for use in callbacks to avoid stale closures)
+  const agentLoopStateRef = useRef(agentLoopState);
+  useEffect(() => {
+    agentLoopStateRef.current = agentLoopState;
+  }, [agentLoopState]);
 
   // Registered tools (agentic loop)
   const registeredToolsRef = useRef<Map<string, ToolDefinition>>(new Map());
@@ -621,6 +725,10 @@ export function YourGPTProvider({
   const pendingToolCallsRef = useRef<ToolCallInfo[]>([]);
   const pendingAssistantMessageRef = useRef<AssistantToolMessage | null>(null);
   const currentAssistantMessageIdRef = useRef<string | null>(null);
+
+  // Refs for storing state during tool approval (needsApproval pattern)
+  const pendingMessagesForApprovalRef = useRef<Message[] | null>(null);
+  const pendingAssistantIdForApprovalRef = useRef<string | null>(null);
 
   // Ref to store handleStreamEvent for use in executeToolsAndContinue
   const handleStreamEventRef = useRef<
@@ -663,16 +771,17 @@ export function YourGPTProvider({
     "You are a helpful AI copilot. Use the available tools to assist users. Be concise and helpful.";
 
   // Build system prompt with contexts
+  // Note: Knowledge base instruction is added server-side by runtime when KB config is provided
   const buildSystemPromptWithContexts = useCallback((): string => {
-    const basePrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
-    const contextString = printTree(contextTree);
+    let prompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
-    if (!contextString) {
-      return basePrompt;
+    // Add context tree if available
+    const contextString = printTree(contextTree);
+    if (contextString) {
+      prompt = `${prompt}\n\nThe user has provided you with the following context:\n\`\`\`\n${contextString}\n\`\`\``;
     }
 
-    // Wrap context in code block for better AI understanding
-    return `${basePrompt}\n\nThe user has provided you with the following context:\n\`\`\`\n${contextString}\n\`\`\``;
+    return prompt;
   }, [systemPrompt, contextTree]);
 
   // Start console/network capture on mount if enabled
@@ -691,6 +800,228 @@ export function YourGPTProvider({
   }, [
     toolsConfig?.console,
     toolsConfig?.network,
+    toolsConfig?.consoleOptions,
+    toolsConfig?.networkOptions,
+  ]);
+
+  // ============================================
+  // Auto-register Internal Smart Context Tools
+  // ============================================
+  // When toolsConfig enables screenshot/console/network, automatically
+  // register them as AI-callable tools (agentic pattern)
+
+  useEffect(() => {
+    if (!toolsConfig) return;
+
+    const registeredInternalTools: string[] = [];
+
+    // Screenshot tool
+    if (toolsConfig.screenshot) {
+      const screenshotTool: ToolDefinition = {
+        name: "capture_screenshot",
+        description:
+          "Capture a screenshot of the current viewport for visual analysis. Use this when you need to see what the user is looking at or analyze the page layout.",
+        location: "client",
+        inputSchema: {
+          type: "object",
+          properties: {
+            reason: {
+              type: "string",
+              description: "Brief reason for capturing the screenshot",
+            },
+          },
+        },
+        needsApproval: toolsConfig.requireConsent !== false,
+        approvalMessage: (params: { reason?: string }) =>
+          params?.reason
+            ? `Take a screenshot to ${params.reason}?`
+            : "Take a screenshot of the current screen?",
+        handler: async () => {
+          console.log("[YourGPT] capture_screenshot: handler called");
+          try {
+            console.log(
+              "[YourGPT] capture_screenshot: calling captureScreenshot...",
+            );
+            const screenshot = await captureScreenshot(
+              toolsConfig.screenshotOptions,
+            );
+            console.log("[YourGPT] capture_screenshot: success", {
+              width: screenshot.width,
+              height: screenshot.height,
+            });
+            return {
+              success: true,
+              message: `Here's my current screen (${screenshot.width}x${screenshot.height})`,
+              // Flag to add this as a user message in chat
+              addAsUserMessage: true,
+              userMessageContent: "Here's my screen:",
+              data: {
+                attachment: {
+                  type: "image" as const,
+                  data: screenshot.data,
+                  mimeType: `image/${screenshot.format}`,
+                  filename: "screenshot.png",
+                },
+              },
+            };
+          } catch (error) {
+            console.error("[YourGPT] capture_screenshot: error", error);
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to capture screenshot",
+            };
+          }
+        },
+      };
+      registeredToolsRef.current.set("capture_screenshot", screenshotTool);
+      registeredInternalTools.push("capture_screenshot");
+    }
+
+    // Console logs tool
+    if (toolsConfig.console) {
+      const consoleTool: ToolDefinition = {
+        name: "get_console_logs",
+        description:
+          "Get recent console logs from the browser. Use this to debug errors, warnings, or understand what's happening in the application.",
+        location: "client",
+        inputSchema: {
+          type: "object",
+          properties: {
+            types: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["log", "info", "warn", "error", "debug"],
+              },
+              description: "Filter by log types (default: all types)",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of logs to return (default: 50)",
+            },
+          },
+        },
+        needsApproval: toolsConfig.requireConsent !== false,
+        approvalMessage: "Access console logs to help debug the issue?",
+        handler: async (params: { types?: string[]; limit?: number }) => {
+          console.log("[YourGPT] get_console_logs: handler called", params);
+          try {
+            const logs = getConsoleLogs({
+              ...toolsConfig.consoleOptions,
+              types: params.types as
+                | ("log" | "info" | "warn" | "error" | "debug")[]
+                | undefined,
+              limit: params.limit,
+            });
+            console.log("[YourGPT] get_console_logs: success", {
+              count: logs.logs.length,
+            });
+            return {
+              success: true,
+              message: `Retrieved ${logs.logs.length} console logs`,
+              data: {
+                logs: logs.logs,
+                totalCaptured: logs.totalCaptured,
+                formatted: formatLogsForAI(logs.logs),
+              },
+            };
+          } catch (error) {
+            console.error("[YourGPT] get_console_logs: error", error);
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to get console logs",
+            };
+          }
+        },
+      };
+      registeredToolsRef.current.set("get_console_logs", consoleTool);
+      registeredInternalTools.push("get_console_logs");
+    }
+
+    // Network requests tool
+    if (toolsConfig.network) {
+      const networkTool: ToolDefinition = {
+        name: "get_network_requests",
+        description:
+          "Get recent network requests made by the application. Use this to debug API issues, failed requests, or understand data flow.",
+        location: "client",
+        inputSchema: {
+          type: "object",
+          properties: {
+            failedOnly: {
+              type: "boolean",
+              description: "Only return failed requests (default: true)",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of requests to return (default: 20)",
+            },
+          },
+        },
+        needsApproval: toolsConfig.requireConsent !== false,
+        approvalMessage: "Access network request logs to help debug the issue?",
+        handler: async (params: { failedOnly?: boolean; limit?: number }) => {
+          console.log("[YourGPT] get_network_requests: handler called", params);
+          try {
+            const requests = getNetworkRequests({
+              ...toolsConfig.networkOptions,
+              failedOnly: params.failedOnly,
+              limit: params.limit,
+            });
+            console.log("[YourGPT] get_network_requests: success", {
+              count: requests.requests.length,
+            });
+            return {
+              success: true,
+              message: `Retrieved ${requests.requests.length} network requests`,
+              data: {
+                requests: requests.requests,
+                totalCaptured: requests.totalCaptured,
+                formatted: formatRequestsForAI(requests.requests),
+              },
+            };
+          } catch (error) {
+            console.error("[YourGPT] get_network_requests: error", error);
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to get network requests",
+            };
+          }
+        },
+      };
+      registeredToolsRef.current.set("get_network_requests", networkTool);
+      registeredInternalTools.push("get_network_requests");
+    }
+
+    // Trigger re-render to include new tools
+    if (registeredInternalTools.length > 0) {
+      setRegisteredToolsVersion((v) => v + 1);
+    }
+
+    // Cleanup: unregister internal tools on unmount or config change
+    return () => {
+      registeredInternalTools.forEach((name) => {
+        registeredToolsRef.current.delete(name);
+      });
+      if (registeredInternalTools.length > 0) {
+        setRegisteredToolsVersion((v) => v + 1);
+      }
+    };
+  }, [
+    toolsConfig?.screenshot,
+    toolsConfig?.console,
+    toolsConfig?.network,
+    toolsConfig?.requireConsent,
+    toolsConfig?.screenshotOptions,
     toolsConfig?.consoleOptions,
     toolsConfig?.networkOptions,
   ]);
@@ -744,13 +1075,39 @@ export function YourGPTProvider({
             msg.attachments = m.attachments;
           }
           // Preserve tool_calls and tool_call_id for tool results
+          // Note: Message type uses toolCalls (camelCase), but API uses tool_calls (snake_case)
+          // Handle both ToolCall (with arguments) and ToolCallInfo (with args)
+          if (m.toolCalls && m.toolCalls.length > 0) {
+            msg.tool_calls = m.toolCalls.map((tc) => {
+              // Get arguments from either 'arguments' (ToolCall) or 'args' (ToolCallInfo)
+              const tcArgs =
+                tc.arguments ||
+                (tc as unknown as { args: Record<string, unknown> }).args ||
+                {};
+              return {
+                id: tc.id,
+                type: "function",
+                function: {
+                  name: tc.name,
+                  arguments:
+                    typeof tcArgs === "string"
+                      ? tcArgs
+                      : JSON.stringify(tcArgs),
+                },
+              };
+            });
+          }
           const extendedMsg = m as unknown as Record<string, unknown>;
-          if (extendedMsg.tool_calls) msg.tool_calls = extendedMsg.tool_calls;
-          if (extendedMsg.tool_call_id)
+          // Also check for snake_case (from raw messages in agent loop)
+          if (extendedMsg.tool_calls && !msg.tool_calls) {
+            msg.tool_calls = extendedMsg.tool_calls;
+          }
+          if (extendedMsg.tool_call_id) {
             msg.tool_call_id = extendedMsg.tool_call_id;
+          }
           return msg;
         }),
-        threadId: chatState.threadId,
+        threadId: currentThreadId,
         botId: cloud?.botId,
         config: config,
         systemPrompt: buildSystemPromptWithContexts(),
@@ -759,16 +1116,33 @@ export function YourGPTProvider({
           description: a.description,
           parameters: a.parameters,
         })),
+        // Only send client-side tools (server-side tools are handled by runtime)
         tools: Array.from(registeredToolsRef.current.values())
-          .filter((t) => t.available !== false)
+          .filter((t) => t.available !== false && t.location !== "server")
           .map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: t.inputSchema,
           })),
+        // Pass knowledge base config to server (if enabled)
+        knowledgeBase:
+          knowledgeBase && knowledgeBase.enabled !== false
+            ? {
+                projectUid: knowledgeBase.projectUid,
+                token: knowledgeBase.token,
+                appId: knowledgeBase.appId,
+                limit: knowledgeBase.limit,
+              }
+            : undefined,
       };
     },
-    [chatState.threadId, cloud?.botId, config, buildSystemPromptWithContexts],
+    [
+      currentThreadId,
+      cloud?.botId,
+      config,
+      buildSystemPromptWithContexts,
+      knowledgeBase,
+    ],
   );
 
   // Capture context based on approved tools
@@ -949,7 +1323,6 @@ export function YourGPTProvider({
         ];
       }
 
-      chatDispatch({ type: "ADD_MESSAGE", payload: userMessage });
       threadsDispatch({
         type: "ADD_MESSAGE_TO_THREAD",
         payload: {
@@ -968,7 +1341,6 @@ export function YourGPTProvider({
         createdAt: new Date(),
       };
 
-      chatDispatch({ type: "ADD_MESSAGE", payload: assistantMessage });
       threadsDispatch({
         type: "ADD_MESSAGE_TO_THREAD",
         payload: {
@@ -985,7 +1357,7 @@ export function YourGPTProvider({
           method: "POST",
           headers: buildRequestHeaders(),
           body: JSON.stringify(
-            buildRequestBody([...chatState.messages, userMessage], {
+            buildRequestBody([...currentMessages, userMessage], {
               includeAttachments: true,
             }),
           ),
@@ -1013,8 +1385,8 @@ export function YourGPTProvider({
       }
     },
     [
-      chatState.messages,
-      chatState.threadId,
+      currentMessages,
+      currentThreadId,
       cloud,
       config,
       getEndpoint,
@@ -1025,22 +1397,289 @@ export function YourGPTProvider({
     ],
   );
 
+  // ============================================
+  // Permission Management Functions
+  // ============================================
+
+  /**
+   * Get the permission level for a tool
+   * Checks session permissions first, then persisted storage
+   */
+  const getToolPermission = useCallback(
+    async (toolName: string): Promise<PermissionLevel> => {
+      // Check session permissions first
+      const sessionPermission = sessionPermissionsRef.current.get(toolName);
+      if (sessionPermission) {
+        return sessionPermission;
+      }
+
+      // Check persisted permissions
+      const stored = await permissionStorageAdapter.get(toolName);
+      if (stored) {
+        // Update last used timestamp
+        await permissionStorageAdapter.set({
+          ...stored,
+          lastUsedAt: Date.now(),
+        });
+        return stored.level;
+      }
+
+      return "ask"; // Default
+    },
+    [permissionStorageAdapter],
+  );
+
+  /**
+   * Set the permission level for a tool
+   */
+  const setToolPermission = useCallback(
+    async (toolName: string, level: PermissionLevel): Promise<void> => {
+      if (level === "session") {
+        // Session-only: store in memory
+        sessionPermissionsRef.current.set(toolName, level);
+      } else if (level === "ask") {
+        // Remove stored permission
+        await permissionStorageAdapter.remove(toolName);
+        sessionPermissionsRef.current.delete(toolName);
+        setStoredPermissions((prev) => {
+          const next = new Map(prev);
+          next.delete(toolName);
+          return next;
+        });
+      } else {
+        // Persist permission (allow_always or deny_always)
+        const permission: ToolPermission = {
+          toolName,
+          level,
+          createdAt: Date.now(),
+        };
+        await permissionStorageAdapter.set(permission);
+        setStoredPermissions((prev) => new Map(prev).set(toolName, permission));
+        sessionPermissionsRef.current.delete(toolName);
+      }
+    },
+    [permissionStorageAdapter],
+  );
+
+  /**
+   * Clear all stored permissions
+   */
+  const clearAllPermissions = useCallback(async () => {
+    await permissionStorageAdapter.clear();
+    sessionPermissionsRef.current.clear();
+    setStoredPermissions(new Map());
+  }, [permissionStorageAdapter]);
+
   // Send message (with automatic intent detection)
+  /**
+   * Helper: Check if a tool needs approval based on its definition, params, and stored permissions
+   * Returns an object with:
+   * - needsApproval: whether to show the approval UI
+   * - autoAction: if defined, skip the UI and auto-approve/reject
+   */
+  const checkNeedsApproval = useCallback(
+    async (
+      tool: ToolDefinition | undefined,
+      params: Record<string, unknown>,
+    ): Promise<{
+      needsApproval: boolean;
+      autoAction?: "approve" | "reject";
+    }> => {
+      if (!tool?.needsApproval) {
+        return { needsApproval: false };
+      }
+
+      // Check if tool has needsApproval flag
+      let requiresApproval: boolean;
+      if (typeof tool.needsApproval === "function") {
+        requiresApproval = await tool.needsApproval(params);
+      } else {
+        requiresApproval = tool.needsApproval === true;
+      }
+
+      if (!requiresApproval) {
+        return { needsApproval: false };
+      }
+
+      // Check stored permission
+      const permission = await getToolPermission(tool.name);
+
+      switch (permission) {
+        case "allow_always":
+        case "session":
+          return { needsApproval: false, autoAction: "approve" };
+        case "deny_always":
+          return { needsApproval: false, autoAction: "reject" };
+        case "ask":
+        default:
+          return { needsApproval: true };
+      }
+    },
+    [getToolPermission],
+  );
+
+  /**
+   * Helper: Get approval message for a tool
+   */
+  const getApprovalMessage = useCallback(
+    (
+      tool: ToolDefinition | undefined,
+      params: Record<string, unknown>,
+    ): string => {
+      if (!tool?.approvalMessage) {
+        return `Tool "${tool?.name || "unknown"}" requires your approval to execute.`;
+      }
+
+      if (typeof tool.approvalMessage === "function") {
+        return tool.approvalMessage(params);
+      }
+
+      return tool.approvalMessage;
+    },
+    [],
+  );
+
   /**
    * Execute pending tool calls and continue the conversation (Vercel AI SDK pattern)
    * This creates a client-side loop that executes tools and sends follow-up requests
+   *
+   * Supports needsApproval pattern:
+   * - If a tool needs approval and isn't approved yet, execution pauses
+   * - User must approve/reject via approveToolExecution/rejectToolExecution
+   * - Execution continues automatically when all approvals are resolved
    */
   const executeToolsAndContinue = useCallback(
     async (previousMessages: Message[], assistantMessageId: string) => {
+      console.log("[YourGPT:Execute] executeToolsAndContinue called");
       const toolCalls = pendingToolCallsRef.current;
       const assistantMessage = pendingAssistantMessageRef.current;
 
-      if (toolCalls.length === 0) return;
+      console.log(
+        "[YourGPT:Execute] pendingToolCalls:",
+        toolCalls.length,
+        toolCalls.map((t) => t.name),
+      );
+      if (toolCalls.length === 0) {
+        console.log("[YourGPT:Execute] No tool calls, returning");
+        return;
+      }
 
-      // Execute all pending tool calls
+      // First pass: Check which tools need approval (considering stored permissions)
+      const toolsNeedingApproval: string[] = [];
+
+      for (const tc of toolCalls) {
+        const tool = registeredToolsRef.current.get(tc.name);
+        const approvalCheck = await checkNeedsApproval(tool, tc.args);
+
+        // Check current approval status from state (use ref to get latest state)
+        const currentState = agentLoopStateRef.current;
+        const execution = currentState.toolExecutions.find(
+          (e) => e.id === tc.id,
+        );
+        const currentApprovalStatus = execution?.approvalStatus || "none";
+        console.log(
+          "[YourGPT:Execute] Tool:",
+          tc.name,
+          "approvalStatus:",
+          currentApprovalStatus,
+        );
+
+        // Handle auto-action from stored permissions
+        if (approvalCheck.autoAction && currentApprovalStatus === "none") {
+          if (approvalCheck.autoAction === "approve") {
+            // Auto-approve based on stored permission
+            agentLoopDispatch({
+              type: "UPDATE_EXECUTION",
+              payload: {
+                id: tc.id,
+                update: {
+                  approvalStatus: "approved",
+                  approvalTimestamp: Date.now(),
+                },
+              },
+            });
+          } else if (approvalCheck.autoAction === "reject") {
+            // Auto-reject based on stored permission
+            agentLoopDispatch({
+              type: "UPDATE_EXECUTION",
+              payload: {
+                id: tc.id,
+                update: {
+                  approvalStatus: "rejected",
+                  approvalTimestamp: Date.now(),
+                  status: "error",
+                  error: "Automatically denied based on saved preference",
+                },
+              },
+            });
+          }
+          // Continue to next tool (don't add to needingApproval list)
+          continue;
+        }
+
+        if (approvalCheck.needsApproval && currentApprovalStatus === "none") {
+          // Tool needs approval but hasn't been marked yet
+          const approvalMessage = getApprovalMessage(tool, tc.args);
+          agentLoopDispatch({
+            type: "UPDATE_EXECUTION",
+            payload: {
+              id: tc.id,
+              update: {
+                approvalStatus: "required",
+                approvalMessage,
+              },
+            },
+          });
+          toolsNeedingApproval.push(tc.id);
+        } else if (
+          approvalCheck.needsApproval &&
+          currentApprovalStatus === "required"
+        ) {
+          // Still waiting for approval
+          toolsNeedingApproval.push(tc.id);
+        }
+      }
+
+      // If any tools are waiting for approval, pause execution
+      if (toolsNeedingApproval.length > 0) {
+        console.log(
+          "[YourGPT:Execute] Tools waiting for approval:",
+          toolsNeedingApproval,
+        );
+        // Store state for resumption after approval
+        pendingToolCallsRef.current = toolCalls;
+        pendingAssistantMessageRef.current = assistantMessage;
+        pendingMessagesForApprovalRef.current = previousMessages;
+        pendingAssistantIdForApprovalRef.current = assistantMessageId;
+        return; // Wait for user approval
+      }
+
+      console.log(
+        "[YourGPT:Execute] All tools approved, proceeding to execute",
+      );
+
+      // Execute all pending tool calls (either approved or don't need approval)
       const toolResults: Array<{ id: string; result: ToolResponse }> = [];
 
       for (const tc of toolCalls) {
+        const tool = registeredToolsRef.current.get(tc.name);
+        // Use ref to get latest state (avoid stale closure)
+        const latestState = agentLoopStateRef.current;
+        const execution = latestState.toolExecutions.find(
+          (e) => e.id === tc.id,
+        );
+
+        // Check if this tool was rejected
+        if (execution?.approvalStatus === "rejected") {
+          // Tool was rejected - return rejection message to AI
+          const result: ToolResponse = {
+            success: false,
+            error: execution.error || "User rejected this action",
+          };
+          toolResults.push({ id: tc.id, result });
+          continue;
+        }
+
         // Update status to executing
         agentLoopDispatch({
           type: "UPDATE_EXECUTION",
@@ -1050,12 +1689,23 @@ export function YourGPTProvider({
           },
         });
 
-        const tool = registeredToolsRef.current.get(tc.name);
         let result: ToolResponse;
 
         if (tool?.handler) {
           try {
+            console.log(
+              "[YourGPT:Execute] Calling handler for:",
+              tc.name,
+              "args:",
+              tc.args,
+            );
             result = await tool.handler(tc.args);
+            console.log(
+              "[YourGPT:Execute] Handler returned for:",
+              tc.name,
+              "success:",
+              result?.success,
+            );
             agentLoopDispatch({
               type: "UPDATE_EXECUTION",
               payload: {
@@ -1100,6 +1750,104 @@ export function YourGPTProvider({
       pendingToolCallsRef.current = [];
       pendingAssistantMessageRef.current = null;
 
+      // Check for tool results that should be added as user messages (like screenshots)
+      // These will be added to both chat UI and sent to server for AI vision
+      const screenshotAttachments: MessageAttachment[] = [];
+
+      // Process tool results - extract attachments and simplify tool results
+      for (let i = 0; i < toolResults.length; i++) {
+        const { result } = toolResults[i];
+        const extResult = result as ToolResponse & {
+          addAsUserMessage?: boolean;
+          userMessageContent?: string;
+          data?: { attachment?: MessageAttachment };
+        };
+
+        if (extResult.addAsUserMessage && extResult.data?.attachment) {
+          // Collect attachment for user message
+          screenshotAttachments.push(extResult.data.attachment);
+
+          // Replace tool result with simple message (don't send base64 as tool result)
+          toolResults[i].result = {
+            success: true,
+            message:
+              "Screenshot captured successfully. The image is shared in the conversation.",
+          };
+        }
+      }
+
+      // Create user message with screenshots (for both UI and server)
+      let screenshotUserMessage: Message | null = null;
+      let responseMessageId = assistantMessageId; // Default to original assistant message
+
+      if (screenshotAttachments.length > 0) {
+        // Check if the original assistant message has empty content (only had tool_calls)
+        // If so, remove it to avoid showing an empty bubble in the UI
+        const originalAssistantMsg = currentMessages.find(
+          (m) => m.id === assistantMessageId,
+        );
+        if (originalAssistantMsg && !originalAssistantMsg.content?.trim()) {
+          if (currentThreadId) {
+            threadsDispatch({
+              type: "REMOVE_MESSAGE_FROM_THREAD",
+              payload: {
+                threadId: currentThreadId,
+                messageId: assistantMessageId,
+              },
+            });
+          }
+          console.log(
+            "[YourGPT] Removed empty assistant message:",
+            assistantMessageId,
+          );
+        }
+
+        // 1. Add screenshot user message
+        screenshotUserMessage = createMessage({
+          role: "user",
+          content: "Here's my screen:",
+          attachments: screenshotAttachments,
+        });
+        if (currentThreadId) {
+          threadsDispatch({
+            type: "ADD_MESSAGE_TO_THREAD",
+            payload: {
+              threadId: currentThreadId,
+              message: screenshotUserMessage,
+            },
+          });
+        }
+        console.log(
+          "[YourGPT] Added screenshot as user message:",
+          screenshotUserMessage.id,
+        );
+
+        // 2. Create NEW assistant message for the response (appears AFTER screenshot)
+        responseMessageId = generateMessageId();
+        const newAssistantMessage: Message = {
+          id: responseMessageId,
+          role: "assistant",
+          content: "",
+          createdAt: new Date(),
+        };
+        if (currentThreadId) {
+          threadsDispatch({
+            type: "ADD_MESSAGE_TO_THREAD",
+            payload: {
+              threadId: currentThreadId,
+              message: newAssistantMessage,
+            },
+          });
+        }
+        console.log(
+          "[YourGPT] Created new assistant message for response:",
+          responseMessageId,
+        );
+
+        // Wait for React to commit the state before streaming response
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
       // Build messages with tool results for next request
       // Include: previous messages (excluding the streaming assistant message) + assistant message with tool_calls + tool result messages
       // We exclude the last assistant message from previousMessages because it was added during streaming
@@ -1114,7 +1862,7 @@ export function YourGPTProvider({
             return true;
           })
           .map((m) => {
-            // Preserve the full message structure including tool_calls and tool_call_id
+            // Preserve the full message structure including tool_calls, tool_call_id, and attachments
             const msg: Record<string, unknown> = {
               role: m.role,
               content: m.content,
@@ -1128,6 +1876,10 @@ export function YourGPTProvider({
             if (extendedMsg.tool_call_id) {
               msg.tool_call_id = extendedMsg.tool_call_id;
             }
+            // Preserve attachments if present (for vision/image messages)
+            if (m.attachments && m.attachments.length > 0) {
+              msg.attachments = m.attachments;
+            }
             return msg;
           }),
       ];
@@ -1140,11 +1892,43 @@ export function YourGPTProvider({
       }
 
       // Add tool result messages (OpenAI format)
+      // Also persist them to threadsState so subsequent messages include them
       for (const { id, result } of toolResults) {
-        messagesWithResults.push({
-          role: "tool",
+        const toolResultMessage = {
+          role: "tool" as const,
           tool_call_id: id,
           content: JSON.stringify(result),
+        };
+        messagesWithResults.push(toolResultMessage);
+
+        // Persist tool result message to threads state
+        if (currentThreadId) {
+          const toolMsg: Message = {
+            id: generateMessageId(),
+            role: "tool" as Message["role"],
+            content: JSON.stringify(result),
+            createdAt: new Date(),
+          };
+          // Add tool_call_id for proper message format
+          (toolMsg as unknown as Record<string, unknown>).tool_call_id = id;
+          threadsDispatch({
+            type: "ADD_MESSAGE_TO_THREAD",
+            payload: {
+              threadId: currentThreadId,
+              message: toolMsg,
+            },
+          });
+        }
+      }
+
+      // Add screenshot user message with image (for AI vision)
+      // This comes AFTER tool results so AI sees the image as part of the conversation
+      if (screenshotUserMessage) {
+        messagesWithResults.push({
+          role: "user",
+          content: screenshotUserMessage.content,
+          // Attachments will be converted to provider-specific format by the adapter
+          attachments: screenshotUserMessage.attachments,
         });
       }
 
@@ -1155,7 +1939,7 @@ export function YourGPTProvider({
           headers: buildRequestHeaders(),
           body: JSON.stringify({
             messages: messagesWithResults,
-            threadId: chatState.threadId,
+            threadId: currentThreadId,
             botId: cloud?.botId,
             config: config,
             systemPrompt: buildSystemPromptWithContexts(),
@@ -1164,8 +1948,9 @@ export function YourGPTProvider({
               description: a.description,
               parameters: a.parameters,
             })),
+            // Only send client-side tools (server-side tools are handled by runtime)
             tools: Array.from(registeredToolsRef.current.values())
-              .filter((t) => t.available !== false)
+              .filter((t) => t.available !== false && t.location !== "server")
               .map((t) => ({
                 name: t.name,
                 description: t.description,
@@ -1180,15 +1965,16 @@ export function YourGPTProvider({
         }
 
         // Process the response stream using the ref
+        // Use responseMessageId (which is either the new message after screenshot, or original)
         const streamHandler = handleStreamEventRef.current;
         if (streamHandler) {
           for await (const event of streamSSE(response)) {
-            await streamHandler(event, assistantMessageId);
+            await streamHandler(event, responseMessageId);
           }
         }
 
         // If more tool calls were detected, continue the loop
-        // We need to preserve the full message structure including tool_calls
+        // We need to preserve the full message structure including tool_calls and attachments
         if (pendingToolCallsRef.current.length > 0) {
           // Build updated messages preserving the full structure
           // messagesWithResults already has the proper format with tool_calls
@@ -1214,9 +2000,13 @@ export function YourGPTProvider({
               (msg as unknown as Record<string, unknown>).tool_call_id =
                 m.tool_call_id;
             }
+            // Preserve attachments if present (for vision/image messages)
+            if (m.attachments) {
+              msg.attachments = m.attachments as MessageAttachment[];
+            }
             return msg;
           });
-          await executeToolsAndContinue(updatedMessages, assistantMessageId);
+          await executeToolsAndContinue(updatedMessages, responseMessageId);
         }
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
@@ -1224,7 +2014,7 @@ export function YourGPTProvider({
         }
       }
     },
-    [chatState.threadId, cloud, config, getEndpoint, systemPrompt],
+    [currentThreadId, cloud, config, getEndpoint, systemPrompt],
   );
 
   const sendMessage = useCallback(
@@ -1266,7 +2056,6 @@ export function YourGPTProvider({
         createdAt: new Date(),
       };
 
-      chatDispatch({ type: "ADD_MESSAGE", payload: userMessage });
       threadsDispatch({
         type: "ADD_MESSAGE_TO_THREAD",
         payload: {
@@ -1284,7 +2073,6 @@ export function YourGPTProvider({
         createdAt: new Date(),
       };
 
-      chatDispatch({ type: "ADD_MESSAGE", payload: assistantMessage });
       threadsDispatch({
         type: "ADD_MESSAGE_TO_THREAD",
         payload: {
@@ -1299,7 +2087,9 @@ export function YourGPTProvider({
           method: "POST",
           headers: buildRequestHeaders(),
           body: JSON.stringify(
-            buildRequestBody([...chatState.messages, userMessage]),
+            buildRequestBody([...currentMessages, userMessage], {
+              includeAttachments: true,
+            }),
           ),
           signal: abortControllerRef.current.signal,
         });
@@ -1318,7 +2108,7 @@ export function YourGPTProvider({
         // After stream ends, check if we need to execute tools (Vercel AI SDK pattern)
         if (pendingToolCallsRef.current.length > 0) {
           await executeToolsAndContinue(
-            [...chatState.messages, userMessage],
+            [...currentMessages, userMessage],
             assistantMessage.id,
           );
         }
@@ -1333,9 +2123,12 @@ export function YourGPTProvider({
       } finally {
         chatDispatch({ type: "SET_LOADING", payload: false });
         abortControllerRef.current = null;
-        // Clear pending state
-        pendingToolCallsRef.current = [];
-        pendingAssistantMessageRef.current = null;
+        // Only clear pending state if NOT waiting for approvals
+        // (tools waiting for approval need to persist in the refs)
+        if (!pendingMessagesForApprovalRef.current) {
+          pendingToolCallsRef.current = [];
+          pendingAssistantMessageRef.current = null;
+        }
         currentAssistantMessageIdRef.current = null;
       }
     },
@@ -1345,8 +2138,8 @@ export function YourGPTProvider({
       requestConsent,
       captureContext,
       sendMessageWithContext,
-      chatState.messages,
-      chatState.threadId,
+      currentMessages,
+      currentThreadId,
       cloud,
       config,
       getEndpoint,
@@ -1361,10 +2154,6 @@ export function YourGPTProvider({
     async (event: StreamEvent, messageId: string) => {
       switch (event.type) {
         case "message:delta":
-          chatDispatch({
-            type: "UPDATE_MESSAGE",
-            payload: { id: messageId, content: event.content },
-          });
           threadsDispatch({
             type: "UPDATE_MESSAGE_IN_THREAD",
             payload: {
@@ -1375,11 +2164,27 @@ export function YourGPTProvider({
           });
           break;
 
-        case "source:add":
-          chatDispatch({
-            type: "ADD_SOURCE",
-            payload: { messageId, source: event.source },
+        case "thinking:start":
+          // Thinking started - no action needed, just wait for deltas
+          break;
+
+        case "thinking:delta":
+          // Accumulate thinking content
+          threadsDispatch({
+            type: "UPDATE_THINKING_IN_THREAD",
+            payload: {
+              threadId: threadsState.activeThreadId,
+              messageId,
+              thinking: event.content,
+            },
           });
+          break;
+
+        case "thinking:end":
+          // Thinking ended - no action needed
+          break;
+
+        case "source:add":
           threadsDispatch({
             type: "ADD_SOURCE_TO_THREAD",
             payload: {
@@ -1402,6 +2207,7 @@ export function YourGPTProvider({
                 args: {},
                 status: "pending",
                 timestamp: Date.now(),
+                approvalStatus: "none",
               },
             });
           }
@@ -1448,6 +2254,26 @@ export function YourGPTProvider({
           pendingToolCallsRef.current = event.toolCalls;
           pendingAssistantMessageRef.current = event.assistantMessage;
 
+          // Persist tool_calls on the assistant message for history preservation
+          // Convert ToolCallInfo (with args) to ToolCall (with arguments)
+          {
+            const toolCallsForMessage: ToolCall[] = event.toolCalls.map(
+              (tc) => ({
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.args,
+              }),
+            );
+            threadsDispatch({
+              type: "SET_TOOL_CALLS_IN_THREAD",
+              payload: {
+                threadId: threadsState.activeThreadId,
+                messageId,
+                toolCalls: toolCallsForMessage,
+              },
+            });
+          }
+
           // Update existing executions with parsed args or add if not present
           // Use ref to check since React state might not have updated yet
           for (const tc of event.toolCalls) {
@@ -1471,6 +2297,7 @@ export function YourGPTProvider({
                   args: tc.args,
                   status: "pending",
                   timestamp: Date.now(),
+                  approvalStatus: "none",
                 },
               });
             }
@@ -1508,7 +2335,7 @@ export function YourGPTProvider({
     },
     [
       threadsState.activeThreadId,
-      chatState.threadId,
+      currentThreadId,
       getEndpoint,
       agentLoopState.toolExecutions,
     ],
@@ -1536,7 +2363,7 @@ export function YourGPTProvider({
   // Regenerate
   const regenerate = useCallback(
     async (messageId?: string) => {
-      const messages = chatState.messages;
+      const messages = currentMessages;
       let targetIndex = messages.length - 1;
 
       if (messageId) {
@@ -1551,18 +2378,33 @@ export function YourGPTProvider({
       if (lastUserIndex < 0) return;
 
       const newMessages = messages.slice(0, lastUserIndex);
-      chatDispatch({ type: "SET_MESSAGES", payload: newMessages });
+      threadsDispatch({
+        type: "SET_MESSAGES_IN_THREAD",
+        payload: {
+          threadId: threadsState.activeThreadId,
+          messages: newMessages,
+        },
+      });
 
       const lastUserMessage = messages[lastUserIndex];
       await sendMessage(lastUserMessage.content);
     },
-    [chatState.messages, sendMessage],
+    [currentMessages, sendMessage, threadsState.activeThreadId],
   );
 
   // Set messages
-  const setMessages = useCallback((messages: Message[]) => {
-    chatDispatch({ type: "SET_MESSAGES", payload: messages });
-  }, []);
+  const setMessages = useCallback(
+    (messages: Message[]) => {
+      threadsDispatch({
+        type: "SET_MESSAGES_IN_THREAD",
+        payload: {
+          threadId: threadsState.activeThreadId,
+          messages,
+        },
+      });
+    },
+    [threadsState.activeThreadId],
+  );
 
   // Register action
   const registerAction = useCallback((action: ActionDefinition) => {
@@ -1610,6 +2452,134 @@ export function YourGPTProvider({
     agentLoopDispatch({ type: "CLEAR_EXECUTIONS" });
     addedExecutionIdsRef.current.clear();
   }, []);
+
+  // ============================================
+  // Tool Approval Functions (needsApproval)
+  // ============================================
+
+  /**
+   * Approve a tool execution that requires approval
+   * Optionally set a permission level to remember the choice
+   */
+  const approveToolExecution = useCallback(
+    async (executionId: string, permissionLevel?: PermissionLevel) => {
+      console.log(
+        "[YourGPT:Approval] approveToolExecution called:",
+        executionId,
+        permissionLevel,
+      );
+      const execution = agentLoopState.toolExecutions.find(
+        (e) => e.id === executionId,
+      );
+      console.log(
+        "[YourGPT:Approval] Found execution:",
+        execution?.name,
+        execution?.approvalStatus,
+      );
+
+      // Save permission if specified
+      if (execution && permissionLevel && permissionLevel !== "ask") {
+        await setToolPermission(execution.name, permissionLevel);
+      }
+
+      agentLoopDispatch({
+        type: "UPDATE_EXECUTION",
+        payload: {
+          id: executionId,
+          update: {
+            approvalStatus: "approved" as const,
+            approvalTimestamp: Date.now(),
+          },
+        },
+      });
+      console.log("[YourGPT:Approval] Dispatched approval update");
+    },
+    [agentLoopState.toolExecutions, setToolPermission],
+  );
+
+  /**
+   * Reject a tool execution that requires approval
+   * Optionally set a permission level to remember the choice
+   */
+  const rejectToolExecution = useCallback(
+    async (
+      executionId: string,
+      reason?: string,
+      permissionLevel?: PermissionLevel,
+    ) => {
+      const execution = agentLoopState.toolExecutions.find(
+        (e) => e.id === executionId,
+      );
+
+      // Save permission if "deny_always" is specified
+      if (execution && permissionLevel === "deny_always") {
+        await setToolPermission(execution.name, "deny_always");
+      }
+
+      agentLoopDispatch({
+        type: "UPDATE_EXECUTION",
+        payload: {
+          id: executionId,
+          update: {
+            approvalStatus: "rejected" as const,
+            approvalTimestamp: Date.now(),
+            status: "error" as const,
+            error: reason || "User rejected this action",
+          },
+        },
+      });
+    },
+    [agentLoopState.toolExecutions, setToolPermission],
+  );
+
+  // Compute pending approvals from agent loop state
+  const pendingApprovals = useMemo(
+    () =>
+      agentLoopState.toolExecutions.filter(
+        (exec) => exec.approvalStatus === "required",
+      ),
+    [agentLoopState.toolExecutions],
+  );
+
+  // Effect to resume tool execution when all approvals are resolved
+  useEffect(() => {
+    console.log(
+      "[YourGPT:ResumeEffect] Effect triggered, pendingApprovals:",
+      pendingApprovals.length,
+    );
+    // Check if we have pending messages waiting for approval
+    if (!pendingMessagesForApprovalRef.current) {
+      console.log("[YourGPT:ResumeEffect] No pending messages ref");
+      return;
+    }
+    if (!pendingAssistantIdForApprovalRef.current) {
+      console.log("[YourGPT:ResumeEffect] No pending assistant id ref");
+      return;
+    }
+
+    // Check if there are still pending approvals
+    if (pendingApprovals.length > 0) {
+      console.log(
+        "[YourGPT:ResumeEffect] Still have pending approvals:",
+        pendingApprovals.map((p) => p.name),
+      );
+      return;
+    }
+
+    console.log(
+      "[YourGPT:ResumeEffect] All approvals resolved, resuming execution",
+    );
+    // All approvals resolved - resume execution
+    const messages = pendingMessagesForApprovalRef.current;
+    const assistantId = pendingAssistantIdForApprovalRef.current;
+
+    // Clear the refs
+    pendingMessagesForApprovalRef.current = null;
+    pendingAssistantIdForApprovalRef.current = null;
+
+    // Resume execution
+    executeToolsAndContinue(messages, assistantId);
+  }, [pendingApprovals, executeToolsAndContinue]);
 
   // ============================================
   // Thread Management Functions
@@ -1714,12 +2684,30 @@ export function YourGPTProvider({
     ],
   );
 
+  // Combined chat state (UI state + derived message data from threads)
+  const combinedChatState = useMemo(
+    () => ({
+      messages: currentMessages,
+      isLoading: chatState.isLoading,
+      error: chatState.error,
+      threadId: currentThreadId,
+      sources: currentSources,
+    }),
+    [
+      currentMessages,
+      chatState.isLoading,
+      chatState.error,
+      currentThreadId,
+      currentSources,
+    ],
+  );
+
   // Context value
   const contextValue = useMemo<YourGPTContextValue>(
     () => ({
       config: fullConfig,
       toolsConfig: toolsConfig || null,
-      chat: chatState,
+      chat: combinedChatState,
       tools: toolsState,
       agentLoop: agentLoopState,
       actions: {
@@ -1748,6 +2736,16 @@ export function YourGPTProvider({
       addToolExecution,
       updateToolExecution,
       clearToolExecutions,
+      // Tool approval handlers
+      approveToolExecution,
+      rejectToolExecution,
+      pendingApprovals,
+      // Permission management
+      storedPermissions: Array.from(storedPermissions.values()),
+      permissionsLoaded,
+      getToolPermission,
+      setToolPermission,
+      clearAllPermissions,
       addContext,
       removeContext,
       contextTree,
@@ -1756,7 +2754,7 @@ export function YourGPTProvider({
     [
       fullConfig,
       toolsConfig,
-      chatState,
+      combinedChatState,
       toolsState,
       agentLoopState,
       sendMessage,
@@ -1778,6 +2776,14 @@ export function YourGPTProvider({
       addToolExecution,
       updateToolExecution,
       clearToolExecutions,
+      approveToolExecution,
+      rejectToolExecution,
+      pendingApprovals,
+      storedPermissions,
+      permissionsLoaded,
+      getToolPermission,
+      setToolPermission,
+      clearAllPermissions,
       addContext,
       removeContext,
       contextTree,
@@ -1787,8 +2793,8 @@ export function YourGPTProvider({
 
   // Notify on messages change
   useEffect(() => {
-    onMessagesChange?.(chatState.messages);
-  }, [chatState.messages, onMessagesChange]);
+    onMessagesChange?.(currentMessages);
+  }, [currentMessages, onMessagesChange]);
 
   return (
     <ThreadsContext.Provider value={threadsContextValue}>

@@ -21,7 +21,6 @@ import { StopIcon, PlusIcon, ArrowUpIcon } from "../../icons";
 import { ChatHeader } from "./chat-header";
 import { Suggestions } from "./suggestions";
 import { DefaultMessage } from "./default-message";
-import { ToolExecutionList } from "../tools/tool-execution-list";
 import { LoopProgressBadge } from "../tools/loop-progress";
 import type { ChatProps } from "./types";
 
@@ -54,6 +53,9 @@ export function Chat({
   loopIteration,
   loopMaxIterations,
   loopRunning = false,
+  // Tool Approval
+  onApproveToolExecution,
+  onRejectToolExecution,
   // Custom rendering
   renderMessage,
   renderInput,
@@ -121,64 +123,83 @@ export function Chat({
             const isEmptyAssistant =
               message.role === "assistant" && !message.content?.trim();
 
-            // Show loader for empty assistant message while loading
-            if (isLastMessage && isEmptyAssistant && isLoading) {
-              return (
-                <Message key={message.id} className="flex gap-2">
-                  <MessageAvatar
-                    src={assistantAvatar.src || ""}
-                    alt="Assistant"
-                    fallback={assistantAvatar.fallback}
-                    className="bg-primary text-primary-foreground"
-                  />
-                  <div className="rounded-lg bg-muted px-4 py-2">
-                    <Loader variant={loaderVariant} size="sm" />
-                  </div>
-                </Message>
-              );
+            // Check if there are pending tool approvals
+            const hasPendingApprovals = toolExecutions.some(
+              (exec) => exec.approvalStatus === "required",
+            );
+
+            // Handle empty assistant messages (ones with tool_calls but no content)
+            if (isEmptyAssistant) {
+              // Don't hide if this is the last message and has pending approvals
+              // (need to show approval UI)
+              if (isLastMessage && hasPendingApprovals) {
+                // Continue to render with tool executions attached
+              } else if (isLastMessage && isLoading) {
+                // Show loader while streaming
+                return (
+                  <Message key={message.id} className="flex gap-2">
+                    <MessageAvatar
+                      src={assistantAvatar.src || ""}
+                      alt="Assistant"
+                      fallback={assistantAvatar.fallback}
+                      className="bg-primary text-primary-foreground"
+                    />
+                    <div className="rounded-lg bg-muted px-4 py-2">
+                      <Loader variant={loaderVariant} size="sm" />
+                    </div>
+                  </Message>
+                );
+              } else {
+                // Hide empty assistant messages (tool-only, no content, no pending approvals)
+                return null;
+              }
             }
+
+            // Attach toolExecutions to the last assistant message for approval/display UI
+            const messageWithExecutions =
+              message.role === "assistant" &&
+              isLastMessage &&
+              toolExecutions.length > 0
+                ? { ...message, toolExecutions }
+                : message;
 
             return renderMessage ? (
               <React.Fragment key={message.id}>
-                {renderMessage(message, index)}
+                {renderMessage(messageWithExecutions, index)}
               </React.Fragment>
             ) : (
               <DefaultMessage
                 key={message.id}
-                message={message}
+                message={messageWithExecutions}
                 userAvatar={userAvatar}
                 assistantAvatar={assistantAvatar}
                 showUserAvatar={showUserAvatar}
                 userMessageClassName={classNames.userMessage}
                 assistantMessageClassName={classNames.assistantMessage}
                 size={fontSize}
+                isLastMessage={isLastMessage}
+                isLoading={isLoading}
+                onApproveToolExecution={onApproveToolExecution}
+                onRejectToolExecution={onRejectToolExecution}
               />
             );
           })}
 
-          {/* Tool Executions */}
-          {showToolExecutions && toolExecutions.length > 0 && (
-            <div className={cn("mt-2", classNames.toolExecutions)}>
-              {/* Loop progress badge */}
-              {loopIteration !== undefined &&
-                loopMaxIterations !== undefined && (
-                  <div className={cn("mb-2", classNames.loopProgress)}>
-                    <LoopProgressBadge
-                      iteration={loopIteration}
-                      maxIterations={loopMaxIterations}
-                      isRunning={loopRunning}
-                      maxReached={loopIteration >= loopMaxIterations}
-                    />
-                  </div>
-                )}
-
-              <ToolExecutionList
-                executions={toolExecutions}
-                title=""
-                emptyMessage=""
-              />
-            </div>
-          )}
+          {/* Loop Progress Badge - commented out for now
+          {showToolExecutions &&
+            loopIteration !== undefined &&
+            loopMaxIterations !== undefined &&
+            (loopRunning || loopIteration > 0) && (
+              <div className={cn("mt-2", classNames.loopProgress)}>
+                <LoopProgressBadge
+                  iteration={loopIteration}
+                  maxIterations={loopMaxIterations}
+                  isRunning={loopRunning}
+                  maxReached={loopIteration >= loopMaxIterations}
+                />
+              </div>
+            )}
+          */}
 
           <ChatContainerScrollAnchor />
         </ChatContainerContent>
