@@ -1,0 +1,688 @@
+---
+title: Message Persistence
+description: How to store and sync chat messages with databases
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Cards, Card } from 'fumadocs-ui/components/card';
+
+# Message Persistence
+
+Learn how YourGPT stores messages, how tool calls work in the message history, and best practices for database synchronization.
+
+<Callout type="info">
+**TL;DR**: YourGPT uses OpenAI's message format. Tool calls and results are stored as separate messages, then merged at display time for a clean UI.
+</Callout>
+
+---
+
+## Message Format Overview
+
+YourGPT uses the **OpenAI message format** - the industry standard that works across all LLM providers.
+
+### The Four Message Roles
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  role: "user"       │  User's input message                │
+├─────────────────────┼───────────────────────────────────────┤
+│  role: "assistant"  │  AI's response (may include tool_calls)│
+├─────────────────────┼───────────────────────────────────────┤
+│  role: "tool"       │  Result of a tool execution          │
+├─────────────────────┼───────────────────────────────────────┤
+│  role: "system"     │  System prompt (first message)       │
+└─────────────────────┴───────────────────────────────────────┘
+```
+
+---
+
+## Example: Complete Tool Call Flow
+
+Let's trace a real conversation where the AI calls a tool.
+
+### Step 1: User Message
+
+User types: *"Create a meeting for tomorrow at 2pm"*
+
+```json
+{
+  "id": "msg_001",
+  "role": "user",
+  "content": "Create a meeting for tomorrow at 2pm",
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+
+### Step 2: Assistant Decides to Call a Tool
+
+AI responds with a `tool_calls` array (no content yet):
+
+```json
+{
+  "id": "msg_002",
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [
+    {
+      "id": "call_abc123",
+      "type": "function",
+      "function": {
+        "name": "create_event",
+        "arguments": "{\"title\":\"Meeting\",\"date\":\"2024-01-16\",\"time\":\"14:00\"}"
+      }
+    }
+  ],
+  "created_at": "2024-01-15T10:30:01Z"
+}
+```
+
+### Step 3: Tool Executes and Returns Result
+
+Your tool handler runs, and the SDK creates a tool result message:
+
+```json
+{
+  "id": "msg_003",
+  "role": "tool",
+  "content": "{\"success\":true,\"eventId\":\"evt_789\",\"message\":\"Event created\"}",
+  "tool_call_id": "call_abc123",
+  "created_at": "2024-01-15T10:30:02Z"
+}
+```
+
+<Callout type="info">
+**Key Link**: `tool_call_id` in the tool message matches `tool_calls[].id` in the assistant message. This is how results are connected to their calls.
+</Callout>
+
+### Step 4: AI Gives Final Response
+
+AI sees the tool result and responds:
+
+```json
+{
+  "id": "msg_004",
+  "role": "assistant",
+  "content": "Done! I've created your meeting for tomorrow at 2pm.",
+  "created_at": "2024-01-15T10:30:03Z"
+}
+```
+
+### Complete Conversation in Database
+
+```json
+[
+  {
+    "id": "msg_001",
+    "role": "user",
+    "content": "Create a meeting for tomorrow at 2pm"
+  },
+  {
+    "id": "msg_002",
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [{"id": "call_abc123", "function": {"name": "create_event", "arguments": "..."}}]
+  },
+  {
+    "id": "msg_003",
+    "role": "tool",
+    "content": "{\"success\":true,\"eventId\":\"evt_789\"}",
+    "tool_call_id": "call_abc123"
+  },
+  {
+    "id": "msg_004",
+    "role": "assistant",
+    "content": "Done! I've created your meeting for tomorrow at 2pm."
+  }
+]
+```
+
+---
+
+## Storage vs Display
+
+The key insight: **store in API format, transform for display**.
+
+### What Gets Stored (Database)
+
+Each message is one row. Simple, queryable, API-compatible:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ messages table                                                          │
+├──────────┬───────────┬──────────────────────────────┬───────────────────┤
+│ id       │ role      │ content                      │ tool_calls/id     │
+├──────────┼───────────┼──────────────────────────────┼───────────────────┤
+│ msg_001  │ user      │ "Create a meeting..."        │ NULL              │
+│ msg_002  │ assistant │ NULL                         │ [{id:"call_abc"}] │
+│ msg_003  │ tool      │ '{"success":true}'           │ call_abc (ref)    │
+│ msg_004  │ assistant │ "Done! I've created..."      │ NULL              │
+└──────────┴───────────┴──────────────────────────────┴───────────────────┘
+```
+
+### What User Sees (UI)
+
+Tool calls and results merged into a clean display:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [You] Create a meeting for tomorrow at 2pm                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│ [AI] Done! I've created your meeting for tomorrow at 2pm.               │
+│                                                                         │
+│ ┌─ Tools ─────────────────────────────────────────────────────────────┐ │
+│ │ ✓ create_event                                                      │ │
+│ │   → {"success": true, "eventId": "evt_789"}                         │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+<Callout type="info">
+**Why separate storage and display?**
+- Storage: API-compatible, simple queries, works with any LLM
+- Display: User-friendly, tools grouped with results, no clutter
+</Callout>
+
+---
+
+## Database Schema
+
+### Recommended SQL Schema
+
+```sql
+CREATE TABLE threads (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+
+  -- Core fields (OpenAI format)
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool', 'system')),
+  content TEXT,                           -- NULL for tool-calling assistant messages
+
+  -- Tool call fields
+  tool_calls JSONB,                       -- [{id, type, function: {name, arguments}}]
+  tool_call_id TEXT,                      -- References tool_calls[].id
+
+  -- Metadata
+  metadata JSONB,                         -- {thinking, sources, attachments, model, usage}
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  -- Indexes
+  CONSTRAINT fk_thread FOREIGN KEY (thread_id) REFERENCES threads(id)
+);
+
+-- Fast thread loading
+CREATE INDEX idx_messages_thread ON messages(thread_id, created_at);
+
+-- Find tool results
+CREATE INDEX idx_messages_tool_call ON messages(tool_call_id) WHERE tool_call_id IS NOT NULL;
+```
+
+### TypeScript Types
+
+```typescript
+interface Message {
+  id: string;
+  thread_id?: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string | null;
+
+  // For assistant messages that call tools
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: {
+      name: string;
+      arguments: string; // JSON string
+    };
+  }>;
+
+  // For tool result messages
+  tool_call_id?: string;
+
+  // Flexible metadata
+  metadata?: {
+    thinking?: string;      // Extended thinking (Claude, DeepSeek)
+    sources?: Source[];     // Knowledge base results
+    attachments?: Attachment[];
+    model?: string;
+    usage?: TokenUsage;
+  };
+
+  created_at: Date;
+}
+```
+
+---
+
+## Sync Patterns
+
+### Pattern 1: Batch Save (Simple)
+
+Save all messages when conversation changes. Good for getting started.
+
+```typescript
+// In YourGPTProvider
+<YourGPTProvider
+  runtimeUrl="/api/chat"
+  onMessagesChange={async (messages) => {
+    // Replace all messages for this thread
+    await db.query(`
+      DELETE FROM messages WHERE thread_id = $1;
+      INSERT INTO messages (id, thread_id, role, content, tool_calls, tool_call_id, metadata, created_at)
+      VALUES ${messages.map((_, i) => `($${i * 7 + 2}, $1, $${i * 7 + 3}, ...)`).join(', ')}
+    `, [threadId, ...messages.flatMap(m => [m.id, m.role, m.content, ...])]);
+  }}
+>
+```
+
+**Pros**: Simple to implement
+**Cons**: Inefficient for large threads, potential race conditions
+
+---
+
+### Pattern 2: Incremental Save (Recommended)
+
+Save each message as it's created. More efficient and reliable.
+
+```typescript
+// Custom storage adapter
+const dbStorageAdapter: ThreadStorageAdapter = {
+  save: async (threads) => {
+    for (const thread of threads) {
+      // Upsert thread
+      await db.query(`
+        INSERT INTO threads (id, title, created_at, updated_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (id) DO UPDATE SET title = $2, updated_at = $4
+      `, [thread.id, thread.title, thread.createdAt, thread.updatedAt]);
+
+      // Upsert messages
+      for (const msg of thread.messages) {
+        await db.query(`
+          INSERT INTO messages (id, thread_id, role, content, tool_calls, tool_call_id, metadata, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (id) DO NOTHING
+        `, [msg.id, thread.id, msg.role, msg.content, msg.tool_calls, msg.tool_call_id, msg.metadata, msg.created_at]);
+      }
+    }
+  },
+
+  load: async () => {
+    const threads = await db.query(`SELECT * FROM threads ORDER BY updated_at DESC`);
+    const messages = await db.query(`SELECT * FROM messages ORDER BY created_at`);
+
+    return threads.map(t => ({
+      ...t,
+      messages: messages.filter(m => m.thread_id === t.id)
+    }));
+  },
+
+  clear: async () => {
+    await db.query(`DELETE FROM threads`); // Cascades to messages
+  }
+};
+
+// Use it
+<YourGPTProvider
+  runtimeUrl="/api/chat"
+  persistence={{ enabled: true, storage: 'custom', customStorage: dbStorageAdapter }}
+>
+```
+
+---
+
+### Pattern 3: Server-Side Persistence (Production)
+
+The runtime saves messages directly. Most reliable for production.
+
+```
+┌─────────────┐     Stream      ┌─────────────┐      Save      ┌─────────┐
+│   Client    │ ◄──────────────►│   Runtime   │ ──────────────►│   DB    │
+│  (React)    │   SSE events    │   (Server)  │   Each message │         │
+└─────────────┘                 └─────────────┘                └─────────┘
+         │                             │
+         │  Load on page load          │
+         └─────────────────────────────┘
+               GET /threads/:id
+```
+
+```typescript
+// In your runtime/server
+import { createRuntime } from '@yourgpt/copilot-sdk-runtime';
+
+const runtime = createRuntime({
+  provider: 'openai',
+  model: 'gpt-4',
+
+  // Save messages directly in runtime
+  onMessageComplete: async (threadId, message) => {
+    await db.messages.create({
+      thread_id: threadId,
+      ...message
+    });
+  }
+});
+```
+
+**Benefits**:
+- Messages saved even if client disconnects
+- Single source of truth
+- No client-side persistence needed
+- Better for real-time collaborative scenarios
+
+---
+
+## Display Transformation
+
+Transform stored messages for display by merging tool results into their parent assistant messages.
+
+### The Transform Function
+
+```typescript
+function transformForDisplay(messages: Message[]): DisplayMessage[] {
+  // Build a map of tool results by their tool_call_id
+  const toolResults = new Map<string, string>();
+  messages
+    .filter(m => m.role === 'tool' && m.tool_call_id)
+    .forEach(m => toolResults.set(m.tool_call_id!, m.content || ''));
+
+  // Filter out tool messages and merge results into assistant messages
+  return messages
+    .filter(m => m.role !== 'tool') // Hide tool messages
+    .map(m => {
+      if (m.role !== 'assistant' || !m.tool_calls?.length) {
+        return m; // Pass through non-tool-calling messages
+      }
+
+      // Merge tool results into the tool_calls
+      const toolCallsWithResults = m.tool_calls.map(tc => ({
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments),
+        result: toolResults.get(tc.id)
+          ? JSON.parse(toolResults.get(tc.id)!)
+          : null
+      }));
+
+      return {
+        ...m,
+        toolExecutions: toolCallsWithResults
+      };
+    });
+}
+```
+
+### Usage in React
+
+```tsx
+// In connected-chat.tsx or your chat component
+const visibleMessages = useMemo(() => {
+  return transformForDisplay(messages);
+}, [messages]);
+
+return (
+  <Chat messages={visibleMessages} />
+);
+```
+
+---
+
+## Multi-Tool Calls
+
+AI can call multiple tools in one message. Here's how it looks:
+
+### Stored Format
+
+```json
+[
+  {
+    "id": "msg_001",
+    "role": "user",
+    "content": "Create a meeting and send invites to the team"
+  },
+  {
+    "id": "msg_002",
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_001",
+        "type": "function",
+        "function": {
+          "name": "create_event",
+          "arguments": "{\"title\":\"Team Meeting\",\"date\":\"2024-01-16\"}"
+        }
+      },
+      {
+        "id": "call_002",
+        "type": "function",
+        "function": {
+          "name": "send_invites",
+          "arguments": "{\"emails\":[\"alice@co.com\",\"bob@co.com\"]}"
+        }
+      }
+    ]
+  },
+  {
+    "id": "msg_003",
+    "role": "tool",
+    "content": "{\"success\":true,\"eventId\":\"evt_123\"}",
+    "tool_call_id": "call_001"
+  },
+  {
+    "id": "msg_004",
+    "role": "tool",
+    "content": "{\"success\":true,\"sent\":2}",
+    "tool_call_id": "call_002"
+  },
+  {
+    "id": "msg_005",
+    "role": "assistant",
+    "content": "Done! Created the meeting and sent invites to Alice and Bob."
+  }
+]
+```
+
+### Display Format (After Transform)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [You] Create a meeting and send invites to the team                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ [AI] Done! Created the meeting and sent invites to Alice and Bob.       │
+│                                                                         │
+│ ┌─ Tools ─────────────────────────────────────────────────────────────┐ │
+│ │ ✓ create_event                                                      │ │
+│ │   Input: {"title": "Team Meeting", "date": "2024-01-16"}            │ │
+│ │   Result: {"success": true, "eventId": "evt_123"}                   │ │
+│ │                                                                     │ │
+│ │ ✓ send_invites                                                      │ │
+│ │   Input: {"emails": ["alice@co.com", "bob@co.com"]}                 │ │
+│ │   Result: {"success": true, "sent": 2}                              │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Comparison: YourGPT vs Vercel AI SDK
+
+| Aspect | YourGPT | Vercel AI SDK |
+|--------|---------|---------------|
+| **Storage Format** | OpenAI format (separate messages) | UIMessage with `parts[]` |
+| **Tool Results** | Separate `role: "tool"` message | Part in same message |
+| **DB Operations** | One INSERT per message | UPDATE same row for results |
+| **LLM Compatibility** | Direct - no conversion needed | Needs conversion for API |
+| **Display** | Transform at render time | Native display format |
+
+### Why YourGPT Uses OpenAI Format
+
+1. **Direct API compatibility** - Send messages to any LLM without conversion
+2. **Simple database ops** - Each message = one INSERT, no updates
+3. **Debugging** - See exact API flow in your database
+4. **Flexibility** - Change UI without migrating data
+
+---
+
+## Best Practices
+
+<Cards>
+  <Card title="Use Server-Side Persistence" icon="💾">
+    Save messages in your runtime, not just the client. Survives disconnects.
+  </Card>
+  <Card title="Index tool_call_id" icon="🔍">
+    Fast lookups for matching tool results to their calls.
+  </Card>
+  <Card title="Store Full tool_calls" icon="📦">
+    Keep arguments as JSON string - exact replay capability.
+  </Card>
+  <Card title="Transform at Display" icon="✨">
+    Keep storage simple, make display pretty.
+  </Card>
+</Cards>
+
+### Do's
+
+- Store `tool_calls` as JSONB for flexibility
+- Use `ON CONFLICT DO NOTHING` for idempotent inserts
+- Include `created_at` for ordering
+- Keep `metadata` for provider-specific data (thinking, usage, etc.)
+
+### Don'ts
+
+- Don't merge messages before storage
+- Don't filter out tool messages from storage
+- Don't store display-formatted data
+- Don't rely on message array order without timestamps
+
+---
+
+## Complete Example: Next.js + Postgres
+
+### API Route
+
+```typescript
+// app/api/threads/[id]/messages/route.ts
+import { db } from '@/lib/db';
+
+export async function GET(req: Request, { params }: { params: { id: string } }) {
+  const messages = await db.query(`
+    SELECT * FROM messages
+    WHERE thread_id = $1
+    ORDER BY created_at ASC
+  `, [params.id]);
+
+  return Response.json(messages);
+}
+
+export async function POST(req: Request, { params }: { params: { id: string } }) {
+  const message = await req.json();
+
+  await db.query(`
+    INSERT INTO messages (id, thread_id, role, content, tool_calls, tool_call_id, metadata, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [
+    message.id,
+    params.id,
+    message.role,
+    message.content,
+    JSON.stringify(message.tool_calls),
+    message.tool_call_id,
+    JSON.stringify(message.metadata),
+    message.created_at
+  ]);
+
+  return Response.json({ success: true });
+}
+```
+
+### React Component
+
+```tsx
+// components/ChatWithPersistence.tsx
+'use client';
+
+import { YourGPTProvider } from '@yourgpt/copilot-sdk-react';
+import { CopilotChat } from '@yourgpt/copilot-sdk-ui';
+import { useEffect, useState } from 'react';
+
+export function ChatWithPersistence({ threadId }: { threadId: string }) {
+  const [initialMessages, setInitialMessages] = useState([]);
+
+  // Load messages on mount
+  useEffect(() => {
+    fetch(`/api/threads/${threadId}/messages`)
+      .then(r => r.json())
+      .then(setInitialMessages);
+  }, [threadId]);
+
+  // Save new messages
+  const saveMessage = async (message) => {
+    await fetch(`/api/threads/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(message),
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  return (
+    <YourGPTProvider
+      runtimeUrl="/api/chat"
+      threadId={threadId}
+      initialMessages={initialMessages}
+      onMessagesChange={(messages) => {
+        // Save only the new message (last one)
+        const newMsg = messages[messages.length - 1];
+        if (newMsg) saveMessage(newMsg);
+      }}
+    >
+      <CopilotChat />
+    </YourGPTProvider>
+  );
+}
+```
+
+---
+
+## Summary
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           MESSAGE FLOW                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  User Input                                                             │
+│      ↓                                                                  │
+│  { role: "user", content: "..." }                     ← Store           │
+│      ↓                                                                  │
+│  AI Response                                                            │
+│      ↓                                                                  │
+│  { role: "assistant", tool_calls: [...] }             ← Store           │
+│      ↓                                                                  │
+│  Tool Executes                                                          │
+│      ↓                                                                  │
+│  { role: "tool", tool_call_id: "...", content: "..." } ← Store          │
+│      ↓                                                                  │
+│  AI Final Response                                                      │
+│      ↓                                                                  │
+│  { role: "assistant", content: "Done!" }              ← Store           │
+│      ↓                                                                  │
+│  Transform for Display                                                  │
+│      ↓                                                                  │
+│  [User] [Assistant + Tools Merged] [User] [Assistant + Tools Merged]    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**The Pattern**:
+1. **Store**: OpenAI format, one message per row
+2. **Sync**: Incremental saves or server-side persistence
+3. **Display**: Transform to merge tool calls with results
+4. **Result**: Clean UI, reliable storage, API compatibility

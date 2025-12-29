@@ -19,7 +19,15 @@ export function createHonoApp(runtime: Runtime): Hono {
     return c.json({ status: "ok", provider: "yourgpt-copilot" });
   });
 
+  // Chat endpoint at root (for Next.js App Router mounting)
+  // e.g., mounted at /api/chat/openai → POST /api/chat/openai works
+  app.post("/", async (c) => {
+    const request = c.req.raw;
+    return runtime.handleRequest(request);
+  });
+
   // Chat endpoint (standard - single turn)
+  // Also available at /chat sub-path for flexibility
   app.post("/chat", async (c) => {
     const request = c.req.raw;
     return runtime.handleRequest(request);
@@ -63,6 +71,42 @@ export function createHonoApp(runtime: Runtime): Hono {
       inputSchema: t.inputSchema,
     }));
     return c.json({ tools });
+  });
+
+  // Get model capabilities (for UI feature flags)
+  app.get("/capabilities", (c) => {
+    const provider = runtime.getProvider();
+    const model = runtime.getModel();
+
+    if (provider) {
+      const capabilities = provider.getCapabilities(model);
+      return c.json({
+        provider: provider.name,
+        model,
+        capabilities,
+        supportedModels: provider.supportedModels,
+      });
+    }
+
+    // Fallback for legacy config (no provider instance)
+    return c.json({
+      provider: "unknown",
+      model,
+      capabilities: {
+        supportsVision: false,
+        supportsTools: true,
+        supportsThinking: false,
+        supportsStreaming: true,
+        supportsPDF: false,
+        supportsAudio: false,
+        supportsVideo: false,
+        maxTokens: 8192,
+        supportedImageTypes: [],
+        supportsJsonMode: false,
+        supportsSystemMessages: true,
+      },
+      supportedModels: [],
+    });
   });
 
   return app;

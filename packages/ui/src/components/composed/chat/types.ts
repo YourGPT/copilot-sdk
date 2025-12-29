@@ -4,12 +4,18 @@ import type { PermissionLevel } from "../../ui/permission-confirmation";
 
 /**
  * Message attachment (images, files, etc.)
+ *
+ * Attachments can be stored as:
+ * - Base64 data (free tier, embedded in message)
+ * - URL (premium cloud storage, lighter payload)
  */
 export type MessageAttachment = {
   /** Type of attachment */
   type: "image" | "file" | "audio" | "video";
-  /** Base64 data or URL */
-  data: string;
+  /** Base64 data (for embedded attachments) */
+  data?: string;
+  /** URL for cloud-stored attachments */
+  url?: string;
   /** MIME type */
   mimeType: string;
   /** Optional filename */
@@ -41,12 +47,30 @@ export type ChatMessage = {
 
 export type { ToolApprovalStatus, PermissionLevel };
 
+/**
+ * Pending attachment (file being prepared to send)
+ */
+export type PendingAttachment = {
+  /** Unique ID for this pending attachment */
+  id: string;
+  /** Original file object */
+  file: File;
+  /** Preview URL (blob URL for images) */
+  previewUrl: string;
+  /** Processed attachment data */
+  attachment: MessageAttachment;
+  /** Processing status */
+  status: "processing" | "ready" | "error";
+  /** Error message if status is error */
+  error?: string;
+};
+
 export type ChatProps = {
   // === Core Props ===
   /** Messages to display */
   messages?: ChatMessage[];
-  /** Called when user sends a message */
-  onSendMessage?: (message: string) => void;
+  /** Called when user sends a message (with optional attachments) */
+  onSendMessage?: (message: string, attachments?: MessageAttachment[]) => void;
   /** Called when user stops generation */
   onStop?: () => void;
   /** Whether AI is currently generating */
@@ -85,6 +109,23 @@ export type ChatProps = {
   loaderVariant?: "circular" | "classic" | "dots" | "pulse" | "typing";
   /** Font size for messages: 'sm' (14px), 'base' (16px), 'lg' (18px) */
   fontSize?: "sm" | "base" | "lg";
+
+  // === Attachments ===
+  /** Maximum file size in bytes (default: 5MB) */
+  maxFileSize?: number;
+  /** Allowed file types (MIME types or wildcards like "image/*") */
+  allowedFileTypes?: string[];
+  /** Whether attachments are supported (shows/hides attach button) */
+  attachmentsEnabled?: boolean;
+  /** Tooltip text when attachments are disabled */
+  attachmentsDisabledTooltip?: string;
+  /**
+   * Custom attachment processor (e.g., for cloud storage upload)
+   * If provided, uses this instead of default base64 conversion.
+   * @param file - The file to process
+   * @returns Promise<MessageAttachment> - The processed attachment (URL-based or base64)
+   */
+  processAttachment?: (file: File) => Promise<MessageAttachment>;
 
   // === Suggestions ===
   /** Quick reply suggestions */

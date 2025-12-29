@@ -118,6 +118,25 @@ export {
   type DevLoggerState,
 } from "./components/ui/dev-logger";
 
+// Capability badges (Multi-provider support)
+export {
+  CapabilityBadge,
+  CapabilityList,
+  type CapabilityBadgeProps,
+  type CapabilityListProps,
+  type CapabilityType,
+} from "./components/ui/capability-badge";
+
+// Model selector (Multi-provider support)
+export {
+  ModelSelector,
+  SimpleModelSelector,
+  type ModelSelectorProps,
+  type SimpleModelSelectorProps,
+  type ModelOption,
+  type ProviderGroup,
+} from "./components/ui/model-selector";
+
 // ============================================
 // Composed Components (Ready-to-use)
 // ============================================

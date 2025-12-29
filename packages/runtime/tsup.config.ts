@@ -11,5 +11,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   treeshake: true,
-  external: ["openai", "@anthropic-ai/sdk"],
+  external: ["openai", "@anthropic-ai/sdk", "@google/generative-ai"],
 });

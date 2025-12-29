@@ -71,6 +71,18 @@ export {
   OllamaAdapter,
   createOllamaAdapter,
   type OllamaAdapterConfig,
+  // Google Gemini
+  GoogleAdapter,
+  createGoogleAdapter,
+  type GoogleAdapterConfig,
+  // xAI Grok
+  XAIAdapter,
+  createXAIAdapter,
+  type XAIAdapterConfig,
+  // Azure OpenAI
+  AzureAdapter,
+  createAzureAdapter,
+  type AzureAdapterConfig,
 } from "./adapters";
 
 // Provider formatters (for agentic loop)
@@ -96,6 +108,37 @@ export type {
   GeminiFunctionResponse,
 } from "./providers";
 
+// Provider factories (multi-provider architecture)
+export {
+  createOpenAI,
+  createAnthropic,
+  createGoogle,
+  createGroq,
+  createOllama,
+  createXAI,
+  createAzure,
+  // Provider registry
+  registerProvider,
+  getProvider,
+  hasProvider,
+  listProviders,
+  getAvailableProviders,
+  getModelCapabilities,
+} from "./providers";
+
+export type {
+  AIProvider,
+  ProviderCapabilities,
+  BaseProviderConfig,
+  OpenAIProviderConfig,
+  AnthropicProviderConfig,
+  GoogleProviderConfig,
+  XAIProviderConfig,
+  AzureProviderConfig,
+  GroqProviderConfig,
+  OllamaProviderConfig,
+} from "./providers";
+
 // Re-export core types
 export type {
   Message,
@@ -103,8 +146,7 @@ export type {
   StreamEvent,
   LLMConfig,
   LLMProvider,
-  // Tool types
-  AIProvider,
+  // Tool types (AIProvider is exported from ./providers above)
   ToolDefinition,
   ToolLocation,
   ToolResponse,

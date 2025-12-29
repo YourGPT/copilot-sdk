@@ -34,7 +34,8 @@
   },
   "peerDependencies": {
     "openai": "^4.0.0",
-    "@anthropic-ai/sdk": "^0.20.0"
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@google/generative-ai": "^0.21.0"
   },
   "peerDependenciesMeta": {
     "openai": {
@@ -42,12 +43,16 @@
     },
     "@anthropic-ai/sdk": {
       "optional": true
+    },
+    "@google/generative-ai": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "openai": "^4.47.0",
     "@anthropic-ai/sdk": "^0.20.0",
+    "@google/generative-ai": "^0.21.0",
     "tsup": "^8.0.2",
     "typescript": "^5.4.0"
   },

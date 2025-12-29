@@ -83,50 +83,6 @@ export function DefaultMessage({
     followUps.length > 0 &&
     onFollowUpClick;
 
-  // Tool result message - shows tool execution result
-  if (message.role === "tool") {
-    // Parse the tool result content
-    let resultContent = message.content;
-    let isSuccess = true;
-    try {
-      const parsed = JSON.parse(message.content);
-      isSuccess = parsed.success !== false;
-      resultContent =
-        parsed.message || parsed.error || JSON.stringify(parsed, null, 2);
-    } catch {
-      // Keep original content if not JSON
-    }
-
-    return (
-      <Message className="flex gap-2 pl-10">
-        <div
-          className={cn(
-            "flex-1 min-w-0 max-w-[80%] rounded-lg px-3 py-2 text-xs font-mono",
-            isSuccess
-              ? "bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800"
-              : "bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800",
-          )}
-        >
-          <div className="flex items-center gap-2 mb-1">
-            <span
-              className={cn(
-                "text-xs",
-                isSuccess
-                  ? "text-green-600 dark:text-green-400"
-                  : "text-red-600 dark:text-red-400",
-              )}
-            >
-              {isSuccess ? "✓" : "✗"} Tool Result
-            </span>
-          </div>
-          <div className="text-muted-foreground whitespace-pre-wrap break-all">
-            {resultContent}
-          </div>
-        </div>
-      </Message>
-    );
-  }
-
   // User message - right aligned, avatar optional
   if (isUser) {
     const hasAttachments =
@@ -292,10 +248,18 @@ function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
     );
   }
 
-  // Image preview
-  const src = attachment.data.startsWith("data:")
-    ? attachment.data
-    : `data:${attachment.mimeType};base64,${attachment.data}`;
+  // Image preview - use URL if available, otherwise use base64 data
+  let src: string;
+  if (attachment.url) {
+    src = attachment.url;
+  } else if (attachment.data) {
+    src = attachment.data.startsWith("data:")
+      ? attachment.data
+      : `data:${attachment.mimeType};base64,${attachment.data}`;
+  } else {
+    // No source available - shouldn't happen but handle gracefully
+    return null;
+  }
 
   return (
     <>

@@ -196,11 +196,29 @@ export type AnthropicContentBlock =
   | { type: "text"; text: string }
   | {
       type: "image";
-      source: {
-        type: "base64";
-        media_type: string;
-        data: string;
-      };
+      source:
+        | {
+            type: "base64";
+            media_type: string;
+            data: string;
+          }
+        | {
+            type: "url";
+            url: string;
+          };
+    }
+  | {
+      type: "document";
+      source:
+        | {
+            type: "base64";
+            media_type: string;
+            data: string;
+          }
+        | {
+            type: "url";
+            url: string;
+          };
     };
 
 export type OpenAIContentBlock =
@@ -223,6 +241,20 @@ export function hasImageAttachments(message: Message): boolean {
 }
 
 /**
+ * Check if a message has media attachments (images or PDFs)
+ */
+export function hasMediaAttachments(message: Message): boolean {
+  const attachments = message.metadata?.attachments;
+  return (
+    attachments?.some(
+      (a) =>
+        a.type === "image" ||
+        (a.type === "file" && a.mimeType === "application/pdf"),
+    ) ?? false
+  );
+}
+
+/**
  * Convert MessageAttachment to Anthropic image content block
  *
  * Anthropic format:
@@ -239,6 +271,20 @@ export function attachmentToAnthropicImage(
   attachment: MessageAttachment,
 ): AnthropicContentBlock | null {
   if (attachment.type !== "image") return null;
+
+  // Use URL if available (cloud storage)
+  if (attachment.url) {
+    return {
+      type: "image",
+      source: {
+        type: "url",
+        url: attachment.url,
+      },
+    };
+  }
+
+  // Fall back to base64 data
+  if (!attachment.data) return null;
 
   // Extract base64 data (remove data URI prefix if present)
   let base64Data = attachment.data;
@@ -275,18 +321,79 @@ export function attachmentToOpenAIImage(
 ): OpenAIContentBlock | null {
   if (attachment.type !== "image") return null;
 
-  // Build data URI if not already one
-  let dataUri = attachment.data;
-  if (!dataUri.startsWith("data:")) {
-    const mimeType = attachment.mimeType || "image/png";
-    dataUri = `data:${mimeType};base64,${attachment.data}`;
+  let imageUrl: string;
+
+  // Use URL if available (cloud storage)
+  if (attachment.url) {
+    imageUrl = attachment.url;
+  } else if (attachment.data) {
+    // Build data URI if not already one
+    imageUrl = attachment.data.startsWith("data:")
+      ? attachment.data
+      : `data:${attachment.mimeType || "image/png"};base64,${attachment.data}`;
+  } else {
+    return null;
   }
 
   return {
     type: "image_url",
     image_url: {
-      url: dataUri,
+      url: imageUrl,
       detail: "auto",
+    },
+  };
+}
+
+/**
+ * Convert MessageAttachment (PDF) to Anthropic document content block
+ *
+ * Anthropic format:
+ * {
+ *   type: "document",
+ *   source: {
+ *     type: "base64",
+ *     media_type: "application/pdf",
+ *     data: "base64data..."
+ *   }
+ * }
+ */
+export function attachmentToAnthropicDocument(
+  attachment: MessageAttachment,
+): AnthropicContentBlock | null {
+  // Only handle PDF files
+  if (attachment.type !== "file" || attachment.mimeType !== "application/pdf") {
+    return null;
+  }
+
+  // Use URL if available (cloud storage)
+  if (attachment.url) {
+    return {
+      type: "document",
+      source: {
+        type: "url",
+        url: attachment.url,
+      },
+    };
+  }
+
+  // Fall back to base64 data
+  if (!attachment.data) return null;
+
+  // Extract base64 data (remove data URI prefix if present)
+  let base64Data = attachment.data;
+  if (base64Data.startsWith("data:")) {
+    const commaIndex = base64Data.indexOf(",");
+    if (commaIndex !== -1) {
+      base64Data = base64Data.slice(commaIndex + 1);
+    }
+  }
+
+  return {
+    type: "document",
+    source: {
+      type: "base64",
+      media_type: "application/pdf",
+      data: base64Data,
     },
   };
 }
@@ -300,20 +407,27 @@ export function messageToAnthropicContent(
   const attachments = message.metadata?.attachments;
   const content = message.content ?? "";
 
-  // If no image attachments, return simple string
-  if (!hasImageAttachments(message)) {
+  // If no media attachments (images or PDFs), return simple string
+  if (!hasMediaAttachments(message)) {
     return content;
   }
 
   // Build content blocks array
   const blocks: AnthropicContentBlock[] = [];
 
-  // Add image attachments first (Claude recommends images before text)
+  // Add media attachments first (Claude recommends media before text)
   if (attachments) {
     for (const attachment of attachments) {
+      // Try image first
       const imageBlock = attachmentToAnthropicImage(attachment);
       if (imageBlock) {
         blocks.push(imageBlock);
+        continue;
+      }
+      // Try document (PDF)
+      const docBlock = attachmentToAnthropicDocument(attachment);
+      if (docBlock) {
+        blocks.push(docBlock);
       }
     }
   }

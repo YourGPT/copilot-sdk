@@ -4,6 +4,7 @@ import { createContext, useContext } from "react";
 import type {
   YourGPTConfig,
   Message,
+  MessageAttachment,
   ActionDefinition,
   Source,
   ToolsConfig,
@@ -81,8 +82,11 @@ export interface AgentLoopState {
  * Chat actions interface
  */
 export interface ChatActions {
-  /** Send a message */
-  sendMessage: (content: string) => Promise<void>;
+  /** Send a message (with optional attachments) */
+  sendMessage: (
+    content: string,
+    attachments?: MessageAttachment[],
+  ) => Promise<void>;
   /** Send a message with context */
   sendMessageWithContext: (
     content: string,
@@ -96,6 +100,12 @@ export interface ChatActions {
   regenerate: (messageId?: string) => Promise<void>;
   /** Set messages directly */
   setMessages: (messages: Message[]) => void;
+  /**
+   * Process file to MessageAttachment
+   * - Premium: uploads to cloud storage, returns URL-based attachment
+   * - Free: converts to base64
+   */
+  processAttachment: (file: File) => Promise<MessageAttachment>;
 }
 
 /**
@@ -188,6 +198,8 @@ export interface YourGPTContextValue {
   contextTree: ContextTreeNode[];
   /** Whether user has YourGPT API key (premium) */
   isPremium: boolean;
+  /** Whether cloud storage is available (premium feature) */
+  isCloudStorageAvailable: boolean;
 }
 
 /**

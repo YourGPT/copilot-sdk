@@ -43,12 +43,18 @@ export interface ToolCall {
 
 /**
  * Attachment in a message (images, files, etc.)
+ *
+ * Attachments can be stored as:
+ * - Base64 data (free tier, embedded in message)
+ * - URL (premium cloud storage, lighter payload)
  */
 export interface MessageAttachment {
   /** Type of attachment */
   type: "image" | "file" | "audio" | "video";
-  /** Base64 data or URL */
-  data: string;
+  /** Base64 data (for embedded attachments) */
+  data?: string;
+  /** URL for cloud-stored attachments (YourGPT managed storage) */
+  url?: string;
   /** MIME type */
   mimeType: string;
   /** Optional filename */

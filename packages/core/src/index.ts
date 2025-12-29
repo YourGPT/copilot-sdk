@@ -195,3 +195,21 @@ export {
 // System Prompt
 export { defaultSystemMessage } from "./system-prompt";
 export type { SystemMessageFunction } from "./system-prompt";
+
+// ============================================
+// Services (Cloud Storage, etc.)
+// ============================================
+export {
+  createYourGPTStorage,
+  processFileToAttachment,
+  getAttachmentTypeFromMime,
+  CLOUD_MAX_FILE_SIZE,
+  DEFAULT_YOURGPT_ENDPOINT,
+} from "./services";
+
+export type {
+  StorageService,
+  StorageConfig,
+  UploadResult,
+  UploadOptions,
+} from "./services";

@@ -146,7 +146,18 @@ export interface ToolStepProps {
 }
 
 /**
- * Individual tool step with expandable details
+ * Format result for display
+ */
+function formatResult(result: ToolStepData["result"]): string {
+  if (!result) return "";
+  if (result.message) return result.message;
+  if (result.error) return result.error;
+  if (result.data) return JSON.stringify(result.data);
+  return result.success ? "Success" : "Failed";
+}
+
+/**
+ * Individual tool step with inline result and expandable args
  */
 export function ToolStep({
   step,
@@ -155,10 +166,7 @@ export function ToolStep({
   className,
 }: ToolStepProps) {
   const [expanded, setExpanded] = React.useState(defaultExpanded);
-  const hasDetails =
-    (step.args && Object.keys(step.args).length > 0) ||
-    step.result ||
-    step.error;
+  const hasArgs = step.args && Object.keys(step.args).length > 0;
 
   return (
     <div className={cn("relative", className)}>
@@ -174,92 +182,87 @@ export function ToolStep({
       <div className="flex items-start gap-2">
         <StatusIndicator status={step.status} className="mt-0.5" />
 
-        <button
-          type="button"
-          onClick={() => hasDetails && setExpanded(!expanded)}
-          disabled={!hasDetails}
-          className={cn(
-            "flex-1 flex items-center gap-2 text-left min-w-0",
-            hasDetails && "cursor-pointer hover:text-foreground",
-            !hasDetails && "cursor-default",
-          )}
-        >
-          {/* Tool name */}
-          <span
+        <div className="flex-1 min-w-0">
+          {/* Tool name row */}
+          <button
+            type="button"
+            onClick={() => hasArgs && setExpanded(!expanded)}
+            disabled={!hasArgs}
             className={cn(
-              "font-mono text-xs truncate",
-              step.status === "executing" && "text-primary",
-              step.status === "completed" && "text-muted-foreground",
-              step.status === "error" && "text-red-500",
-              step.status === "pending" && "text-muted-foreground/60",
+              "flex items-center gap-2 text-left min-w-0 w-full",
+              hasArgs && "cursor-pointer hover:text-foreground",
+              !hasArgs && "cursor-default",
             )}
           >
-            {step.name}
-          </span>
-
-          {/* Status text */}
-          <span className="text-[10px] text-muted-foreground/60">
-            {step.status === "executing" && "running..."}
-            {step.status === "error" && "failed"}
-          </span>
-
-          {/* Expand indicator */}
-          {hasDetails && (
-            <svg
+            {/* Tool name */}
+            <span
               className={cn(
-                "size-3 text-muted-foreground/40 transition-transform ml-auto flex-shrink-0",
-                expanded && "rotate-90",
+                "font-mono text-xs truncate",
+                step.status === "executing" && "text-primary",
+                step.status === "completed" && "text-muted-foreground",
+                step.status === "error" && "text-red-500",
+                step.status === "pending" && "text-muted-foreground/60",
               )}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
-          )}
-        </button>
-      </div>
+              {step.name}
+            </span>
 
-      {/* Expandable details */}
-      {expanded && hasDetails && (
-        <div className="ml-5 mt-1 space-y-1 text-[10px]">
-          {/* Arguments */}
-          {step.args && Object.keys(step.args).length > 0 && (
-            <div className="text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5 overflow-x-auto">
-              {JSON.stringify(step.args)}
-            </div>
-          )}
+            {/* Status text */}
+            <span className="text-[10px] text-muted-foreground/60">
+              {step.status === "executing" && "running..."}
+              {step.status === "error" && !step.result && "failed"}
+            </span>
 
-          {/* Result */}
+            {/* Expand indicator - only if has args */}
+            {hasArgs && (
+              <svg
+                className={cn(
+                  "size-3 text-muted-foreground/40 transition-transform ml-auto flex-shrink-0",
+                  expanded && "rotate-90",
+                )}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            )}
+          </button>
+
+          {/* Result - ALWAYS VISIBLE when completed */}
           {step.result && (
             <div
               className={cn(
-                "font-mono rounded px-1.5 py-0.5 overflow-x-auto",
-                step.result.success
+                "mt-0.5 text-[10px] font-mono rounded px-1.5 py-0.5 overflow-x-auto whitespace-pre-wrap break-all",
+                step.result.success !== false
                   ? "bg-green-500/10 text-green-600 dark:text-green-400"
                   : "bg-red-500/10 text-red-600 dark:text-red-400",
               )}
             >
-              {step.result.message ||
-                step.result.error ||
-                (step.result.data ? JSON.stringify(step.result.data) : null) ||
-                (step.result.success ? "Success" : "Failed")}
+              → {formatResult(step.result)}
             </div>
           )}
 
-          {/* Error */}
+          {/* Error - ALWAYS VISIBLE */}
           {step.error && !step.result && (
-            <div className="font-mono bg-red-500/10 text-red-600 dark:text-red-400 rounded px-1.5 py-0.5 overflow-x-auto">
-              {step.error}
+            <div className="mt-0.5 text-[10px] font-mono bg-red-500/10 text-red-600 dark:text-red-400 rounded px-1.5 py-0.5 overflow-x-auto whitespace-pre-wrap break-all">
+              → {step.error}
+            </div>
+          )}
+
+          {/* Expandable args only */}
+          {expanded && hasArgs && (
+            <div className="mt-1 text-[10px] text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5 overflow-x-auto">
+              {JSON.stringify(step.args)}
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

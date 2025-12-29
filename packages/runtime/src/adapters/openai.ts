@@ -70,15 +70,25 @@ export class OpenAIAdapter implements LLMAdapter {
           // Add image attachments
           for (const attachment of msg.attachments as Array<{
             type: string;
-            data: string;
+            data?: string;
+            url?: string;
             mimeType?: string;
           }>) {
             if (attachment.type === "image") {
-              // Convert to OpenAI image_url format
-              let imageUrl = attachment.data;
-              if (!imageUrl.startsWith("data:")) {
-                imageUrl = `data:${attachment.mimeType || "image/png"};base64,${attachment.data}`;
+              let imageUrl: string;
+
+              if (attachment.url) {
+                // Use URL directly (cloud storage)
+                imageUrl = attachment.url;
+              } else if (attachment.data) {
+                // Use base64 data
+                imageUrl = attachment.data.startsWith("data:")
+                  ? attachment.data
+                  : `data:${attachment.mimeType || "image/png"};base64,${attachment.data}`;
+              } else {
+                continue; // Skip if no data or URL
               }
+
               content.push({
                 type: "image_url",
                 image_url: { url: imageUrl, detail: "auto" },

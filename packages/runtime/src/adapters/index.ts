@@ -14,7 +14,9 @@ export {
   messageToAnthropicContent,
   messageToOpenAIContent,
   hasImageAttachments,
+  hasMediaAttachments,
   attachmentToAnthropicImage,
+  attachmentToAnthropicDocument,
   attachmentToOpenAIImage,
   type AnthropicContentBlock,
   type OpenAIContentBlock,
@@ -43,3 +45,20 @@ export {
   createOllamaAdapter,
   type OllamaAdapterConfig,
 } from "./ollama";
+
+// Google Gemini
+export {
+  GoogleAdapter,
+  createGoogleAdapter,
+  type GoogleAdapterConfig,
+} from "./google";
+
+// xAI Grok
+export { XAIAdapter, createXAIAdapter, type XAIAdapterConfig } from "./xai";
+
+// Azure OpenAI
+export {
+  AzureAdapter,
+  createAzureAdapter,
+  type AzureAdapterConfig,
+} from "./azure";

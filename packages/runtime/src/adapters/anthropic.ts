@@ -177,30 +177,72 @@ export class AnthropicAdapter implements LLMAdapter {
             content.push({ type: "text", text: msg.content });
           }
 
-          // Add image attachments
+          // Add attachments (images, PDFs)
           for (const attachment of msg.attachments as Array<{
             type: string;
-            data: string;
+            data?: string;
+            url?: string;
             mimeType?: string;
           }>) {
             if (attachment.type === "image") {
-              // Convert to Anthropic image format
-              let base64Data = attachment.data;
-              if (base64Data.startsWith("data:")) {
-                // Extract base64 from data URL
-                const commaIndex = base64Data.indexOf(",");
-                if (commaIndex !== -1) {
-                  base64Data = base64Data.slice(commaIndex + 1);
+              if (attachment.url) {
+                // Use URL directly (cloud storage) - Anthropic supports URL sources
+                content.push({
+                  type: "image",
+                  source: {
+                    type: "url",
+                    url: attachment.url,
+                  },
+                });
+              } else if (attachment.data) {
+                // Use base64 data
+                let base64Data = attachment.data;
+                if (base64Data.startsWith("data:")) {
+                  // Extract base64 from data URL
+                  const commaIndex = base64Data.indexOf(",");
+                  if (commaIndex !== -1) {
+                    base64Data = base64Data.slice(commaIndex + 1);
+                  }
                 }
+                content.push({
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: attachment.mimeType || "image/png",
+                    data: base64Data,
+                  },
+                });
               }
-              content.push({
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: attachment.mimeType || "image/png",
-                  data: base64Data,
-                },
-              });
+            } else if (
+              attachment.type === "file" &&
+              attachment.mimeType === "application/pdf"
+            ) {
+              // PDF documents - Anthropic uses "document" type
+              if (attachment.url) {
+                content.push({
+                  type: "document",
+                  source: {
+                    type: "url",
+                    url: attachment.url,
+                  },
+                });
+              } else if (attachment.data) {
+                let base64Data = attachment.data;
+                if (base64Data.startsWith("data:")) {
+                  const commaIndex = base64Data.indexOf(",");
+                  if (commaIndex !== -1) {
+                    base64Data = base64Data.slice(commaIndex + 1);
+                  }
+                }
+                content.push({
+                  type: "document",
+                  source: {
+                    type: "base64",
+                    media_type: "application/pdf",
+                    data: base64Data,
+                  },
+                });
+              }
             }
           }
 

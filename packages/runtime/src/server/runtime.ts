@@ -5,11 +5,11 @@ import type {
   StreamEvent,
   KnowledgeBaseConfig,
   ToolDefinition,
-  AIProvider,
   ToolCallInfo,
   AssistantToolMessage,
   DoneEventMessage,
 } from "@yourgpt/copilot-sdk-core";
+import type { AIProvider } from "../providers/types";
 import { createMessage } from "@yourgpt/copilot-sdk-core";
 import type { LLMAdapter, ChatCompletionRequest } from "../adapters";
 import {
@@ -42,10 +42,15 @@ export class Runtime {
   constructor(config: RuntimeConfig) {
     this.config = config;
 
-    // Create adapter based on provider
-    if (config.adapter) {
+    // Create adapter based on configuration type
+    if ("provider" in config && config.provider) {
+      // NEW: Use AIProvider to get adapter
+      this.adapter = config.provider.languageModel(config.model);
+    } else if ("adapter" in config && config.adapter) {
+      // EXISTING: Direct adapter
       this.adapter = config.adapter;
     } else {
+      // EXISTING: Legacy LLM config
       this.adapter = this.createAdapter(config);
     }
 
@@ -467,14 +472,40 @@ export class Runtime {
   }
 
   /**
-   * Get the AI provider from config
+   * Get the AI provider name from config
    */
-  private getProvider(): AIProvider {
+  private getProviderName(): string {
+    if ("provider" in this.config && this.config.provider) {
+      return this.config.provider.name;
+    }
     if ("llm" in this.config && this.config.llm) {
-      return this.config.llm.provider as AIProvider;
+      return this.config.llm.provider;
     }
     // Default to openai if using custom adapter
     return "openai";
+  }
+
+  /**
+   * Get the AI provider instance (if using provider config)
+   */
+  getProvider(): AIProvider | null {
+    if ("provider" in this.config && this.config.provider) {
+      return this.config.provider as AIProvider;
+    }
+    return null;
+  }
+
+  /**
+   * Get the current model ID
+   */
+  getModel(): string {
+    if ("provider" in this.config && this.config.provider) {
+      return this.config.model;
+    }
+    if ("llm" in this.config && this.config.llm) {
+      return this.config.llm.model || "unknown";
+    }
+    return this.adapter.model;
   }
 
   /**

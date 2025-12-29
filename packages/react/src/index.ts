@@ -84,6 +84,15 @@ export {
 // Use with: import { DevLogger } from "@yourgpt/copilot-sdk-ui";
 export { useDevLogger, type DevLoggerState } from "./hooks/useDevLogger";
 
+// Capabilities Hooks (for multi-provider support)
+export {
+  useCapabilities,
+  useFeatureSupport,
+  useSupportedMediaTypes,
+  type ProviderCapabilities,
+  type CapabilitiesResponse,
+} from "./hooks/useCapabilities";
+
 // Re-export core types for convenience
 export type {
   Message,

@@ -13,6 +13,8 @@ const browserCollections = {
     "index.mdx": () => import("../content/docs/index.mdx?collection=docs"),
     "installation.mdx": () =>
       import("../content/docs/installation.mdx?collection=docs"),
+    "message-persistence.mdx": () =>
+      import("../content/docs/message-persistence.mdx?collection=docs"),
     "react/index.mdx": () =>
       import("../content/docs/react/index.mdx?collection=docs"),
     "runtime/index.mdx": () =>

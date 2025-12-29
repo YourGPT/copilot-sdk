@@ -6,6 +6,7 @@ import type {
   AgentLoopConfig,
 } from "@yourgpt/copilot-sdk-core";
 import type { LLMAdapter } from "../adapters";
+import type { AIProvider } from "../providers/types";
 
 /**
  * Runtime configuration with LLM config
@@ -52,9 +53,45 @@ export interface RuntimeConfigWithAdapter {
 }
 
 /**
- * Runtime configuration - either provide llm config or adapter
+ * Runtime configuration with AIProvider
+ *
+ * @example
+ * ```typescript
+ * import { createOpenAI } from '@yourgpt/copilot-sdk-runtime/providers';
+ *
+ * const openai = createOpenAI({ apiKey: '...' });
+ * const runtime = createRuntime({
+ *   provider: openai,
+ *   model: 'gpt-4o',
+ * });
+ * ```
  */
-export type RuntimeConfig = RuntimeConfigWithLLM | RuntimeConfigWithAdapter;
+export interface RuntimeConfigWithProvider {
+  /** AI Provider instance */
+  provider: AIProvider;
+  /** Model ID to use (required when using provider) */
+  model: string;
+  /** System prompt */
+  systemPrompt?: string;
+  /** Available actions (legacy) */
+  actions?: ActionDefinition[];
+  /** Available tools (new - supports location: server/client) */
+  tools?: ToolDefinition[];
+  /** Agent loop configuration */
+  agentLoop?: AgentLoopConfig;
+  /** Knowledge base configuration (enables search_knowledge tool) */
+  knowledgeBase?: KnowledgeBaseConfig;
+  /** Enable debug logging */
+  debug?: boolean;
+}
+
+/**
+ * Runtime configuration - either provide llm config, adapter, or provider
+ */
+export type RuntimeConfig =
+  | RuntimeConfigWithLLM
+  | RuntimeConfigWithAdapter
+  | RuntimeConfigWithProvider;
 
 /**
  * Message attachment (images, files, etc.)

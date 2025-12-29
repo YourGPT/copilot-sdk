@@ -55,3 +55,12 @@ export {
 
 // Note: useScreenshotTool is NOT exported - screenshot tool is auto-registered
 // when toolsConfig.screenshot = true in YourGPTProvider
+
+// Capabilities Hooks (for multi-provider support)
+export {
+  useCapabilities,
+  useFeatureSupport,
+  useSupportedMediaTypes,
+  type ProviderCapabilities,
+  type CapabilitiesResponse,
+} from "./useCapabilities";

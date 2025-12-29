@@ -32,6 +32,7 @@ import type {
   ToolPermission,
   PermissionStorageConfig,
   PermissionStorageAdapter,
+  StorageService,
 } from "@yourgpt/copilot-sdk-core";
 import { generateThreadTitle } from "@yourgpt/copilot-sdk-core";
 import {
@@ -51,6 +52,9 @@ import {
   getNetworkRequests,
   formatLogsForAI,
   formatRequestsForAI,
+  // Storage service
+  createYourGPTStorage,
+  processFileToAttachment,
 } from "@yourgpt/copilot-sdk-core";
 import {
   addNode,
@@ -695,6 +699,27 @@ export function YourGPTProvider({
   // Current: Simple prefix check (client-side only)
   // Future: Server validation with feature flags response
   const isPremium = Boolean(yourgptApiKey?.startsWith("ygpt_"));
+
+  // Create storage service for premium users (cloud storage)
+  const storageService = useMemo<StorageService | null>(() => {
+    if (cloud?.apiKey && isPremium) {
+      return createYourGPTStorage({
+        apiKey: cloud.apiKey,
+        endpoint: cloud.endpoint,
+      });
+    }
+    return null;
+  }, [cloud?.apiKey, cloud?.endpoint, isPremium]);
+
+  const isCloudStorageAvailable = storageService?.isAvailable() ?? false;
+
+  // Process file to attachment (uses cloud storage if available, else base64)
+  const processAttachment = useCallback(
+    async (file: File): Promise<MessageAttachment> => {
+      return processFileToAttachment(file, storageService);
+    },
+    [storageService],
+  );
 
   // Generate initial thread ID
   const initialThreadId = useMemo(
@@ -1990,24 +2015,17 @@ export function YourGPTProvider({
       // Create user message with screenshots (for both UI and server)
       let screenshotUserMessage: Message | null = null;
 
-      // Add screenshot user message if we have screenshot attachments
+      // Create screenshot user message if we have screenshot attachments
+      // NOTE: We dispatch it to thread state AFTER tool results (see below)
+      // to maintain correct message order: assistant -> tool_result -> user_screenshot
       if (screenshotAttachments.length > 0) {
         screenshotUserMessage = createMessage({
           role: "user",
           content: "Here's my screen:",
           metadata: { attachments: screenshotAttachments },
         });
-        if (currentThreadId) {
-          threadsDispatch({
-            type: "ADD_MESSAGE_TO_THREAD",
-            payload: {
-              threadId: currentThreadId,
-              message: screenshotUserMessage,
-            },
-          });
-        }
         debugLog(
-          "[YourGPT] Added screenshot as user message:",
+          "[YourGPT] Created screenshot user message (will add after tool results):",
           screenshotUserMessage.id,
         );
       }
@@ -2147,6 +2165,22 @@ export function YourGPTProvider({
           // Attachments will be converted to provider-specific format by the adapter
           attachments: screenshotUserMessage.metadata?.attachments,
         });
+
+        // Now persist screenshot user message to thread state (AFTER tool results)
+        // This ensures correct message order in thread history
+        if (currentThreadId) {
+          threadsDispatch({
+            type: "ADD_MESSAGE_TO_THREAD",
+            payload: {
+              threadId: currentThreadId,
+              message: screenshotUserMessage,
+            },
+          });
+          debugLog(
+            "[YourGPT] Added screenshot user message to thread (after tool results):",
+            screenshotUserMessage.id,
+          );
+        }
       }
 
       // Send follow-up request to server
@@ -2351,8 +2385,9 @@ export function YourGPTProvider({
   );
 
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (!content.trim()) return;
+    async (content: string, attachments?: MessageAttachment[]) => {
+      // Allow send if there's content OR attachments
+      if (!content.trim() && (!attachments || attachments.length === 0)) return;
 
       // IMPORTANT: Save current tool executions to their respective messages BEFORE clearing
       // This ensures tool execution UI persists on historical messages
@@ -2429,6 +2464,7 @@ export function YourGPTProvider({
         role: "user",
         content: content.trim(),
         created_at: new Date(),
+        metadata: attachments?.length ? { attachments } : undefined,
       };
 
       threadsDispatch({
@@ -3226,6 +3262,7 @@ export function YourGPTProvider({
         clearMessages,
         regenerate,
         setMessages,
+        processAttachment,
       },
       toolsActions: {
         requestConsent: (tools, reason) => {
@@ -3259,6 +3296,7 @@ export function YourGPTProvider({
       removeContext,
       contextTree,
       isPremium,
+      isCloudStorageAvailable,
     }),
     [
       fullConfig,
@@ -3297,6 +3335,8 @@ export function YourGPTProvider({
       removeContext,
       contextTree,
       isPremium,
+      isCloudStorageAvailable,
+      processAttachment,
     ],
   );
 
