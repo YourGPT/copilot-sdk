@@ -202,18 +202,38 @@ export function CopilotChat(props: CopilotChatProps) {
       ? props.suggestions
       : [];
 
-  // isProcessing: Show "Continuing..." loader when tools have completed but we're still loading
-  const hasCompletedTools = toolExecutions.some(
-    (exec) =>
-      exec.status === "completed" ||
-      exec.status === "error" ||
-      exec.status === "failed",
-  );
-  const hasExecutingTools = toolExecutions.some(
-    (exec) => exec.status === "executing" || exec.status === "pending",
-  );
-  const isProcessingToolResults =
-    isLoading && hasCompletedTools && !hasExecutingTools;
+  // isProcessing: Show "Continuing..." loader ONLY when we're in an active tool flow
+  // Condition: Last message must be assistant with tool_calls (not user starting new request)
+  const lastMessage = messages[messages.length - 1];
+  const isInToolFlow =
+    lastMessage?.role === "assistant" &&
+    (lastMessage as UIMessage).toolCalls?.length;
+
+  let isProcessingToolResults = false;
+
+  if (isLoading && isInToolFlow) {
+    const currentToolCallIds = new Set(
+      (lastMessage as UIMessage).toolCalls?.map(
+        (tc: { id: string }) => tc.id,
+      ) || [],
+    );
+    const currentExecutions = toolExecutions.filter((exec) =>
+      currentToolCallIds.has(exec.id),
+    );
+
+    const hasCompletedTools = currentExecutions.some(
+      (exec) =>
+        exec.status === "completed" ||
+        exec.status === "error" ||
+        exec.status === "failed",
+    );
+    const hasExecutingTools = currentExecutions.some(
+      (exec) => exec.status === "executing" || exec.status === "pending",
+    );
+
+    // Show "Continuing..." only when tools completed and waiting for AI to continue
+    isProcessingToolResults = hasCompletedTools && !hasExecutingTools;
+  }
 
   return (
     <Chat

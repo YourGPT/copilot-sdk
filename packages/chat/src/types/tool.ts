@@ -81,6 +81,8 @@ export interface AgentLoopConfig {
   autoApprove?: boolean;
   /** Initial tools */
   tools?: ToolDefinition[];
+  /** Max tool executions to keep in memory (default: 100). Oldest are pruned. */
+  maxExecutionHistory?: number;
 }
 
 /**

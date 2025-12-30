@@ -460,8 +460,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               content: transformedContent,
               tool_call_id: m.toolCallId,
             };
-          } catch {
-            // If not JSON, send as-is
+          } catch (e) {
+            // If not JSON, send as-is (log in debug mode)
+            this.debug("Failed to parse tool message JSON", {
+              content: m.content?.slice(0, 100),
+              error: e instanceof Error ? e.message : String(e),
+            });
             return {
               role: m.role,
               content: m.content,
@@ -594,8 +598,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.callbacks.onMessagesChange?.(this.state.messages);
     this.callbacks.onFinish?.(this.state.messages);
 
-    // Check for tool calls
-    if (response.requiresAction) {
+    // Check for tool calls (with bounds check)
+    if (response.requiresAction && this.state.messages.length > 0) {
       const lastMessage = this.state.messages[this.state.messages.length - 1];
       if (lastMessage?.toolCalls?.length) {
         this.emit("toolCalls", { toolCalls: lastMessage.toolCalls });

@@ -69,6 +69,9 @@ export class AbstractAgentLoop implements AgentLoopActions {
   private config: AgentLoopConfig;
   private callbacks: AgentLoopCallbacks;
 
+  // Max executions to keep in memory (prevents memory leak)
+  private _maxExecutionHistory: number;
+
   constructor(
     config: AgentLoopConfig = {},
     callbacks: AgentLoopCallbacks = {},
@@ -76,6 +79,7 @@ export class AbstractAgentLoop implements AgentLoopActions {
     this.config = config;
     this.callbacks = callbacks;
     this._maxIterations = config.maxIterations ?? 20;
+    this._maxExecutionHistory = config.maxExecutionHistory ?? 100;
 
     // Register initial tools
     if (config.tools) {
@@ -148,6 +152,14 @@ export class AbstractAgentLoop implements AgentLoopActions {
 
   private addToolExecution(execution: ToolExecution): void {
     this._toolExecutions = [...this._toolExecutions, execution];
+
+    // Prune old executions if over limit (prevents memory leak)
+    if (this._toolExecutions.length > this._maxExecutionHistory) {
+      this._toolExecutions = this._toolExecutions.slice(
+        -this._maxExecutionHistory,
+      );
+    }
+
     this.callbacks.onExecutionsChange?.(this._toolExecutions);
   }
 
