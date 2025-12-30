@@ -431,6 +431,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     let chunkCount = 0;
     let hasError = false;
+    let toolCallsEmitted = false; // Guard to prevent emitting toolCalls twice
 
     // Process stream chunks
     for await (const chunk of stream) {
@@ -457,8 +458,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
-      // Check for tool calls
-      if (requiresToolExecution(chunk)) {
+      // Check for tool calls - only emit once per stream
+      if (requiresToolExecution(chunk) && !toolCallsEmitted) {
+        toolCallsEmitted = true;
         this.debug("toolCalls", { toolCalls: updatedMessage.toolCalls });
         this.emit("toolCalls", { toolCalls: updatedMessage.toolCalls });
       }

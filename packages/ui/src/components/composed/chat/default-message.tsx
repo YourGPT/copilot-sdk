@@ -10,7 +10,7 @@ import {
   type PermissionLevel,
 } from "../../ui/permission-confirmation";
 import { FollowUpQuestions, parseFollowUps } from "../../ui/follow-up";
-import type { ChatMessage, MessageAttachment } from "./types";
+import type { ChatMessage, MessageAttachment, ToolRenderers } from "./types";
 
 type DefaultMessageProps = {
   message: ChatMessage;
@@ -25,6 +25,8 @@ type DefaultMessageProps = {
   isLastMessage?: boolean;
   /** Whether the chat is currently loading/streaming */
   isLoading?: boolean;
+  /** Custom renderers for tool results (Generative UI) */
+  toolRenderers?: ToolRenderers;
   /** Called when user approves a tool execution */
   onApproveToolExecution?: (
     executionId: string,
@@ -56,6 +58,7 @@ export function DefaultMessage({
   size = "sm",
   isLastMessage = false,
   isLoading = false,
+  toolRenderers,
   onApproveToolExecution,
   onRejectToolExecution,
   showFollowUps = true,
@@ -128,16 +131,24 @@ export function DefaultMessage({
     );
   }
 
-  // Separate tool executions into those needing approval and others
+  // Separate tool executions into categories
   const pendingApprovalTools = message.toolExecutions?.filter(
     (exec) => exec.approvalStatus === "required",
   );
-  const otherTools = message.toolExecutions?.filter(
+  const completedTools = message.toolExecutions?.filter(
     (exec) => exec.approvalStatus !== "required",
   );
 
-  // Convert tool executions to ToolStepData format (for non-pending tools)
-  const toolSteps = otherTools?.map((exec) => ({
+  // Split completed tools into those with custom renderers and those without
+  const toolsWithCustomRenderer = completedTools?.filter(
+    (exec) => toolRenderers && toolRenderers[exec.name],
+  );
+  const toolsWithoutCustomRenderer = completedTools?.filter(
+    (exec) => !toolRenderers || !toolRenderers[exec.name],
+  );
+
+  // Convert tools without custom renderers to ToolStepData format
+  const toolSteps = toolsWithoutCustomRenderer?.map((exec) => ({
     id: exec.id,
     name: exec.name,
     args: exec.args,
@@ -179,7 +190,30 @@ export function DefaultMessage({
           </MessageContent>
         )}
 
-        {/* Tool Steps (compact display) - show AFTER message content */}
+        {/* Custom Tool Renderers (Generative UI) */}
+        {toolsWithCustomRenderer && toolsWithCustomRenderer.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {toolsWithCustomRenderer.map((exec) => {
+              const Renderer = toolRenderers![exec.name];
+              return (
+                <Renderer
+                  key={exec.id}
+                  execution={{
+                    id: exec.id,
+                    name: exec.name,
+                    args: exec.args,
+                    status: exec.status,
+                    result: exec.result,
+                    error: exec.error,
+                    approvalStatus: exec.approvalStatus,
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* Tool Steps (default display for tools without custom renderers) */}
         {toolSteps && toolSteps.length > 0 && (
           <div className="mt-2 rounded-lg bg-muted/50 px-3 py-2">
             <ToolSteps steps={toolSteps} />

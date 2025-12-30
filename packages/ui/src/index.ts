@@ -151,6 +151,9 @@ export {
   type CopilotChatProps,
   type ConnectedChatProps, // Alias for CopilotChatProps
   type PoweredByProps,
+  // Generative UI types (for custom tool renderers)
+  type ToolRendererProps,
+  type ToolRenderers,
 } from "./components/composed";
 
 // ============================================

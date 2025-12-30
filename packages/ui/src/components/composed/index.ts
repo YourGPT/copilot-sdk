@@ -6,6 +6,8 @@ export {
   ToolExecutionMessage,
   type ChatProps,
   type ChatMessage,
+  type ToolRendererProps,
+  type ToolRenderers,
 } from "./chat";
 export {
   CopilotChat,

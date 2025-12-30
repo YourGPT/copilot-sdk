@@ -47,6 +47,67 @@ export type ChatMessage = {
 
 export type { ToolApprovalStatus, PermissionLevel };
 
+// ============================================
+// Generative UI - Tool Renderers
+// ============================================
+
+/**
+ * Props passed to custom tool renderer components
+ *
+ * @example
+ * ```tsx
+ * import type { ToolRendererProps } from '@yourgpt/copilot-sdk-ui';
+ *
+ * function WeatherCard({ execution }: ToolRendererProps) {
+ *   if (execution.status !== 'completed') {
+ *     return <div>Loading...</div>;
+ *   }
+ *   const { city, temperature } = execution.result;
+ *   return <div>{city}: {temperature}°</div>;
+ * }
+ * ```
+ */
+export interface ToolRendererProps {
+  execution: {
+    /** Unique execution ID */
+    id: string;
+    /** Tool name (matches key in toolRenderers) */
+    name: string;
+    /** Arguments passed to the tool */
+    args: Record<string, unknown>;
+    /** Current execution status */
+    status:
+      | "pending"
+      | "executing"
+      | "completed"
+      | "error"
+      | "failed"
+      | "rejected";
+    /** Tool result (available when status is 'completed') */
+    result?: unknown;
+    /** Error message (available when status is 'error' or 'failed') */
+    error?: string;
+    /** Approval status for tools requiring confirmation */
+    approvalStatus?: ToolApprovalStatus;
+  };
+}
+
+/**
+ * Map of tool names to their custom renderer components
+ *
+ * @example
+ * ```tsx
+ * const toolRenderers: ToolRenderers = {
+ *   get_weather: WeatherCard,
+ *   get_chart: ChartCard,
+ * };
+ * ```
+ */
+export type ToolRenderers = Record<
+  string,
+  React.ComponentType<ToolRendererProps>
+>;
+
 /**
  * Pending attachment (file being prepared to send)
  */
@@ -146,11 +207,28 @@ export type ChatProps = {
   followUpButtonClassName?: string;
 
   // === Tool Executions ===
-  // Note: Tool executions are now per-message via message.toolExecutions
-  // No standalone toolExecutions prop needed
-
   /** Whether waiting for server after tool completion (shows "Continuing..." loader) */
   isProcessing?: boolean;
+
+  // === Generative UI ===
+  /**
+   * Custom renderers for tool results (Generative UI)
+   *
+   * Map tool names to React components that render their results.
+   * When a tool execution matches a key, the custom component is rendered
+   * instead of the default ToolSteps display.
+   *
+   * @example
+   * ```tsx
+   * <Chat
+   *   toolRenderers={{
+   *     get_weather: WeatherCard,
+   *     get_chart: ChartCard,
+   *   }}
+   * />
+   * ```
+   */
+  toolRenderers?: ToolRenderers;
 
   // === Tool Approval (Human-in-the-loop) ===
   /** Called when user approves a tool execution */

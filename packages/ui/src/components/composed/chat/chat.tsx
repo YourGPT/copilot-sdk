@@ -94,9 +94,9 @@ export function Chat({
   // Suggestions
   suggestions = [],
   onSuggestionClick,
-  // Tool Executions (per-message via message.toolExecutions)
+  // Tool Executions
   isProcessing = false,
-  // Tool Approval (for per-message approval UI)
+  toolRenderers,
   onApproveToolExecution,
   onRejectToolExecution,
   // Follow-up Questions
@@ -373,14 +373,12 @@ export function Chat({
             );
 
             if (isEmptyAssistant) {
-              // Don't hide if message has tool_calls or toolExecutions - show them!
               if (hasToolCalls || hasToolExecutions) {
-                // Continue to render - DefaultMessage will show tool executions
+                // Has tools - continue to render
               } else if (isLastMessage && hasPendingApprovals) {
-                // Don't hide if this is the last message and has pending approvals
-                // Continue to render with tool executions attached
+                // Has pending approvals - continue to render
               } else if (isLastMessage && isLoading && !isProcessing) {
-                // Show loader while streaming (no tool executions on this message)
+                // Show streaming loader
                 return (
                   <Message key={message.id} className="flex gap-2">
                     <MessageAvatar
@@ -395,13 +393,12 @@ export function Chat({
                   </Message>
                 );
               } else {
-                // Hide empty assistant messages (no content, no tool_calls, no pending approvals)
+                // Hide empty assistant messages
                 return null;
               }
             }
 
-            // Use tool executions from the message directly
-            // (connected-chat.tsx already matches executions to their respective messages)
+            // Check for saved executions in metadata (historical)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const savedExecutions = (message as any).metadata
               ?.toolExecutions as ToolExecutionData[] | undefined;
@@ -437,6 +434,7 @@ export function Chat({
                 size={fontSize}
                 isLastMessage={isLastMessage}
                 isLoading={isLoading}
+                toolRenderers={toolRenderers}
                 onApproveToolExecution={onApproveToolExecution}
                 onRejectToolExecution={onRejectToolExecution}
                 showFollowUps={showFollowUps}

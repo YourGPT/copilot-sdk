@@ -47,6 +47,22 @@ export type CopilotChatProps = Omit<
  *   );
  * }
  * ```
+ *
+ * @example Generative UI with custom tool renderers
+ * ```tsx
+ * import { CopilotChat, type ToolRendererProps } from '@yourgpt/copilot-sdk-ui';
+ *
+ * function WeatherCard({ execution }: ToolRendererProps) {
+ *   if (execution.status !== 'completed') return <div>Loading...</div>;
+ *   return <div>{execution.result.city}: {execution.result.temperature}°</div>;
+ * }
+ *
+ * <CopilotChat
+ *   toolRenderers={{
+ *     get_weather: WeatherCard,
+ *   }}
+ * />
+ * ```
  */
 export function CopilotChat(props: CopilotChatProps) {
   // Auto-connect to context internally
@@ -208,10 +224,7 @@ export function CopilotChat(props: CopilotChatProps) {
       isLoading={isLoading}
       showPoweredBy={props.showPoweredBy ?? true}
       suggestions={suggestions}
-      // Tool execution is now per-message (message.toolExecutions)
-      // No standalone toolExecutions prop needed
       isProcessing={isProcessingToolResults}
-      // Tool approval props (for per-message approval UI)
       onApproveToolExecution={approveToolExecution}
       onRejectToolExecution={rejectToolExecution}
     />
