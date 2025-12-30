@@ -8,6 +8,9 @@ import type {
   ToolCallInfo,
   AssistantToolMessage,
   DoneEventMessage,
+  ToolResponse,
+  AIResponseMode,
+  AIContent,
 } from "@yourgpt/copilot-sdk-core";
 import type { AIProvider } from "../providers/types";
 import { createMessage } from "@yourgpt/copilot-sdk-core";
@@ -26,6 +29,99 @@ import {
   KNOWLEDGE_BASE_SYSTEM_INSTRUCTION,
   type YourGPTKBConfig,
 } from "./knowledge-base";
+
+// ============================================
+// AI Response Control
+// ============================================
+
+/**
+ * Build the content string sent to AI for a tool result.
+ *
+ * This function transforms tool results based on the tool's aiResponseMode and aiContext settings,
+ * controlling what information the AI receives to generate its response.
+ *
+ * @param tool - The tool definition (may include aiResponseMode, aiContext)
+ * @param result - The tool result (may include _aiResponseMode, _aiContext, _aiContent overrides)
+ * @param args - The arguments passed to the tool
+ * @returns The content string to send to the AI, or multimodal content array
+ */
+function buildToolResultForAI(
+  tool: ToolDefinition | undefined,
+  result: ToolResponse | unknown,
+  args: Record<string, unknown>,
+): string | AIContent[] {
+  // Type guard for ToolResponse with AI response fields
+  const typedResult = result as ToolResponse | undefined;
+
+  // Determine response mode (result override > tool config > default 'full')
+  const responseMode: AIResponseMode =
+    typedResult?._aiResponseMode ?? tool?.aiResponseMode ?? "full";
+
+  // Check for multimodal content (images, etc.) - always include if present
+  if (typedResult?._aiContent && typedResult._aiContent.length > 0) {
+    return typedResult._aiContent;
+  }
+
+  // Get AI context (result override > tool config > undefined)
+  let aiContext: string | undefined;
+
+  if (typedResult?._aiContext) {
+    aiContext = typedResult._aiContext;
+  } else if (tool?.aiContext) {
+    aiContext =
+      typeof tool.aiContext === "function"
+        ? tool.aiContext(typedResult as ToolResponse, args)
+        : tool.aiContext;
+  }
+
+  // Apply response mode
+  switch (responseMode) {
+    case "none":
+      // Minimal message so AI knows tool executed
+      return aiContext ?? "[Result displayed to user]";
+
+    case "brief":
+      // Use context if available, otherwise minimal acknowledgment
+      return (
+        aiContext ?? `[Tool ${tool?.name ?? "unknown"} executed successfully]`
+      );
+
+    case "full":
+    default:
+      // Include context as prefix if available, then full data
+      const fullData = JSON.stringify(result);
+      return aiContext ? `${aiContext}\n\nFull data: ${fullData}` : fullData;
+  }
+}
+
+/**
+ * Serialize tool result content for API message.
+ * Handles both string and multimodal (AIContent[]) results.
+ */
+function serializeToolResultContent(
+  content: string | AIContent[],
+): string | Array<{ type: string; [key: string]: unknown }> {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  // Convert AIContent to API format (OpenAI multimodal format)
+  return content.map((item) => {
+    if (item.type === "image") {
+      return {
+        type: "image_url",
+        image_url: {
+          url: `data:${item.mediaType};base64,${item.data}`,
+        },
+      };
+    }
+    // Text content
+    return {
+      type: "text",
+      text: item.text,
+    };
+  });
+}
 
 /**
  * YourGPT Copilot Runtime
@@ -756,7 +852,9 @@ export class Runtime {
       const serverToolResults: Array<{
         id: string;
         name: string;
+        args: Record<string, unknown>;
         result: unknown;
+        tool: ToolDefinition;
       }> = [];
 
       for (const tc of serverToolCalls) {
@@ -770,7 +868,13 @@ export class Runtime {
 
           try {
             const result = await tool.handler(tc.args);
-            serverToolResults.push({ id: tc.id, name: tc.name, result });
+            serverToolResults.push({
+              id: tc.id,
+              name: tc.name,
+              args: tc.args,
+              result,
+              tool,
+            });
 
             yield {
               type: "action:end",
@@ -788,7 +892,9 @@ export class Runtime {
             serverToolResults.push({
               id: tc.id,
               name: tc.name,
+              args: tc.args,
               result: errorResult,
+              tool,
             });
 
             yield {
@@ -825,13 +931,21 @@ export class Runtime {
           })),
         };
 
-        // Create tool result messages
+        // Create tool result messages (using buildToolResultForAI for AI response control)
         const toolResultMessages: DoneEventMessage[] = serverToolResults.map(
-          (tr) => ({
-            role: "tool" as const,
-            content: JSON.stringify(tr.result),
-            tool_call_id: tr.id,
-          }),
+          (tr) => {
+            const aiContent = buildToolResultForAI(tr.tool, tr.result, tr.args);
+            // Serialize content (handles both string and multimodal)
+            const content =
+              typeof aiContent === "string"
+                ? aiContent
+                : JSON.stringify(serializeToolResultContent(aiContent));
+            return {
+              role: "tool" as const,
+              content,
+              tool_call_id: tr.id,
+            };
+          },
         );
 
         // Add to accumulated messages for client
@@ -1113,7 +1227,9 @@ export class Runtime {
           const serverToolResults: Array<{
             id: string;
             name: string;
+            args: Record<string, unknown>;
             result: unknown;
+            tool: ToolDefinition;
           }> = [];
 
           for (const tc of serverToolCalls) {
@@ -1130,7 +1246,9 @@ export class Runtime {
                 serverToolResults.push({
                   id: tc.id,
                   name: tc.name,
+                  args: tc.args,
                   result: toolResult,
+                  tool,
                 });
                 yield {
                   type: "action:end",
@@ -1148,7 +1266,9 @@ export class Runtime {
                 serverToolResults.push({
                   id: tc.id,
                   name: tc.name,
+                  args: tc.args,
                   result: errorResult,
+                  tool,
                 });
                 yield {
                   type: "action:end",
@@ -1178,13 +1298,24 @@ export class Runtime {
               })),
             };
 
-            // Build tool result messages
+            // Build tool result messages (using buildToolResultForAI for AI response control)
             const toolResultMessages: DoneEventMessage[] =
-              serverToolResults.map((tr) => ({
-                role: "tool" as const,
-                content: JSON.stringify(tr.result),
-                tool_call_id: tr.id,
-              }));
+              serverToolResults.map((tr) => {
+                const aiContent = buildToolResultForAI(
+                  tr.tool,
+                  tr.result,
+                  tr.args,
+                );
+                const content =
+                  typeof aiContent === "string"
+                    ? aiContent
+                    : JSON.stringify(serializeToolResultContent(aiContent));
+                return {
+                  role: "tool" as const,
+                  content,
+                  tool_call_id: tr.id,
+                };
+              });
 
             // Add to accumulated messages
             newMessages.push(assistantWithToolCalls);

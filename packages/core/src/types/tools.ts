@@ -76,6 +76,28 @@ export interface ToolContext {
   data?: Record<string, unknown>;
 }
 
+// ============================================
+// AI Response Control Types
+// ============================================
+
+/**
+ * AI response behavior for tool results.
+ *
+ * Controls what the AI sees after a tool executes and renders UI.
+ *
+ * - `'none'`: AI generates minimal response, UI component handles display
+ * - `'brief'`: AI gets summary context (via aiContext), gives brief acknowledgment
+ * - `'full'`: AI receives full data and responds accordingly (default)
+ */
+export type AIResponseMode = "none" | "brief" | "full";
+
+/**
+ * Multimodal content for AI to analyze
+ */
+export type AIContent =
+  | { type: "image"; data: string; mediaType: string }
+  | { type: "text"; text: string };
+
 /**
  * Tool response format
  */
@@ -88,6 +110,48 @@ export interface ToolResponse<T = unknown> {
   error?: string;
   /** Result data */
   data?: T;
+
+  // ============================================
+  // AI Response Control (result-level overrides)
+  // ============================================
+
+  /**
+   * Override AI context for this specific result.
+   * Takes precedence over tool-level aiContext config.
+   * If set, this message is sent to AI instead of full result data.
+   *
+   * @example
+   * ```typescript
+   * return {
+   *   success: true,
+   *   data: sensitiveData,
+   *   _aiContext: '[Data retrieved - contains sensitive info, displayed to user]'
+   * };
+   * ```
+   */
+  _aiContext?: string;
+
+  /**
+   * Override AI response mode for this specific result.
+   * Takes precedence over tool-level aiResponseMode config.
+   */
+  _aiResponseMode?: AIResponseMode;
+
+  /**
+   * Content for AI to analyze (images, documents, etc.).
+   * When present, these are included as multimodal content for AI analysis.
+   *
+   * @example
+   * ```typescript
+   * // Screenshot for AI to analyze
+   * return {
+   *   success: true,
+   *   message: 'Screenshot captured',
+   *   _aiContent: [{ type: 'image', data: base64, mediaType: 'image/png' }]
+   * };
+   * ```
+   */
+  _aiContent?: AIContent[];
 }
 
 /**
@@ -143,6 +207,64 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * If not provided, a default message with the tool name is shown.
    */
   approvalMessage?: string | ((params: TParams) => string);
+
+  // ============================================
+  // AI Response Control
+  // ============================================
+
+  /**
+   * How the AI should respond when this tool's result is rendered as UI.
+   *
+   * - `'none'`: AI generates minimal response ("[Result displayed to user]").
+   *   Use for tools where UI component fully handles the display (stats cards, etc.)
+   *
+   * - `'brief'`: AI receives summary context (from aiContext) and gives brief acknowledgment.
+   *   Use for charts/visualizations where AI should acknowledge but not repeat data.
+   *
+   * - `'full'`: AI receives complete data and responds accordingly (default).
+   *   Use for tools where AI should analyze and elaborate on results.
+   *
+   * @default 'full'
+   *
+   * @example
+   * ```typescript
+   * // Chart tool - AI acknowledges without repeating data
+   * const chartTool: ToolDefinition = {
+   *   name: 'get_chart',
+   *   aiResponseMode: 'brief',
+   *   aiContext: (result) => `[Chart displayed: ${result.data.title}]`,
+   *   handler: async () => ({ success: true, data: chartData })
+   * };
+   * ```
+   */
+  aiResponseMode?: AIResponseMode;
+
+  /**
+   * Context/summary sent to AI instead of (or along with) full result.
+   *
+   * Used when:
+   * - `aiResponseMode: 'brief'` - This becomes the only thing AI sees
+   * - `aiResponseMode: 'full'` - This is prepended to full data for context
+   *
+   * Can be:
+   * - `string`: Static message (e.g., "[Weather data displayed]")
+   * - `function`: Dynamic based on result (e.g., (result) => `[Chart: ${result.data.title}]`)
+   *
+   * @example
+   * ```typescript
+   * // Static context
+   * aiContext: '[Analytics chart displayed to user]'
+   *
+   * // Dynamic context based on result
+   * aiContext: (result, args) => {
+   *   const { title, currentValue } = result.data;
+   *   return `[Chart displayed: ${title}, showing ${currentValue}]`;
+   * }
+   * ```
+   */
+  aiContext?:
+    | string
+    | ((result: ToolResponse, args: Record<string, unknown>) => string);
 }
 
 // ============================================
@@ -370,6 +492,12 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
   /** Custom message shown in the approval UI */
   approvalMessage?: string | ((params: TParams) => string);
+  /** AI response mode for this tool (default: 'full') */
+  aiResponseMode?: AIResponseMode;
+  /** Context/summary sent to AI instead of full result */
+  aiContext?:
+    | string
+    | ((result: ToolResponse, args: Record<string, unknown>) => string);
 }
 
 /**
@@ -409,6 +537,8 @@ export function tool<TParams = Record<string, unknown>>(
     available: config.available,
     needsApproval: config.needsApproval,
     approvalMessage: config.approvalMessage,
+    aiResponseMode: config.aiResponseMode,
+    aiContext: config.aiContext,
   };
 }
 

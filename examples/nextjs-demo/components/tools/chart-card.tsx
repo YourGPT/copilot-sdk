@@ -111,7 +111,12 @@ export function ChartCard({ execution }: ToolRendererProps) {
   }
 
   // Success - render chart
-  // Tool returns { success: true, data: AnalyticsChartData }
+  // Guard against undefined result (race condition safety)
+  if (!execution.result) {
+    return <ChartCardSkeleton />;
+  }
+
+  // execution.result is { success, data, _aiContext?, _aiResponseMode? }
   const result = execution.result as {
     success: boolean;
     data: AnalyticsChartData;

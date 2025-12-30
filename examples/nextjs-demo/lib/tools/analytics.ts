@@ -153,7 +153,16 @@ export const analyticsChartTool: ToolDefinition = {
       currentValue: formatMetricValue(metric, currentValue),
     };
 
-    return { success: true, data: chartData };
+    // AI Response Control: Use brief mode with context summary
+    // The chart UI handles the visual display, AI just acknowledges with key metrics
+    const trendSign = trendValue > 0 ? "+" : "";
+    return {
+      success: true,
+      data: chartData,
+      // Tell AI we're showing a chart so it doesn't repeat all the data
+      _aiResponseMode: "brief" as const,
+      _aiContext: `[Chart displayed: ${getMetricTitle(metric)} over ${period}, Current: ${formatMetricValue(metric, currentValue)}, Trend: ${trendSign}${Math.round(trendValue * 10) / 10}%]`,
+    };
   },
 };
 
@@ -197,6 +206,13 @@ export const statsTool: ToolDefinition = {
       ...metricStats,
     };
 
-    return { success: true, data: statsData };
+    // AI Response Control: Use brief mode - UI shows the stat card, AI gives minimal response
+    const changeSign = metricStats.change > 0 ? "+" : "";
+    return {
+      success: true,
+      data: statsData,
+      _aiResponseMode: "brief" as const,
+      _aiContext: `[Stat displayed: ${getMetricTitle(metric)} = ${metricStats.value}, ${changeSign}${metricStats.change}% ${metricStats.changeLabel}]`,
+    };
   },
 };

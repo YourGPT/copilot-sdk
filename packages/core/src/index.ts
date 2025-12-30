@@ -149,6 +149,9 @@ export type {
   ToolExecution,
   AgentLoopConfig,
   AgentLoopState,
+  // AI Response Control types
+  AIResponseMode,
+  AIContent,
   // Permission types (for persistent tool approvals)
   PermissionLevel,
   ToolPermission,

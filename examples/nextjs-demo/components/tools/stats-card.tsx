@@ -66,7 +66,12 @@ export function StatsCard({ execution }: ToolRendererProps) {
   }
 
   // Success - render stats
-  // Tool returns { success: true, data: StatsData }
+  // Guard against undefined result (race condition safety)
+  if (!execution.result) {
+    return <StatsCardSkeleton />;
+  }
+
+  // execution.result is { success, data, _aiContext?, _aiResponseMode? }
   const result = execution.result as { success: boolean; data: StatsData };
   const data = result.data;
   const isPositive = data.change > 0;

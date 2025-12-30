@@ -63,6 +63,12 @@ export const weatherTool: ToolDefinition = {
       ? { city, ...data }
       : { city, temperature: 70, condition: "sunny", humidity: 50, wind: 8 };
 
-    return { success: true, data: weatherData };
+    // AI Response Control: Use brief mode - UI shows weather card, AI gives minimal response
+    return {
+      success: true,
+      data: weatherData,
+      _aiResponseMode: "brief" as const,
+      _aiContext: `[Weather displayed: ${city} - ${weatherData.temperature}°F, ${weatherData.condition}]`,
+    };
   },
 };

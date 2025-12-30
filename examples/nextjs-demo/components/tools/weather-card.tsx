@@ -95,7 +95,12 @@ export function WeatherCard({ execution }: ToolRendererProps) {
   }
 
   // Success - render weather data
-  // Tool returns { success: true, data: WeatherData }
+  // Guard against undefined result (race condition safety)
+  if (!execution.result) {
+    return <WeatherCardSkeleton />;
+  }
+
+  // execution.result is { success, data, _aiContext?, _aiResponseMode? }
   const result = execution.result as { success: boolean; data: WeatherData };
   const data = result.data;
 

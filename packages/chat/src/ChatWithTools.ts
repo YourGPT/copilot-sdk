@@ -155,8 +155,10 @@ export class ChatWithTools {
 
       this.debug("Tool calls received:", toolCalls);
 
-      // Clear previous executions for new tool call batch
-      this.agentLoop.clearToolExecutions();
+      // NOTE: We do NOT clear previous executions here.
+      // Each message filters executions by its toolCallIds (in connected-chat.tsx),
+      // so executions accumulate but each message shows only its own tools.
+      // This preserves tool results for rendering. Full data is also in messages.
 
       // Convert tool calls to the format expected by agent loop
       const toolCallInfos = toolCalls.map((tc) => {
@@ -202,23 +204,10 @@ export class ChatWithTools {
       }
     });
 
-    // Handle done event - clear executions when turn completes (if no pending tools)
-    this.chat.on("done", () => {
-      const executions = this.agentLoop.toolExecutions;
-      const hasPendingOrExecuting = executions.some(
-        (e) =>
-          e.status === "pending" ||
-          e.status === "executing" ||
-          e.approvalStatus === "required",
-      );
-
-      if (!hasPendingOrExecuting) {
-        this.debug("Chat done - clearing tool executions");
-        this.agentLoop.clearToolExecutions();
-      } else {
-        this.debug("Chat done - NOT clearing (tools still pending/executing)");
-      }
-    });
+    // NOTE: We do NOT clear tool executions on "done" event or "toolCalls" event.
+    // Tool results need to persist so UI cards can continue rendering them.
+    // Full data is also stored in tool messages (Vercel-style) for persistence.
+    // Each message filters executions by toolCallIds, so accumulation is safe.
   }
 
   // ============================================

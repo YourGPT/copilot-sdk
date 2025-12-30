@@ -10,7 +10,10 @@
  * and inject their own state implementation.
  */
 
-import type { MessageAttachment } from "@yourgpt/copilot-sdk-core";
+import type {
+  MessageAttachment,
+  AIResponseMode,
+} from "@yourgpt/copilot-sdk-core";
 import type { ChatState } from "../interfaces/ChatState";
 import type {
   ChatTransport,
@@ -38,6 +41,53 @@ import {
   requiresToolExecution,
 } from "../functions/stream";
 import { SimpleChatState } from "../interfaces/ChatState";
+
+// ============================================
+// AI Response Control Helper
+// ============================================
+
+/**
+ * Build tool result content for AI based on _aiResponseMode and _aiContext
+ * This transforms client-side tool results before sending to the LLM
+ *
+ * @param result - The tool result (may include _aiResponseMode, _aiContext, _aiContent)
+ * @returns The content string to send to the AI
+ */
+function buildToolResultContentForAI(result: unknown): string {
+  if (typeof result === "string") return result;
+
+  const typedResult = result as {
+    _aiResponseMode?: AIResponseMode;
+    _aiContext?: string;
+    _aiContent?: Array<{ type: string; data?: string; text?: string }>;
+    [key: string]: unknown;
+  } | null;
+
+  const responseMode = typedResult?._aiResponseMode ?? "full";
+
+  // Check for multimodal content
+  if (typedResult?._aiContent) {
+    return JSON.stringify(typedResult._aiContent);
+  }
+
+  switch (responseMode) {
+    case "none":
+      return typedResult?._aiContext ?? "[Result displayed to user]";
+
+    case "brief":
+      return typedResult?._aiContext ?? "[Tool executed successfully]";
+
+    case "full":
+    default:
+      if (typedResult?._aiContext) {
+        // Include context as prefix, then full data (without the control fields)
+        const { _aiResponseMode, _aiContext, _aiContent, ...dataOnly } =
+          typedResult;
+        return `${_aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
+      }
+      return JSON.stringify(result);
+  }
+}
 
 /**
  * Event types emitted by AbstractChat
@@ -220,6 +270,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             message: typedResult.message || "Content shared in conversation.",
           });
         } else {
+          // Store FULL result in message (Vercel-style)
+          // Transformation happens at send time in buildRequest()
           messageContent =
             typeof result === "string" ? result : JSON.stringify(result);
         }
@@ -396,13 +448,37 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     }));
 
     return {
-      messages: this.state.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-        tool_calls: m.toolCalls,
-        tool_call_id: m.toolCallId,
-        attachments: m.attachments,
-      })),
+      messages: this.state.messages.map((m) => {
+        // For tool messages, transform based on _aiResponseMode at SEND time
+        // This preserves full data in storage while sending brief to AI
+        if (m.role === "tool" && m.content) {
+          try {
+            const fullResult = JSON.parse(m.content);
+            const transformedContent = buildToolResultContentForAI(fullResult);
+            return {
+              role: m.role,
+              content: transformedContent,
+              tool_call_id: m.toolCallId,
+            };
+          } catch {
+            // If not JSON, send as-is
+            return {
+              role: m.role,
+              content: m.content,
+              tool_call_id: m.toolCallId,
+            };
+          }
+        }
+
+        // Other messages unchanged
+        return {
+          role: m.role,
+          content: m.content,
+          tool_calls: m.toolCalls,
+          tool_call_id: m.toolCallId,
+          attachments: m.attachments,
+        };
+      }),
       threadId: this.config.threadId,
       systemPrompt: this.config.systemPrompt,
       llm: this.config.llm,
