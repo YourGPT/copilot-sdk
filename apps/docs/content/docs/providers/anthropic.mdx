@@ -6,17 +6,11 @@ description: Use Claude 3.5 Sonnet, Claude 3 Opus, and more
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-<div className="not-prose mb-8 p-6 rounded-xl border bg-gradient-to-br from-orange-500/5 to-amber-500/10">
-  <div className="flex items-center gap-4">
-    <div className="text-5xl">🟠</div>
-    <div>
-      <h2 className="text-2xl font-bold m-0">Anthropic</h2>
-      <p className="text-muted-foreground m-0">Claude 3.5 Sonnet, Claude 3 Opus</p>
-    </div>
-  </div>
-</div>
-
-# Anthropic
+<ProviderHeader
+  provider="anthropic"
+  name="Anthropic"
+  description="Claude 3.5 Sonnet, Claude 3 Opus"
+/>
 
 Claude models from Anthropic. Known for safety, long context, and excellent reasoning.
 

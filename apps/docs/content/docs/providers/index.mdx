@@ -6,53 +6,13 @@ description: Connect to any LLM provider
 import { Cards, Card } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-<div className="not-prose mb-8 rounded-xl overflow-hidden border bg-gradient-to-br from-cyan-500/5 via-blue-500/10 to-indigo-500/5">
-  <div className="aspect-[21/9] flex items-center justify-center">
-    <div className="text-center">
-      <div className="text-6xl mb-4">🔌</div>
-      <p className="text-muted-foreground">Provider logos grid placeholder</p>
-    </div>
-  </div>
-</div>
-
-# Providers
-
 YourGPT Copilot SDK supports multiple LLM providers out of the box. **Switch providers without changing your frontend code.**
 
 <Callout type="info">
 All providers use the same API. Change one line in your config to switch from OpenAI to Anthropic.
 </Callout>
 
----
-
-## Supported Providers
-
-<Cards>
-  <Card title="OpenAI" href="/docs/providers/openai" icon="🟢">
-    GPT-4o, GPT-4, GPT-3.5 Turbo
-  </Card>
-  <Card title="Anthropic" href="/docs/providers/anthropic" icon="🟠">
-    Claude 3.5 Sonnet, Claude 3 Opus
-  </Card>
-  <Card title="Google" href="/docs/providers/google" icon="🔵">
-    Gemini 1.5 Pro, Gemini Flash
-  </Card>
-  <Card title="Groq" href="/docs/providers/groq" icon="⚡">
-    Llama 3.1, Mixtral (ultra-fast)
-  </Card>
-  <Card title="Mistral" href="/docs/providers/mistral" icon="🟣">
-    Mistral Large, Medium, Small
-  </Card>
-  <Card title="Azure OpenAI" href="/docs/providers/azure" icon="☁️">
-    Enterprise OpenAI deployment
-  </Card>
-  <Card title="Ollama" href="/docs/providers/ollama" icon="🦙">
-    Run models locally
-  </Card>
-  <Card title="Custom Provider" href="/docs/providers/custom-provider" icon="⚙️">
-    Build your own adapter
-  </Card>
-</Cards>
+<ProviderCards />
 
 ---
 

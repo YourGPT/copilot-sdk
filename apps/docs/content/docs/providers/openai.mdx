@@ -6,17 +6,11 @@ description: Use GPT-4o, GPT-4, and GPT-3.5 models
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-<div className="not-prose mb-8 p-6 rounded-xl border bg-gradient-to-br from-emerald-500/5 to-green-500/10">
-  <div className="flex items-center gap-4">
-    <div className="text-5xl">🟢</div>
-    <div>
-      <h2 className="text-2xl font-bold m-0">OpenAI</h2>
-      <p className="text-muted-foreground m-0">GPT-4o, GPT-4, GPT-3.5 Turbo</p>
-    </div>
-  </div>
-</div>
-
-# OpenAI
+<ProviderHeader
+  provider="openai"
+  name="OpenAI"
+  description="GPT-4o, GPT-4, GPT-3.5 Turbo"
+/>
 
 The most popular LLM provider. Access GPT-4o, GPT-4 Turbo, and GPT-3.5 models.
 

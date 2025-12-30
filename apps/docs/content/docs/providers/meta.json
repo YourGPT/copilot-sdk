@@ -2,7 +2,6 @@
   "title": "Providers",
   "icon": "Brain",
   "pages": [
-    "index",
     "openai",
     "anthropic",
     "google",

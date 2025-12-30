@@ -28,12 +28,14 @@ export const metadata: Metadata = {
       "Open-source SDK for building AI-powered chat interfaces in React",
     siteName: "Copilot SDK",
     type: "website",
+    images: ["/og-image.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "Copilot SDK - AI SDK for React",
     description:
       "Open-source SDK for building AI-powered chat interfaces in React",
+    images: ["/og-image.png"],
   },
 };
 
