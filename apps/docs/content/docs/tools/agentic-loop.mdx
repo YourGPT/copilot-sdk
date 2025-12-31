@@ -69,7 +69,7 @@ The agentic loop is configured on the backend runtime:
 
 ```ts
 // app/api/chat/route.ts
-import { createRuntime, createOpenAI } from '@yourgpt/copilot-sdk-runtime';
+import { createRuntime, createOpenAI } from '@yourgpt/llm-sdk';
 
 const runtime = createRuntime({
   provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
@@ -105,10 +105,10 @@ Higher values allow more complex tasks but increase latency and token usage. Sta
 Monitor the agentic loop from the frontend:
 
 ```tsx
-import { useYourGPT } from '@yourgpt/copilot-sdk-react';
+import { useCopilot } from '@yourgpt/copilot-sdk-react';
 
 function AgentProgress() {
-  const { toolExecutions, isLoading } = useYourGPT();
+  const { toolExecutions, isLoading } = useCopilot();
 
   // Filter to current batch
   const currentExecutions = toolExecutions.filter(
@@ -243,7 +243,7 @@ Users can stop the agentic loop mid-execution:
 
 ```tsx
 function ChatControls() {
-  const { isLoading, stop } = useYourGPT();
+  const { isLoading, stop } = useCopilot();
 
   return (
     <div>
@@ -265,7 +265,7 @@ Show users what's happening:
 
 ```tsx
 function AgenticProgress() {
-  const { toolExecutions, isLoading, status } = useYourGPT();
+  const { toolExecutions, isLoading, status } = useCopilot();
 
   // Only show during active tool execution
   const isProcessingTools = isLoading && toolExecutions.some(
@@ -359,7 +359,7 @@ Listen to agentic loop events:
 
 ```tsx
 // In provider setup
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   onToolStart={(execution) => {
     console.log('Tool starting:', execution.name);

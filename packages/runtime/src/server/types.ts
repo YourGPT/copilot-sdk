@@ -28,6 +28,19 @@ export interface RuntimeConfigWithLLM {
   knowledgeBase?: KnowledgeBaseConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Custom context data passed to all tool handlers.
+   * Useful for passing auth tokens, user info, tenant data, etc.
+   *
+   * @example
+   * ```typescript
+   * const runtime = createRuntime({
+   *   llm: { ... },
+   *   toolContext: { userId: session.userId, tenantId: tenant.id },
+   * });
+   * ```
+   */
+  toolContext?: Record<string, unknown>;
 }
 
 /**
@@ -50,6 +63,8 @@ export interface RuntimeConfigWithAdapter {
   knowledgeBase?: KnowledgeBaseConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /** Custom context data passed to all tool handlers */
+  toolContext?: Record<string, unknown>;
 }
 
 /**
@@ -57,7 +72,7 @@ export interface RuntimeConfigWithAdapter {
  *
  * @example
  * ```typescript
- * import { createOpenAI } from '@yourgpt/copilot-sdk-runtime/providers';
+ * import { createOpenAI } from '@yourgpt/llm-sdk';
  *
  * const openai = createOpenAI({ apiKey: '...' });
  * const runtime = createRuntime({
@@ -83,6 +98,8 @@ export interface RuntimeConfigWithProvider {
   knowledgeBase?: KnowledgeBaseConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /** Custom context data passed to all tool handlers */
+  toolContext?: Record<string, unknown>;
 }
 
 /**
@@ -150,7 +167,7 @@ export interface ChatRequest {
   useAgentLoop?: boolean;
   /** Enable streaming responses (default: true). Set to false for non-streaming mode. */
   streaming?: boolean;
-  /** YourGPT Knowledge Base configuration (enables search_knowledge tool) */
+  /** Knowledge Base configuration (enables search_knowledge tool) */
   knowledgeBase?: {
     /** Project UID for the knowledge base */
     projectUid: string;

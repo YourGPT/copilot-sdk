@@ -1,7 +1,7 @@
 /**
  * System Prompt Utilities
  *
- * Default system message generation for YourGPT Copilot.
+ * Default system message generation for Copilot SDK.
  */
 
 /**
@@ -13,7 +13,7 @@ export type SystemMessageFunction = (
 ) => string;
 
 /**
- * Default system message for YourGPT Copilot
+ * Default system message for Copilot SDK
  *
  * @param contextString - Context from useReadable hooks
  * @param additionalInstructions - Additional instructions from user

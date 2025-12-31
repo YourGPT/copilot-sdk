@@ -124,7 +124,7 @@ export async function captureScreenshot(
     // Handle tainted canvas (cross-origin images)
     if (e instanceof DOMException && e.name === "SecurityError") {
       console.warn(
-        "[YourGPT:Screenshot] Canvas tainted by cross-origin content. Creating placeholder.",
+        "[Copilot SDK] Canvas tainted by cross-origin content. Creating placeholder.",
       );
       const cleanCanvas = document.createElement("canvas");
       cleanCanvas.width = width;

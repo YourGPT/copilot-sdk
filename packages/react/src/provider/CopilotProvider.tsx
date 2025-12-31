@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * YourGPTProvider - React context provider for YourGPT Copilot SDK
+ * CopilotProvider - React context provider for Copilot SDK
  *
  * This provider uses ChatWithTools for coordinated chat + tool execution.
  * All internal wiring is handled by the chat package (framework-agnostic).
@@ -20,7 +20,7 @@ import React, {
 
 import type {
   Message,
-  YourGPTConfig,
+  CopilotConfig,
   ToolsConfig,
   ToolDefinition,
   ActionDefinition,
@@ -34,16 +34,22 @@ import {
   ReactChatWithTools,
   type ReactChatWithToolsConfig,
 } from "../core/ReactChatWithTools";
+import {
+  addNode,
+  removeNode,
+  printTree,
+  type ContextTreeNode,
+} from "../utils/context-tree";
 
 // ============================================
 // Types
 // ============================================
 
-export interface YourGPTProviderProps {
+export interface CopilotProviderProps {
   children: React.ReactNode;
   runtimeUrl: string;
-  config?: YourGPTConfig["config"];
-  cloud?: YourGPTConfig["cloud"];
+  config?: CopilotConfig["config"];
+  cloud?: CopilotConfig["cloud"];
   systemPrompt?: string;
   /** @deprecated Use useTools() hook instead */
   tools?: ToolsConfig;
@@ -56,7 +62,7 @@ export interface YourGPTProviderProps {
   debug?: boolean;
 }
 
-export interface YourGPTContextValue {
+export interface CopilotContextValue {
   // Chat state
   messages: UIMessage[];
   status: "ready" | "submitted" | "streaming" | "error";
@@ -90,6 +96,10 @@ export interface YourGPTContextValue {
   unregisterAction: (name: string) => void;
   registeredActions: ActionDefinition[];
 
+  // AI Context (for useAIContext hook)
+  addContext: (context: string, parentId?: string) => string;
+  removeContext: (id: string) => void;
+
   // Config
   threadId?: string;
   runtimeUrl: string;
@@ -100,12 +110,12 @@ export interface YourGPTContextValue {
 // Context
 // ============================================
 
-const YourGPTContext = createContext<YourGPTContextValue | null>(null);
+const CopilotContext = createContext<CopilotContextValue | null>(null);
 
-export function useYourGPT(): YourGPTContextValue {
-  const context = useContext(YourGPTContext);
+export function useCopilot(): CopilotContextValue {
+  const context = useContext(CopilotContext);
   if (!context) {
-    throw new Error("useYourGPT must be used within YourGPTProvider");
+    throw new Error("useCopilot must be used within CopilotProvider");
   }
   return context;
 }
@@ -114,7 +124,7 @@ export function useYourGPT(): YourGPTContextValue {
 // Provider Component
 // ============================================
 
-export function YourGPTProvider({
+export function CopilotProvider({
   children,
   runtimeUrl,
   config,
@@ -127,11 +137,11 @@ export function YourGPTProvider({
   onError,
   streaming,
   debug = false,
-}: YourGPTProviderProps) {
+}: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
     (...args: unknown[]) => {
-      if (debug) console.log("[YourGPT]", ...args);
+      if (debug) console.log("[Copilot SDK]", ...args);
     },
     [debug],
   );
@@ -143,7 +153,7 @@ export function YourGPTProvider({
       (toolsConfig.screenshot || toolsConfig.console || toolsConfig.network)
     ) {
       console.warn(
-        "[YourGPT] The `tools` prop is deprecated. Use the `useTools` hook instead.",
+        "[Copilot SDK] The `tools` prop is deprecated. Use the `useTools` hook instead.",
       );
     }
   }, [toolsConfig]);
@@ -275,6 +285,41 @@ export function YourGPTProvider({
   );
 
   // ============================================
+  // AI Context Tree (for useAIContext hook)
+  // ============================================
+
+  const contextTreeRef = useRef<ContextTreeNode[]>([]);
+  const contextIdCounter = useRef(0);
+
+  const addContext = useCallback(
+    (context: string, parentId?: string): string => {
+      const id = `ctx-${++contextIdCounter.current}`;
+      contextTreeRef.current = addNode(
+        contextTreeRef.current,
+        { id, value: context, parentId },
+        parentId,
+      );
+      // Update chat's context
+      const contextString = printTree(contextTreeRef.current);
+      chatRef.current?.setContext(contextString);
+      debugLog("Context added:", id);
+      return id;
+    },
+    [debugLog],
+  );
+
+  const removeContext = useCallback(
+    (id: string): void => {
+      contextTreeRef.current = removeNode(contextTreeRef.current, id);
+      // Update chat's context
+      const contextString = printTree(contextTreeRef.current);
+      chatRef.current?.setContext(contextString);
+      debugLog("Context removed:", id);
+    },
+    [debugLog],
+  );
+
+  // ============================================
   // Chat Actions
   // ============================================
 
@@ -338,7 +383,7 @@ export function YourGPTProvider({
   // Context Value
   // ============================================
 
-  const contextValue = useMemo<YourGPTContextValue>(
+  const contextValue = useMemo<CopilotContextValue>(
     () => ({
       // Chat state
       messages,
@@ -366,6 +411,10 @@ export function YourGPTProvider({
       unregisterAction,
       registeredActions,
 
+      // AI Context
+      addContext,
+      removeContext,
+
       // Config
       threadId,
       runtimeUrl,
@@ -390,6 +439,8 @@ export function YourGPTProvider({
       registerAction,
       unregisterAction,
       registeredActions,
+      addContext,
+      removeContext,
       threadId,
       runtimeUrl,
       toolsConfig,
@@ -397,8 +448,8 @@ export function YourGPTProvider({
   );
 
   return (
-    <YourGPTContext.Provider value={contextValue}>
+    <CopilotContext.Provider value={contextValue}>
       {children}
-    </YourGPTContext.Provider>
+    </CopilotContext.Provider>
   );
 }

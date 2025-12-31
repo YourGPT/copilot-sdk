@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 import {
   searchKnowledgeBase,
   formatKnowledgeResultsForAI,
@@ -30,7 +30,7 @@ export interface UseKnowledgeBaseConfig {
  * Hook to integrate knowledge base search as a tool
  *
  * Registers a `search_knowledge` tool that the AI can use to search
- * the YourGPT knowledge base for relevant information.
+ * the knowledge base for relevant information.
  *
  * @example
  * ```tsx
@@ -45,7 +45,7 @@ export interface UseKnowledgeBaseConfig {
  * ```
  */
 export function useKnowledgeBase(config: UseKnowledgeBaseConfig): void {
-  const { registerTool, unregisterTool } = useYourGPTContext();
+  const { registerTool, unregisterTool } = useCopilotContext();
   const configRef = useRef(config);
 
   // Update config ref

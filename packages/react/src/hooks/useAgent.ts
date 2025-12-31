@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 import type { StreamEvent } from "@yourgpt/copilot-sdk-core";
 import { streamSSE } from "@yourgpt/copilot-sdk-core";
 
@@ -61,7 +61,7 @@ export function useAgent<TState = Record<string, unknown>>(
   options: UseAgentOptions<TState>,
 ): UseAgentReturn<TState> {
   const { name, initialState = {} as TState, onStateChange } = options;
-  const { config } = useYourGPTContext();
+  const { config } = useCopilotContext();
 
   const [state, setStateInternal] = useState<TState>(initialState);
   const [isRunning, setIsRunning] = useState(false);

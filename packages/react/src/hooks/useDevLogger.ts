@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * SDK State for DevLogger
@@ -49,10 +49,10 @@ export interface DevLoggerState {
 /**
  * Hook to build DevLogger state from SDK context
  *
- * Used internally by YourGPTProvider when showLogger is true
+ * Used internally by CopilotProvider when showLogger is true
  */
 export function useDevLogger(): DevLoggerState {
-  const ctx = useYourGPTContext();
+  const ctx = useCopilotContext();
 
   return useMemo<DevLoggerState>(() => {
     // Build tool executions from agent loop state

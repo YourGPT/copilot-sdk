@@ -10,12 +10,12 @@ Core hooks for building AI chat experiences.
 
 ---
 
-## useYourGPT
+## useCopilot
 
 Main hook for chat state and actions.
 
 ```tsx
-import { useYourGPT } from '@yourgpt/copilot-sdk-react';
+import { useCopilot } from '@yourgpt/copilot-sdk-react';
 
 function Chat() {
   const {
@@ -37,7 +37,7 @@ function Chat() {
     approveToolExecution,
     rejectToolExecution,
     registeredTools,
-  } = useYourGPT();
+  } = useCopilot();
 }
 ```
 

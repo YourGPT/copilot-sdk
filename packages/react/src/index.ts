@@ -1,16 +1,16 @@
 /**
  * @yourgpt/copilot-sdk-react
  *
- * React hooks and components for YourGPT Copilot SDK
+ * React hooks and components for Copilot SDK
  */
 
 // Provider
 export {
-  YourGPTProvider,
-  useYourGPT,
-  type YourGPTProviderProps,
-  type YourGPTContextValue,
-} from "./provider/YourGPTProvider";
+  CopilotProvider,
+  useCopilot,
+  type CopilotProviderProps,
+  type CopilotContextValue,
+} from "./provider/CopilotProvider";
 
 // Context types from legacy provider (for backward compat)
 export type {
@@ -20,7 +20,7 @@ export type {
   ToolsState,
   ToolsActions,
   AgentLoopState,
-} from "./context/YourGPTContext";
+} from "./context/CopilotContext";
 
 // Hooks
 export {
@@ -123,7 +123,7 @@ export type {
   Source,
   ActionDefinition,
   ActionParameter,
-  YourGPTConfig,
+  CopilotConfig,
   LLMConfig,
   CloudConfig,
   // Tools types (smart context)

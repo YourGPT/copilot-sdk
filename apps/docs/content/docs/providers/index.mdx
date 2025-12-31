@@ -6,7 +6,7 @@ description: Connect to any LLM provider
 import { Cards, Card } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-YourGPT Copilot SDK supports multiple LLM providers out of the box. **Switch providers without changing your frontend code.**
+Copilot SDK supports multiple LLM providers out of the box. **Switch providers without changing your frontend code.**
 
 <Callout type="info">
 All providers use the same API. Change one line in your config to switch from OpenAI to Anthropic.
@@ -21,7 +21,7 @@ All providers use the same API. Change one line in your config to switch from Op
 ### 1. Choose Your Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'openai',    // or 'anthropic', 'google', 'groq', etc.
@@ -29,7 +29,7 @@ All providers use the same API. Change one line in your config to switch from Op
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ### 2. Add API Key

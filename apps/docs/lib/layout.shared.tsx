@@ -23,7 +23,7 @@ export function baseOptions(): BaseLayoutProps {
         type: "icon",
         icon: <Github />,
         text: "GitHub",
-        url: "https://github.com/YourGPT/copilot-sdk",
+        url: "https://github.com/copilot-sdk/copilot-sdk",
         external: true,
       },
     ],

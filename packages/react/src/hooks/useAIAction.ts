@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import type { ActionDefinition } from "@yourgpt/copilot-sdk-core";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * Hook to register multiple AI actions/tools
@@ -25,7 +25,7 @@ import { useYourGPTContext } from "../context/YourGPTContext";
  * ```
  */
 export function useAIActions(actions: ActionDefinition[]): void {
-  const { registerAction, unregisterAction } = useYourGPTContext();
+  const { registerAction, unregisterAction } = useCopilotContext();
 
   useEffect(() => {
     // Register all actions

@@ -34,8 +34,8 @@ yourgpt-copilot/
 │   ├── core/          # @yourgpt/copilot-sdk-core - Types & utilities
 │   ├── react/         # @yourgpt/copilot-sdk-react - React hooks
 │   ├── ui/            # @yourgpt/copilot-sdk-ui - UI components
-│   ├── runtime/       # @yourgpt/copilot-sdk-runtime - Server adapters
-│   └── knowledge/     # @yourgpt/copilot-sdk-knowledge - KB integration
+│   ├── runtime/       # @yourgpt/llm-sdk - Multi-provider LLM integration
+│   └── knowledge/     # @yourgpt/copilot-sdk-knowledge - KB integration (Coming Soon)
 ├── apps/
 │   └── docs/          # Documentation site
 ├── examples/          # Example applications

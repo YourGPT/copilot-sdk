@@ -1,7 +1,7 @@
 /**
- * @yourgpt/copilot-sdk-runtime
+ * @yourgpt/llm-sdk
  *
- * Backend runtime server for YourGPT Copilot SDK
+ * LLM SDK for Copilot - Multi-provider LLM integration
  */
 
 // Server
@@ -35,16 +35,6 @@ export {
   runAgentLoop,
   DEFAULT_MAX_ITERATIONS,
   type AgentLoopOptions,
-} from "./server";
-
-// Knowledge Base (server-side)
-export {
-  searchKnowledgeBase,
-  formatKnowledgeResultsForAI,
-  KNOWLEDGE_BASE_SYSTEM_INSTRUCTION,
-  type YourGPTKBConfig,
-  type KBSearchResult,
-  type KBSearchResponse,
 } from "./server";
 
 // Adapters

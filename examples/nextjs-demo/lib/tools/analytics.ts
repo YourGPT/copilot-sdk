@@ -127,13 +127,9 @@ export const analyticsChartTool: ToolDefinition = {
     },
     required: ["metric"],
   },
-  handler: async ({
-    metric,
-    period = "30d",
-  }: {
-    metric: MetricType;
-    period?: PeriodType;
-  }) => {
+  handler: async (params) => {
+    const metric = params.metric as MetricType;
+    const period = (params.period as PeriodType) || "30d";
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -187,7 +183,8 @@ export const statsTool: ToolDefinition = {
     },
     required: ["metric"],
   },
-  handler: async ({ metric }: { metric: MetricType }) => {
+  handler: async (params) => {
+    const metric = params.metric as MetricType;
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 300));
 

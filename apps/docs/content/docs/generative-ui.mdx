@@ -188,7 +188,7 @@ Tool renderers can be fully interactive:
 ```tsx
 function ProductCard({ data }: ToolRendererProps) {
   const [quantity, setQuantity] = useState(1);
-  const { sendMessage } = useYourGPT();
+  const { sendMessage } = useCopilot();
 
   const handleAddToCart = () => {
     // Trigger AI to call add_to_cart tool

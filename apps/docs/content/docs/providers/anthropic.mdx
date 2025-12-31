@@ -32,7 +32,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### 3. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'anthropic',
@@ -40,7 +40,7 @@ ANTHROPIC_API_KEY=sk-ant-...
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -80,7 +80,7 @@ llm={{
 Claude 3 models support image analysis:
 
 ```tsx
-const { sendMessage } = useYourGPT();
+const { sendMessage } = useCopilot();
 
 sendMessage("Analyze this screenshot", [
   {
@@ -99,7 +99,7 @@ Claude excels at long documents (200K context):
 
 ```tsx
 // System prompt can include extensive documentation
-<YourGPTProvider
+<CopilotProvider
   systemPrompt={`You are a support agent. Here is our full documentation:
 
   ${fullDocumentation}  // Can be 100K+ tokens

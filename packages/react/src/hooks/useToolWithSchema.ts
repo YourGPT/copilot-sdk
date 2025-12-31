@@ -10,7 +10,7 @@ import type {
   ToolInputSchema,
 } from "@yourgpt/copilot-sdk-core";
 import { zodObjectToInputSchema } from "@yourgpt/copilot-sdk-core";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * Zod schema type (minimal interface)
@@ -100,7 +100,7 @@ export function useToolWithSchema<TSchema extends ZodObjectSchema>(
   config: UseToolWithSchemaConfig<TSchema>,
   dependencies: unknown[] = [],
 ): void {
-  const { registerTool, unregisterTool } = useYourGPTContext();
+  const { registerTool, unregisterTool } = useCopilotContext();
   const configRef = useRef(config);
 
   // Update ref when config changes
@@ -175,7 +175,7 @@ export function useToolsWithSchema<TSchema extends ZodObjectSchema>(
   tools: UseToolWithSchemaConfig<TSchema>[],
   dependencies: unknown[] = [],
 ): void {
-  const { registerTool, unregisterTool } = useYourGPTContext();
+  const { registerTool, unregisterTool } = useCopilotContext();
   const toolsRef = useRef(tools);
 
   // Update ref when tools change

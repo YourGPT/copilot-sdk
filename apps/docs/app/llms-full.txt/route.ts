@@ -30,7 +30,7 @@ export async function GET() {
   const docFiles = await getDocFiles();
 
   const sections: string[] = [
-    "# YourGPT Copilot SDK - Full Documentation",
+    "# Copilot SDK - Full Documentation",
     "",
     "> Open-source SDK for building AI assistants with App Context Awareness.",
     "",

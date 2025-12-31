@@ -1,5 +1,5 @@
 /**
- * React Hooks for YourGPT Copilot SDK
+ * React Hooks for Copilot SDK
  */
 
 // Action hooks

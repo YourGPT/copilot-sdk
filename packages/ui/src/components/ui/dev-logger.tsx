@@ -131,7 +131,7 @@ export function DevLogger({
             <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/50">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-orange-500" />
-                <h2 className="font-semibold text-sm">YourGPT SDK DevLogger</h2>
+                <h2 className="font-semibold text-sm">Copilot SDK DevLogger</h2>
               </div>
               <button
                 type="button"

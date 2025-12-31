@@ -1,0 +1,231 @@
+---
+title: Why Copilot SDK
+description: Build production-ready AI copilots in minutes, not months. Self-hosted, enterprise-grade, zero lock-in.
+icon: Sparkles
+---
+
+import { Cards, Card } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Why Copilot SDK?
+
+Building AI assistants shouldn't require a team of ML engineers and months of development. Yet that's exactly what most solutions demand.
+
+<Callout type="info">
+**Ship in hours, not months.** From zero to production-ready AI copilot with 3 lines of code.
+</Callout>
+
+---
+
+## The Problem with Existing Solutions
+
+Most AI copilot solutions fall into two camps—and both have serious drawbacks:
+
+### SaaS Platforms (Intercom, Zendesk AI, etc.)
+
+| Problem | Impact |
+|---------|--------|
+| **Vendor Lock-in** | Your AI, your data, their servers. Good luck migrating. |
+| **Limited Customization** | Pre-built widgets that don't match your brand or UX |
+| **Per-seat Pricing** | Costs explode as you scale |
+| **No Code Access** | Can't extend, can't debug, can't own |
+| **Data Privacy Concerns** | Customer conversations on third-party servers |
+
+### DIY with Raw LLM APIs
+
+| Problem | Impact |
+|---------|--------|
+| **Months of Development** | Building streaming, tools, context, UI from scratch |
+| **No Context Awareness** | AI has no idea what's on the user's screen |
+| **Complex State Management** | Conversation history, tool calls, agentic loops |
+| **Multi-provider Headache** | Different APIs, different formats, different quirks |
+| **Maintenance Burden** | Every API change breaks your implementation |
+
+---
+
+## What Makes Us Different
+
+<Cards>
+  <Card title="Ship in Minutes" icon="🚀">
+    3 lines of code to a working AI copilot. Not an exaggeration. Provider, chat component, done.
+  </Card>
+  <Card title="100% Self-Hosted" icon="🏠">
+    Your servers, your data, your rules. Full source code access. Zero vendor lock-in.
+  </Card>
+  <Card title="Context-Aware AI" icon="👁️">
+    Built-in screenshot capture, console monitoring, network inspection. AI actually sees what users see.
+  </Card>
+  <Card title="Enterprise Ready" icon="🏢">
+    Production-grade architecture. Scales from startup to Fortune 500.
+  </Card>
+</Cards>
+
+---
+
+## Feature Comparison
+
+| Feature | SaaS Platforms | DIY | Copilot SDK |
+|---------|---------------|-----|---------------------|
+| Time to Production | Days | Months | **Minutes** |
+| Self-Hosted | No | Yes | **Yes** |
+| Source Code Access | No | Yes | **Yes** |
+| Context Awareness | Limited | Manual | **Built-in** |
+| Multi-LLM Support | Vendor-specific | Manual | **6+ Providers** |
+| Tool Execution | Limited | Manual | **Agentic Loop** |
+| Generative UI | No | Manual | **Built-in** |
+| Streaming | Yes | Complex | **Built-in** |
+| Pricing | Per-seat | Free | **Free + Open** |
+
+---
+
+## Built for Speed
+
+### What Takes Others Weeks, Takes You Minutes
+
+```tsx
+// Step 1: Wrap your app (30 seconds)
+<CopilotProvider runtimeUrl="/api/chat">
+  <App />
+</CopilotProvider>
+
+// Step 2: Add the chat (30 seconds)
+<CopilotChat />
+
+// Step 3: You're done. Ship it.
+```
+
+**That's a production-ready AI copilot.** With streaming, conversation history, and beautiful UI.
+
+Want more? Add context awareness in one line:
+
+```tsx
+<CopilotProvider
+  tools={{ screenshot: true, console: true }}
+/>
+```
+
+Now your AI can see screenshots and read console errors. Try doing that with Intercom.
+
+---
+
+## Enterprise-Grade Architecture
+
+Built for companies that can't afford downtime or data leaks.
+
+<Cards>
+  <Card title="Self-Deployed" icon="🔒">
+    Runs on your infrastructure. AWS, GCP, Azure, on-prem—wherever your compliance team says.
+  </Card>
+  <Card title="Data Sovereignty" icon="🛡️">
+    Customer conversations never leave your servers. GDPR, HIPAA, SOC2 friendly.
+  </Card>
+  <Card title="Horizontal Scaling" icon="📈">
+    Stateless architecture. Scale to millions of conversations without code changes.
+  </Card>
+  <Card title="Provider Flexibility" icon="🔄">
+    Swap between OpenAI, Anthropic, Google, or your own fine-tuned models. Same code.
+  </Card>
+</Cards>
+
+### Your Infrastructure, Your Control
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  YOUR INFRASTRUCTURE                │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│   ┌─────────┐    ┌─────────────┐    ┌──────────┐  │
+│   │ Frontend│───▶│ Your API    │───▶│ Your LLM │  │
+│   │ (SDK)   │    │ (Runtime)   │    │ Provider │  │
+│   └─────────┘    └─────────────┘    └──────────┘  │
+│        │                │                         │
+│        ▼                ▼                         │
+│   ┌─────────┐    ┌─────────────┐                 │
+│   │Your DB  │    │ Your Logs   │                 │
+│   └─────────┘    └─────────────┘                 │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+Nothing leaves your control. Ever.
+
+---
+
+## Full Code Ownership
+
+### No Black Boxes
+
+Every line of code is yours to inspect, modify, and extend:
+
+- **Fork and customize** - Don't like something? Change it.
+- **Debug with confidence** - Full stack traces, no mystery APIs
+- **Extend freely** - Add custom tools, providers, UI components
+- **No dependency risk** - Service goes down? You still have the code.
+
+### Open Architecture
+
+```tsx
+// Custom tool? Easy.
+useToolWithSchema({
+  name: 'custom_action',
+  schema: z.object({ /* your schema */ }),
+  handler: async (params) => {
+    // Your logic, your way
+  }
+});
+
+// Custom provider? Done.
+import { createCustomProvider } from '@yourgpt/llm-sdk';
+
+// Custom UI? Of course.
+import { useCopilotChat } from '@yourgpt/copilot-sdk-react';
+// Build whatever UI you want with the hook
+```
+
+---
+
+## Who's This For?
+
+<Cards>
+  <Card title="Startups" icon="🚀">
+    Ship AI features fast. Beat competitors to market. Don't burn runway on infrastructure.
+  </Card>
+  <Card title="Enterprises" icon="🏢">
+    Meet compliance requirements. Keep data in-house. Scale with confidence.
+  </Card>
+  <Card title="Agencies" icon="🎨">
+    White-label for clients. Full customization. No per-client licensing fees.
+  </Card>
+  <Card title="Product Teams" icon="👥">
+    Focus on features, not plumbing. Iterate fast. Ship weekly, not quarterly.
+  </Card>
+</Cards>
+
+---
+
+## The Bottom Line
+
+| You Want | We Deliver |
+|----------|------------|
+| Fast time-to-market | **Minutes to production** |
+| Full control | **100% self-hosted, full source code** |
+| Enterprise scale | **Battle-tested architecture** |
+| Context-aware AI | **Screenshot, console, network built-in** |
+| Provider freedom | **OpenAI, Anthropic, Google, Groq, Ollama** |
+| No lock-in | **Open code, migrate anytime** |
+
+---
+
+## Ready to Build?
+
+<Cards>
+  <Card title="Quick Start" href="/docs/quickstart" icon="⚡">
+    Go from zero to AI copilot in 5 minutes
+  </Card>
+  <Card title="See Features" href="/docs/overview" icon="🔍">
+    Explore everything the SDK can do
+  </Card>
+  <Card title="Browse Providers" href="/docs/providers" icon="🔌">
+    OpenAI, Anthropic, Google, and more
+  </Card>
+</Cards>

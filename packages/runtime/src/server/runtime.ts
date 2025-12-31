@@ -3,7 +3,6 @@ import type {
   ActionDefinition,
   ActionParameter,
   StreamEvent,
-  KnowledgeBaseConfig,
   ToolDefinition,
   ToolCallInfo,
   AssistantToolMessage,
@@ -11,6 +10,7 @@ import type {
   ToolResponse,
   AIResponseMode,
   AIContent,
+  ToolContext,
 } from "@yourgpt/copilot-sdk-core";
 import type { AIProvider } from "../providers/types";
 import { createMessage } from "@yourgpt/copilot-sdk-core";
@@ -23,12 +23,6 @@ import {
 } from "../adapters";
 import type { RuntimeConfig, ChatRequest } from "./types";
 import { createSSEResponse } from "./streaming";
-import {
-  searchKnowledgeBase,
-  formatKnowledgeResultsForAI,
-  KNOWLEDGE_BASE_SYSTEM_INSTRUCTION,
-  type YourGPTKBConfig,
-} from "./knowledge-base";
 
 // ============================================
 // AI Response Control
@@ -124,7 +118,46 @@ function serializeToolResultContent(
 }
 
 /**
- * YourGPT Copilot Runtime
+ * Extract headers from HTTP request as a plain object
+ */
+function extractHeaders(request?: Request): Record<string, string> {
+  if (!request) return {};
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+  return headers;
+}
+
+/**
+ * Build ToolContext from runtime config and HTTP request
+ */
+function buildToolContext(
+  toolCallId: string,
+  signal: AbortSignal | undefined,
+  threadId: string | undefined,
+  httpRequest: Request | undefined,
+  toolContextData: Record<string, unknown> | undefined,
+): ToolContext {
+  const headers = extractHeaders(httpRequest);
+  return {
+    signal,
+    threadId,
+    toolCallId,
+    headers,
+    request: httpRequest
+      ? {
+          method: httpRequest.method,
+          url: httpRequest.url,
+          headers,
+        }
+      : undefined,
+    data: toolContextData,
+  };
+}
+
+/**
+ * Copilot SDK Runtime
  *
  * Handles chat requests and manages LLM interactions.
  */
@@ -133,7 +166,6 @@ export class Runtime {
   private config: RuntimeConfig;
   private actions: Map<string, ActionDefinition> = new Map();
   private tools: Map<string, ToolDefinition> = new Map();
-  private knowledgeBase: KnowledgeBaseConfig | null = null;
 
   constructor(config: RuntimeConfig) {
     this.config = config;
@@ -162,74 +194,6 @@ export class Runtime {
       for (const tool of config.tools) {
         this.tools.set(tool.name, tool);
       }
-    }
-
-    // Setup knowledge base if configured
-    if (config.knowledgeBase) {
-      this.knowledgeBase = config.knowledgeBase;
-      this.registerKnowledgeBaseAction();
-    }
-  }
-
-  /**
-   * Register the search_knowledge action when knowledge base is enabled
-   * This is a placeholder that will be implemented later
-   */
-  private registerKnowledgeBaseAction(): void {
-    if (!this.knowledgeBase) return;
-
-    const kb = this.knowledgeBase;
-
-    this.actions.set("search_knowledge", {
-      name: "search_knowledge",
-      description: `Search the knowledge base "${kb.name || kb.id}" for relevant information. Use this when you need to find specific information from the documentation or knowledge base.`,
-      parameters: {
-        query: {
-          type: "string",
-          description: "The search query to find relevant information",
-          required: true,
-        },
-        limit: {
-          type: "number",
-          description: "Maximum number of results to return (default: 5)",
-          required: false,
-        },
-      },
-      handler: async (params) => {
-        const query = params.query as string;
-        const limit = (params.limit as number) || kb.topK || 5;
-
-        // PLACEHOLDER: This is where the actual vector search will be implemented
-        // For now, return a message indicating where the KB search will happen
-        return {
-          status: "placeholder",
-          message: `🔍 Finding in Knowledge Base "${kb.name || kb.id}" (ID: ${kb.id})`,
-          query,
-          provider: kb.provider,
-          index: kb.index || "default",
-          namespace: kb.namespace,
-          limit,
-          // This will be replaced with actual results when implemented
-          results: [
-            {
-              content: `[PLACEHOLDER] Knowledge Base search for "${query}" will return results here.`,
-              score: 1.0,
-              metadata: {
-                source: "placeholder",
-                note: "Full vector search implementation coming soon",
-              },
-            },
-          ],
-          _implementation_note:
-            "This is a placeholder. Connect your vector DB (Pinecone, Qdrant, etc.) to enable real search.",
-        };
-      },
-    });
-
-    if (this.config.debug) {
-      console.log(
-        `[YourGPT Runtime] Knowledge Base "${kb.id}" registered with search_knowledge action`,
-      );
     }
   }
 
@@ -375,10 +339,7 @@ export class Runtime {
       const body = (await request.json()) as ChatRequest;
 
       if (this.config.debug) {
-        console.log(
-          "[YourGPT Runtime] Request:",
-          JSON.stringify(body, null, 2),
-        );
+        console.log("[Copilot SDK] Request:", JSON.stringify(body, null, 2));
       }
 
       // Create abort controller from request signal
@@ -395,16 +356,17 @@ export class Runtime {
           body,
           signal,
           useAgentLoop || false,
+          request,
         );
       }
 
       // STREAMING: Process chat and return SSE response
       const generator = useAgentLoop
-        ? this.processChatWithLoop(body, signal)
+        ? this.processChatWithLoop(body, signal, undefined, undefined, request)
         : this.processChat(body, signal);
       return createSSEResponse(generator);
     } catch (error) {
-      console.error("[YourGPT Runtime] Error:", error);
+      console.error("[Copilot SDK] Error:", error);
 
       return new Response(
         JSON.stringify({
@@ -425,10 +387,17 @@ export class Runtime {
     body: ChatRequest,
     signal: AbortSignal | undefined,
     useAgentLoop: boolean,
+    httpRequest: Request,
   ): Promise<Response> {
     try {
       const generator = useAgentLoop
-        ? this.processChatWithLoop(body, signal)
+        ? this.processChatWithLoop(
+            body,
+            signal,
+            undefined,
+            undefined,
+            httpRequest,
+          )
         : this.processChat(body, signal);
 
       // Collect all events
@@ -492,7 +461,7 @@ export class Runtime {
         _events: this.config.debug ? events : undefined,
       };
 
-      console.log("[YourGPT Runtime] Non-streaming response:", {
+      console.log("[Copilot SDK] Non-streaming response:", {
         contentLength: content.length,
         toolCalls: toolCalls.length,
         toolResults: toolResults.length,
@@ -509,7 +478,7 @@ export class Runtime {
         },
       });
     } catch (err) {
-      console.error("[YourGPT Runtime] Non-streaming error:", err);
+      console.error("[Copilot SDK] Non-streaming error:", err);
       return new Response(
         JSON.stringify({
           success: false,
@@ -621,6 +590,8 @@ export class Runtime {
     // Internal: accumulated messages from recursive calls (for returning in done event)
     _accumulatedMessages?: DoneEventMessage[],
     _isRecursive?: boolean,
+    // HTTP request for extracting headers (auth context)
+    _httpRequest?: Request,
   ): AsyncGenerator<StreamEvent> {
     const debug = this.config.debug || this.config.agentLoop?.debug;
 
@@ -628,7 +599,7 @@ export class Runtime {
     // Use non-streaming for better comparison with original studio-ai behavior
     if (request.streaming === false) {
       if (debug) {
-        console.log("[YourGPT Runtime] Using non-streaming mode");
+        console.log("[Copilot SDK] Using non-streaming mode");
       }
       // Delegate to non-streaming implementation
       for await (const event of this.processChatWithLoopNonStreaming(
@@ -636,6 +607,7 @@ export class Runtime {
         signal,
         _accumulatedMessages,
         _isRecursive,
+        _httpRequest,
       )) {
         yield event;
       }
@@ -648,58 +620,6 @@ export class Runtime {
 
     // Collect all tools (server + client from request)
     const allTools: ToolDefinition[] = [...this.tools.values()];
-
-    // Add YourGPT Knowledge Base tool if config provided
-    if (request.knowledgeBase) {
-      const kbConfig: YourGPTKBConfig = request.knowledgeBase;
-      allTools.push({
-        name: "search_knowledge",
-        description:
-          "Search the knowledge base for relevant information about the product, documentation, or company. Use this to answer questions about features, pricing, policies, guides, or any factual information.",
-        location: "server",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description:
-                "The search query to find relevant information in the knowledge base",
-            },
-          },
-          required: ["query"],
-        },
-        handler: async (params: Record<string, unknown>) => {
-          const query = params.query as string;
-          if (!query) {
-            return { success: false, error: "Query is required" };
-          }
-
-          if (debug) {
-            console.log(
-              `[YourGPT Runtime] Searching knowledge base for: "${query}"`,
-            );
-          }
-
-          const result = await searchKnowledgeBase(query, kbConfig);
-
-          if (!result.success) {
-            return { success: false, error: result.error };
-          }
-
-          return {
-            success: true,
-            message: formatKnowledgeResultsForAI(result.results),
-            data: { resultCount: result.results.length, total: result.total },
-          };
-        },
-      });
-
-      if (debug) {
-        console.log(
-          `[YourGPT Runtime] Knowledge base tool registered for project: ${kbConfig.projectUid}`,
-        );
-      }
-    }
 
     // Add client tools from request
     if (request.tools) {
@@ -715,7 +635,7 @@ export class Runtime {
 
     if (debug) {
       console.log(
-        `[YourGPT Runtime] Processing chat with ${allTools.length} tools`,
+        `[Copilot SDK] Processing chat with ${allTools.length} tools`,
       );
       // Log messages with attachments for debugging vision support
       for (let i = 0; i < request.messages.length; i++) {
@@ -723,7 +643,7 @@ export class Runtime {
         const hasAttachments = msg.attachments && msg.attachments.length > 0;
         if (hasAttachments) {
           console.log(
-            `[YourGPT Runtime] Message ${i} (${msg.role}) has ${msg.attachments!.length} attachments:`,
+            `[Copilot SDK] Message ${i} (${msg.role}) has ${msg.attachments!.length} attachments:`,
             msg.attachments!.map((a) => ({
               type: a.type,
               mimeType: a.mimeType,
@@ -734,11 +654,8 @@ export class Runtime {
       }
     }
 
-    // Build system prompt with KB instruction if KB is enabled
-    let systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
-    if (request.knowledgeBase) {
-      systemPrompt = `${systemPrompt}\n\n${KNOWLEDGE_BASE_SYSTEM_INSTRUCTION}`;
-    }
+    // Build system prompt
+    const systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
 
     // Accumulate data from stream
     let accumulatedText = "";
@@ -776,7 +693,7 @@ export class Runtime {
         case "action:start":
           currentToolCall = { id: event.id, name: event.name, args: "" };
           if (debug) {
-            console.log(`[YourGPT Runtime] Tool call started: ${event.name}`);
+            console.log(`[Copilot SDK] Tool call started: ${event.name}`);
           }
           yield event; // Forward to client
           break;
@@ -787,7 +704,7 @@ export class Runtime {
               const parsedArgs = JSON.parse(event.args || "{}");
               if (debug) {
                 console.log(
-                  `[YourGPT Runtime] Tool args for ${currentToolCall.name}:`,
+                  `[Copilot SDK] Tool args for ${currentToolCall.name}:`,
                   parsedArgs,
                 );
               }
@@ -798,7 +715,7 @@ export class Runtime {
               });
             } catch (e) {
               console.error(
-                "[YourGPT Runtime] Failed to parse tool args:",
+                "[Copilot SDK] Failed to parse tool args:",
                 event.args,
                 e,
               );
@@ -830,7 +747,7 @@ export class Runtime {
     if (toolCalls.length > 0) {
       if (debug) {
         console.log(
-          `[YourGPT Runtime] Detected ${toolCalls.length} tool calls:`,
+          `[Copilot SDK] Detected ${toolCalls.length} tool calls:`,
           toolCalls.map((t) => t.name),
         );
       }
@@ -857,17 +774,28 @@ export class Runtime {
         tool: ToolDefinition;
       }> = [];
 
+      // Get toolContext from config (if available)
+      const toolContextData =
+        "toolContext" in this.config ? this.config.toolContext : undefined;
+
       for (const tc of serverToolCalls) {
         const tool = allTools.find((t) => t.name === tc.name);
         if (tool?.handler) {
           if (debug) {
-            console.log(
-              `[YourGPT Runtime] Executing server-side tool: ${tc.name}`,
-            );
+            console.log(`[Copilot SDK] Executing server-side tool: ${tc.name}`);
           }
 
+          // Build rich context for the tool handler
+          const toolContext = buildToolContext(
+            tc.id,
+            signal,
+            request.threadId,
+            _httpRequest,
+            toolContextData,
+          );
+
           try {
-            const result = await tool.handler(tc.args);
+            const result = await tool.handler(tc.args, toolContext);
             serverToolResults.push({
               id: tc.id,
               name: tc.name,
@@ -913,7 +841,7 @@ export class Runtime {
       if (serverToolResults.length > 0) {
         if (debug) {
           console.log(
-            `[YourGPT Runtime] Server tools executed, continuing conversation...`,
+            `[Copilot SDK] Server tools executed, continuing conversation...`,
           );
         }
 
@@ -965,12 +893,13 @@ export class Runtime {
           messages: messagesWithResults as ChatRequest["messages"],
         };
 
-        // Continue the agent loop - pass accumulated messages
+        // Continue the agent loop - pass accumulated messages and HTTP request
         for await (const event of this.processChatWithLoop(
           nextRequest,
           signal,
           newMessages,
           true, // Mark as recursive
+          _httpRequest,
         )) {
           yield event;
         }
@@ -1024,7 +953,7 @@ export class Runtime {
 
     if (debug) {
       console.log(
-        `[YourGPT Runtime] Stream complete, returning ${newMessages.length} new messages`,
+        `[Copilot SDK] Stream complete, returning ${newMessages.length} new messages`,
       );
     }
 
@@ -1048,6 +977,7 @@ export class Runtime {
     signal?: AbortSignal,
     _accumulatedMessages?: DoneEventMessage[],
     _isRecursive?: boolean,
+    _httpRequest?: Request,
   ): AsyncGenerator<StreamEvent> {
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const debug = this.config.debug || this.config.agentLoop?.debug;
@@ -1055,42 +985,6 @@ export class Runtime {
 
     // Collect all tools (server + client from request)
     const allTools: ToolDefinition[] = [...this.tools.values()];
-
-    // Add YourGPT Knowledge Base tool if config provided
-    if (request.knowledgeBase) {
-      const kbConfig: YourGPTKBConfig = request.knowledgeBase;
-      allTools.push({
-        name: "search_knowledge",
-        description:
-          "Search the knowledge base for relevant information about the product, documentation, or company.",
-        location: "server",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "The search query",
-            },
-          },
-          required: ["query"],
-        },
-        handler: async (params: Record<string, unknown>) => {
-          const query = params.query as string;
-          if (!query) {
-            return { success: false, error: "Query is required" };
-          }
-          const result = await searchKnowledgeBase(query, kbConfig);
-          if (!result.success) {
-            return { success: false, error: result.error };
-          }
-          return {
-            success: true,
-            message: formatKnowledgeResultsForAI(result.results),
-            data: { resultCount: result.results.length, total: result.total },
-          };
-        },
-      });
-    }
 
     // Add client tools from request
     if (request.tools) {
@@ -1105,10 +999,7 @@ export class Runtime {
     }
 
     // Build system prompt
-    let systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
-    if (request.knowledgeBase) {
-      systemPrompt = `${systemPrompt}\n\n${KNOWLEDGE_BASE_SYSTEM_INSTRUCTION}`;
-    }
+    const systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
 
     // Main agent loop
     let iteration = 0;
@@ -1120,9 +1011,7 @@ export class Runtime {
       iteration++;
 
       if (debug) {
-        console.log(
-          `[YourGPT Runtime Non-Streaming] Iteration ${iteration}/${maxIterations}`,
-        );
+        console.log(`[Copilot SDK] Iteration ${iteration}/${maxIterations}`);
       }
 
       // Check for abort
@@ -1139,7 +1028,7 @@ export class Runtime {
       if (!this.adapter.complete) {
         if (debug) {
           console.log(
-            "[YourGPT Runtime] Adapter does not support non-streaming, falling back to streaming",
+            "[Copilot SDK] Adapter does not support non-streaming, falling back to streaming",
           );
         }
         // Fall back to streaming by delegating to the streaming implementation
@@ -1150,6 +1039,7 @@ export class Runtime {
           signal,
           _accumulatedMessages,
           _isRecursive,
+          _httpRequest,
         )) {
           yield event;
         }
@@ -1172,7 +1062,7 @@ export class Runtime {
 
         if (debug) {
           console.log(
-            `[YourGPT Runtime Non-Streaming] Got response: ${result.content.length} chars, ${result.toolCalls.length} tool calls`,
+            `[Copilot SDK] Got response: ${result.content.length} chars, ${result.toolCalls.length} tool calls`,
           );
         }
 
@@ -1232,17 +1122,28 @@ export class Runtime {
             tool: ToolDefinition;
           }> = [];
 
+          // Get toolContext from config (if available)
+          const toolContextData =
+            "toolContext" in this.config ? this.config.toolContext : undefined;
+
           for (const tc of serverToolCalls) {
             const tool = allTools.find((t) => t.name === tc.name);
             if (tool?.handler) {
               if (debug) {
-                console.log(
-                  `[YourGPT Runtime Non-Streaming] Executing tool: ${tc.name}`,
-                );
+                console.log(`[Copilot SDK] Executing tool: ${tc.name}`);
               }
 
+              // Build rich context for the tool handler
+              const toolContext = buildToolContext(
+                tc.id,
+                signal,
+                request.threadId,
+                _httpRequest,
+                toolContextData,
+              );
+
               try {
-                const toolResult = await tool.handler(tc.args);
+                const toolResult = await tool.handler(tc.args, toolContext);
                 serverToolResults.push({
                   id: tc.id,
                   name: tc.name,
@@ -1375,9 +1276,7 @@ export class Runtime {
         }
 
         if (debug) {
-          console.log(
-            `[YourGPT Runtime Non-Streaming] Complete after ${iteration} iterations`,
-          );
+          console.log(`[Copilot SDK] Complete after ${iteration} iterations`);
         }
 
         yield {
@@ -1397,9 +1296,7 @@ export class Runtime {
 
     // Max iterations reached
     if (debug) {
-      console.log(
-        `[YourGPT Runtime Non-Streaming] Max iterations (${maxIterations}) reached`,
-      );
+      console.log(`[Copilot SDK] Max iterations (${maxIterations}) reached`);
     }
 
     yield {

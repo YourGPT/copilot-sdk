@@ -1,4 +1,4 @@
-import { createGoogle, createRuntime } from "@yourgpt/copilot-sdk-runtime";
+import { createGoogle, createRuntime } from "@yourgpt/llm-sdk";
 
 const google = createGoogle({
   apiKey: process.env.GOOGLE_API_KEY,

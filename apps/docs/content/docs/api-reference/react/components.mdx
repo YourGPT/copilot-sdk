@@ -10,16 +10,16 @@ Provider and context components for React.
 
 ---
 
-## YourGPTProvider
+## CopilotProvider
 
 Root provider that enables AI chat functionality.
 
 ```tsx
-import { YourGPTProvider } from '@yourgpt/copilot-sdk-react';
+import { CopilotProvider } from '@yourgpt/copilot-sdk-react';
 
 function App() {
   return (
-    <YourGPTProvider
+    <CopilotProvider
       runtimeUrl="/api/chat"
       systemPrompt="You are a helpful assistant."
       threadId="user-123-thread"
@@ -28,7 +28,7 @@ function App() {
       debug={false}
     >
       {children}
-    </YourGPTProvider>
+    </CopilotProvider>
   );
 }
 ```
@@ -51,18 +51,18 @@ function App() {
 ### Basic Setup
 
 ```tsx
-<YourGPTProvider runtimeUrl="/api/chat">
+<CopilotProvider runtimeUrl="/api/chat">
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ### With Tools
 
 ```tsx
-<YourGPTProvider runtimeUrl="/api/chat">
+<CopilotProvider runtimeUrl="/api/chat">
   <MyTools />
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 
 function MyTools() {
   useTools({ ... });
@@ -73,10 +73,10 @@ function MyTools() {
 ### With Context
 
 ```tsx
-<YourGPTProvider runtimeUrl="/api/chat">
+<CopilotProvider runtimeUrl="/api/chat">
   <MyContext />
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 
 function MyContext() {
   useAIContext({ key: 'app-state', data: state });
@@ -91,14 +91,14 @@ function ChatApp() {
   const [threadId, setThreadId] = useState('thread-1');
 
   return (
-    <YourGPTProvider
+    <CopilotProvider
       key={threadId}  // Remount on thread change
       runtimeUrl="/api/chat"
       threadId={threadId}
     >
       <ThreadSwitcher onSelect={setThreadId} />
       <CopilotChat />
-    </YourGPTProvider>
+    </CopilotProvider>
   );
 }
 ```
@@ -106,7 +106,7 @@ function ChatApp() {
 ### Persistence
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   threadId="user-123"
   onMessagesChange={(messages) => {
@@ -115,5 +115,5 @@ function ChatApp() {
   initialMessages={JSON.parse(localStorage.getItem('chat-history') || '[]')}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```

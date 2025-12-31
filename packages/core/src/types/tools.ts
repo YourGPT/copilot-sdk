@@ -66,14 +66,64 @@ export interface ToolInputSchema {
 
 /**
  * Tool execution context
+ *
+ * Provides runtime information to tool handlers including cancellation signals,
+ * request metadata, and custom context data.
  */
 export interface ToolContext {
   /** Abort signal for cancellation */
   signal?: AbortSignal;
   /** Thread ID if using threads */
   threadId?: string;
-  /** Custom context data */
+  /** Custom context data passed from runtime config */
   data?: Record<string, unknown>;
+
+  // ============================================
+  // Rich Context (Vercel AI SDK pattern)
+  // ============================================
+
+  /**
+   * Unique ID for this specific tool call.
+   * Useful for logging, tracing, and correlating tool executions.
+   */
+  toolCallId?: string;
+
+  /**
+   * Request headers (for auth in server tools).
+   * Contains headers from the original HTTP request.
+   *
+   * @example
+   * ```typescript
+   * handler: async (params, context) => {
+   *   const token = context?.headers?.authorization;
+   *   if (!token) return failure('Authentication required');
+   *   // ...
+   * }
+   * ```
+   */
+  headers?: Record<string, string>;
+
+  /**
+   * Full request metadata for server-side tools.
+   * Provides access to HTTP method, URL, and headers.
+   *
+   * @example
+   * ```typescript
+   * handler: async (params, context) => {
+   *   console.log(`Tool called from: ${context?.request?.url}`);
+   *   // Forward auth to internal service
+   *   const authHeader = context?.request?.headers?.authorization;
+   * }
+   * ```
+   */
+  request?: {
+    /** HTTP method (GET, POST, etc.) */
+    method?: string;
+    /** Request URL path */
+    url?: string;
+    /** Request headers */
+    headers?: Record<string, string>;
+  };
 }
 
 // ============================================
@@ -178,6 +228,45 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   description: string;
   /** Where the tool executes (server or client) */
   location: ToolLocation;
+
+  // ============================================
+  // Display Configuration
+  // ============================================
+
+  /**
+   * Human-readable title for UI display.
+   * Can be a static string or a function that generates title from args.
+   *
+   * @example
+   * ```typescript
+   * title: "Get order details"
+   * // or dynamic:
+   * title: (args) => `Order #${args.orderId}`
+   * ```
+   */
+  title?: string | ((args: TParams) => string);
+
+  /**
+   * Title shown while executing (present tense with "...").
+   * If not provided, uses `title` with "..." appended.
+   *
+   * @example
+   * ```typescript
+   * executingTitle: (args) => `Fetching order #${args.orderId}...`
+   * ```
+   */
+  executingTitle?: string | ((args: TParams) => string);
+
+  /**
+   * Title shown after completion.
+   * If not provided, defaults to `title`.
+   *
+   * @example
+   * ```typescript
+   * completedTitle: (args) => `Retrieved order #${args.orderId}`
+   * ```
+   */
+  completedTitle?: string | ((args: TParams) => string);
   /** JSON Schema for input parameters */
   inputSchema: ToolInputSchema;
   /** Handler function (optional for client tools registered on server) */
@@ -477,6 +566,15 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   description: string;
   /** Where the tool executes (default: 'client') */
   location?: ToolLocation;
+
+  // Display Configuration
+  /** Human-readable title for UI display */
+  title?: string | ((args: TParams) => string);
+  /** Title shown while executing */
+  executingTitle?: string | ((args: TParams) => string);
+  /** Title shown after completion */
+  completedTitle?: string | ((args: TParams) => string);
+
   /** JSON Schema for input parameters */
   inputSchema?: ToolInputSchema;
   /** Handler function */
@@ -527,6 +625,11 @@ export function tool<TParams = Record<string, unknown>>(
   return {
     description: config.description,
     location: config.location ?? "client",
+    // Display configuration
+    title: config.title,
+    executingTitle: config.executingTitle,
+    completedTitle: config.completedTitle,
+    // Schema and handlers
     inputSchema: config.inputSchema ?? {
       type: "object",
       properties: {},

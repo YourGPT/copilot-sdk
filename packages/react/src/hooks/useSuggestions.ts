@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * Suggestion item
@@ -70,7 +70,7 @@ export function useSuggestions(
     autoRefresh = true,
   } = options;
 
-  const { chat, actions, config } = useYourGPTContext();
+  const { chat, actions, config } = useCopilotContext();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 

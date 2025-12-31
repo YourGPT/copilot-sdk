@@ -1,6 +1,6 @@
 "use client";
 
-import { YourGPTProvider, useTools } from "@yourgpt/copilot-sdk-react";
+import { CopilotProvider, useTools } from "@yourgpt/copilot-sdk-react";
 import { builtinTools } from "@yourgpt/copilot-sdk-core";
 import { CopilotChat, CapabilityList } from "@yourgpt/copilot-sdk-ui";
 
@@ -58,7 +58,7 @@ export function ProviderCard({
 
       {/* Chat Area */}
       <div className="flex-1 min-h-0">
-        <YourGPTProvider runtimeUrl={endpoint} debug streaming={false}>
+        <CopilotProvider runtimeUrl={endpoint} debug streaming={false}>
           <ToolsSetup />
           <CopilotChat
             title=""
@@ -66,7 +66,7 @@ export function ProviderCard({
             showPoweredBy={false}
             className="h-full"
           />
-        </YourGPTProvider>
+        </CopilotProvider>
       </div>
     </div>
   );

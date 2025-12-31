@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Source } from "@yourgpt/copilot-sdk-core";
 import {
-  YourGPTKnowledgeBase,
+  KnowledgeBase,
   type KnowledgeBaseConfig,
   type SearchOptions,
 } from "../client/yourgpt-api";
@@ -35,11 +35,11 @@ export interface UseKnowledgeBaseReturn {
   /** Clear sources */
   clearSources: () => void;
   /** The knowledge base client */
-  client: YourGPTKnowledgeBase;
+  client: KnowledgeBase;
 }
 
 /**
- * Hook for interacting with YourGPT Knowledge Base
+ * Hook for interacting with Knowledge Base
  *
  * @example
  * ```tsx
@@ -74,11 +74,11 @@ export function useKnowledgeBase(
   const [error, setError] = useState<Error | null>(null);
 
   // Create client ref (persists across renders)
-  const clientRef = useRef<YourGPTKnowledgeBase | null>(null);
+  const clientRef = useRef<KnowledgeBase | null>(null);
 
   // Initialize client
   if (!clientRef.current) {
-    clientRef.current = new YourGPTKnowledgeBase({
+    clientRef.current = new KnowledgeBase({
       apiKey,
       botId,
       endpoint,
@@ -87,7 +87,7 @@ export function useKnowledgeBase(
 
   // Update client if config changes
   useEffect(() => {
-    clientRef.current = new YourGPTKnowledgeBase({
+    clientRef.current = new KnowledgeBase({
       apiKey,
       botId,
       endpoint,

@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react";
 import type {
-  YourGPTConfig,
+  CopilotConfig,
   Message,
   MessageAttachment,
   ActionDefinition,
@@ -123,11 +123,11 @@ export interface ToolsActions {
 }
 
 /**
- * YourGPT context value
+ * Copilot context value
  */
-export interface YourGPTContextValue {
+export interface CopilotContextValue {
   /** SDK configuration */
-  config: YourGPTConfig;
+  config: CopilotConfig;
   /** Tools configuration */
   toolsConfig: ToolsConfig | null;
   /** Chat state (combined from UI state + active thread) */
@@ -196,7 +196,7 @@ export interface YourGPTContextValue {
   removeContext: (id: string) => void;
   /** Get all contexts as tree */
   contextTree: ContextTreeNode[];
-  /** Whether user has YourGPT API key (premium) */
+  /** Whether user has API key (premium) */
   isPremium: boolean;
   /** Whether cloud storage is available (premium feature) */
   isCloudStorageAvailable: boolean;
@@ -232,18 +232,18 @@ export const initialAgentLoopState: AgentLoopState = {
 };
 
 /**
- * YourGPT Context
+ * Copilot Context
  */
-export const YourGPTContext = createContext<YourGPTContextValue | null>(null);
+export const CopilotContext = createContext<CopilotContextValue | null>(null);
 
 /**
- * Hook to access YourGPT context
+ * Hook to access Copilot context
  */
-export function useYourGPTContext(): YourGPTContextValue {
-  const context = useContext(YourGPTContext);
+export function useCopilotContext(): CopilotContextValue {
+  const context = useContext(CopilotContext);
 
   if (!context) {
-    throw new Error("useYourGPTContext must be used within a YourGPTProvider");
+    throw new Error("useCopilotContext must be used within a CopilotProvider");
   }
 
   return context;

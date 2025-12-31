@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilot } from "../provider/CopilotProvider";
 
 /**
  * Context item for AI
@@ -70,7 +70,7 @@ export interface AIContextItem {
  * ```
  */
 export function useAIContext(item: AIContextItem): string | undefined {
-  const { addContext, removeContext } = useYourGPTContext();
+  const { addContext, removeContext } = useCopilot();
   const contextIdRef = useRef<string | null>(null);
 
   // Serialize data for stable dependency comparison (string comparison vs object reference)
@@ -126,7 +126,7 @@ export function useAIContext(item: AIContextItem): string | undefined {
  * ```
  */
 export function useAIContexts(items: AIContextItem[]): void {
-  const { addContext, removeContext } = useYourGPTContext();
+  const { addContext, removeContext } = useCopilot();
   const contextIdsRef = useRef<string[]>([]);
 
   // Serialize items for stable dependency comparison (avoids infinite loops with inline arrays)

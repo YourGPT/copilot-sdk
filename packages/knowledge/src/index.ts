@@ -1,14 +1,14 @@
 /**
  * @yourgpt/copilot-sdk-knowledge
  *
- * Knowledge base extension for YourGPT Copilot SDK
+ * Knowledge base extension for Copilot SDK
  *
- * Connects your app to YourGPT's knowledge base for RAG capabilities.
+ * Connects your app to the knowledge base for RAG capabilities.
  */
 
 // Client
 export {
-  YourGPTKnowledgeBase,
+  KnowledgeBase,
   createKnowledgeBaseClient,
   type KnowledgeBaseConfig,
   type SearchOptions,

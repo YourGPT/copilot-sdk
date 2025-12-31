@@ -19,7 +19,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 # Build AI Copilots That Actually *Get* Your App
 
-Your AI assistant shouldn't be clueless about what's happening on screen. **YourGPT Copilot SDK** gives your AI eyes, context, and the ability to take action.
+Your AI assistant shouldn't be clueless about what's happening on screen. **Copilot SDK** gives your AI eyes, context, and the ability to take action.
 
 <Callout type="info">
 **3 lines of code. That's it.** Wrap your app, drop in the chat component, done.
@@ -49,14 +49,14 @@ Your AI assistant shouldn't be clueless about what's happening on screen. **Your
 ## The Gist
 
 ```tsx
-import { YourGPTProvider } from '@yourgpt/copilot-sdk-react';
+import { CopilotProvider } from '@yourgpt/copilot-sdk-react';
 import { CopilotChat } from '@yourgpt/copilot-sdk-ui';
 
 function App() {
   return (
-    <YourGPTProvider runtimeUrl="/api/chat">
+    <CopilotProvider runtimeUrl="/api/chat">
       <CopilotChat />
-    </YourGPTProvider>
+    </CopilotProvider>
   );
 }
 ```
@@ -64,12 +64,12 @@ function App() {
 That's a working AI chat. Want the AI to see your screen when users say "I have an error"?
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   tools={{ screenshot: true, console: true, requireConsent: true }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 Done. The SDK handles consent UI, captures context, sends it to the AI.
@@ -82,9 +82,9 @@ Done. The SDK handles consent UI, captures context, sends it to the AI.
 |---------|--------------|
 | `@yourgpt/copilot-sdk-react` | Hooks + Provider. The brain. |
 | `@yourgpt/copilot-sdk-ui` | Chat components. The face. |
-| `@yourgpt/copilot-sdk-runtime` | Server-side adapters + streaming. The backend. |
+| `@yourgpt/llm-sdk` | Multi-provider LLM integration + streaming. The backend. |
 | `@yourgpt/copilot-sdk-core` | Types, utils, smart context tools. The foundation. |
-| `@yourgpt/copilot-sdk-knowledge` | Knowledge base integration for RAG. Optional. |
+| `@yourgpt/copilot-sdk-knowledge` | Knowledge base integration for RAG. (Coming Soon) |
 
 ---
 
@@ -93,17 +93,17 @@ Done. The SDK handles consent UI, captures context, sends it to the AI.
 <Tabs items={['npm', 'pnpm', 'bun']}>
   <Tab value="npm">
     ```bash
-    npm install @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/copilot-sdk-runtime
+    npm install @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/llm-sdk
     ```
   </Tab>
   <Tab value="pnpm">
     ```bash
-    pnpm add @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/copilot-sdk-runtime
+    pnpm add @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/llm-sdk
     ```
   </Tab>
   <Tab value="bun">
     ```bash
-    bun add @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/copilot-sdk-runtime
+    bun add @yourgpt/copilot-sdk-react @yourgpt/copilot-sdk-ui @yourgpt/llm-sdk
     ```
   </Tab>
 </Tabs>
@@ -115,7 +115,7 @@ Done. The SDK handles consent UI, captures context, sends it to the AI.
 ```
 User types message
        ↓
-YourGPTProvider sends to your /api/chat
+CopilotProvider sends to your /api/chat
        ↓
 Runtime talks to OpenAI/Anthropic/etc
        ↓
@@ -164,8 +164,8 @@ Now when user says "take me to settings", AI calls `navigate_to_page({ path: '/s
 ## What's Next?
 
 <Cards>
-  <Card title="Why Choose Us" href="/docs/why-choose-us" icon="✨">
-    See what makes YourGPT Copilot different
+  <Card title="Why Copilot SDK" href="/docs/why-copilot-sdk" icon="✨">
+    See what makes Copilot SDK different
   </Card>
   <Card title="Copilot Overview" href="/docs/copilot" icon="🤖">
     The main product - plug & play AI chat

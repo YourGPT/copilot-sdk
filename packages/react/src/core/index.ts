@@ -1,5 +1,5 @@
 /**
- * Core React adapters for YourGPT Copilot SDK
+ * Core React adapters for Copilot SDK
  *
  * These classes and hooks use the framework-agnostic abstractions
  * from @yourgpt/copilot-sdk-chat and add React-specific integration.

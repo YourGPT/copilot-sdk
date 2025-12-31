@@ -7,7 +7,7 @@ import type {
   UnifiedToolCall,
   ToolExecution,
 } from "@yourgpt/copilot-sdk-core";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * Tool executor return type
@@ -37,7 +37,7 @@ export interface UseToolExecutorReturn {
 /**
  * Internal hook for executing client-side tools
  *
- * This hook is used internally by the YourGPTProvider to execute
+ * This hook is used internally by the CopilotProvider to execute
  * tools when the server requests them via SSE events.
  *
  * It can also be used for custom implementations where you need
@@ -67,7 +67,7 @@ export function useToolExecutor(): UseToolExecutorReturn {
     chat,
     addToolExecution,
     updateToolExecution,
-  } = useYourGPTContext();
+  } = useCopilotContext();
 
   const toolsRef = useRef(registeredTools);
   toolsRef.current = registeredTools;

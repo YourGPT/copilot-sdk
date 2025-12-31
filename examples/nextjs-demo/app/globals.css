@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@plugin "@tailwindcss/typography";
+
 /* Include SDK package classes - use direct paths (pnpm symlinks don't resolve with @source) */
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 @source "../../../packages/react/src/**/*.{ts,tsx}";

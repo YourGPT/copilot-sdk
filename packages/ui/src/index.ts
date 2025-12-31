@@ -1,7 +1,7 @@
 /**
  * @yourgpt/copilot-sdk-ui
  *
- * Pre-built UI components for YourGPT Copilot SDK
+ * Pre-built UI components for Copilot SDK
  */
 
 // ============================================
@@ -136,6 +136,17 @@ export {
   type ModelOption,
   type ProviderGroup,
 } from "./components/ui/model-selector";
+
+// ============================================
+// Context Providers
+// ============================================
+export {
+  CopilotUIProvider,
+  useCopilotUI,
+  type CopilotUIConfig,
+  type CopilotUIContextValue,
+  type CopilotUIProviderProps,
+} from "./context/copilot-ui-context";
 
 // ============================================
 // Composed Components (Ready-to-use)

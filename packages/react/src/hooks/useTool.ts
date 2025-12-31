@@ -8,7 +8,7 @@ import type {
   ToolRenderProps,
   ToolSet,
 } from "@yourgpt/copilot-sdk-core";
-import { useYourGPT } from "../provider/YourGPTProvider";
+import { useCopilot } from "../provider/CopilotProvider";
 
 /**
  * Configuration for registering a tool (legacy format)
@@ -68,7 +68,7 @@ export function useTool<TParams = Record<string, unknown>>(
   config: UseToolConfig<TParams>,
   dependencies: unknown[] = [],
 ): void {
-  const { registerTool, unregisterTool } = useYourGPT();
+  const { registerTool, unregisterTool } = useCopilot();
   const configRef = useRef(config);
 
   // Update ref when config changes
@@ -142,7 +142,7 @@ export function useTool<TParams = Record<string, unknown>>(
  * ```
  */
 export function useTools(tools: ToolSet): void {
-  const { registerTool, unregisterTool } = useYourGPT();
+  const { registerTool, unregisterTool } = useCopilot();
 
   // Track which tools we've registered to clean up properly
   const registeredToolsRef = useRef<string[]>([]);
@@ -200,7 +200,7 @@ export function useToolsArray<TParams = Record<string, unknown>>(
   tools: UseToolConfig<TParams>[],
   dependencies: unknown[] = [],
 ): void {
-  const { registerTool, unregisterTool } = useYourGPT();
+  const { registerTool, unregisterTool } = useCopilot();
   const toolsRef = useRef(tools);
 
   // Update ref when tools change

@@ -1,11 +1,11 @@
 /**
  * @yourgpt/copilot-sdk-core
  *
- * Core types and utilities for YourGPT Copilot SDK
+ * Core types and utilities for Copilot SDK
  */
 
 // ============================================
-// Smart Context Tools (Unique to YourGPT)
+// Smart Context Tools
 // ============================================
 export {
   // Screenshot
@@ -90,7 +90,7 @@ export type {
   LLMConfig,
   CloudConfig,
   Extension,
-  YourGPTConfig,
+  CopilotConfig,
   // Action types
   ParameterType,
   ActionParameter,
@@ -116,16 +116,16 @@ export type {
   ErrorEvent,
   DoneEvent,
   DoneEventMessage,
-  // Knowledge Base types (generic)
+  // Knowledge Base types
   KnowledgeBaseProvider,
   KnowledgeBaseConfig,
   KnowledgeBaseResult,
   KnowledgeBaseSearchRequest,
   KnowledgeBaseSearchResponse,
-  // YourGPT Knowledge Base types (internal API)
-  YourGPTKnowledgeBaseConfig,
-  YourGPTKnowledgeBaseResult,
-  YourGPTKnowledgeBaseSearchResponse,
+  // Internal Knowledge Base types (for managed cloud)
+  InternalKnowledgeBaseConfig,
+  InternalKnowledgeBaseResult,
+  InternalKnowledgeBaseSearchResponse,
   // Thread types
   Thread,
   ThreadData,
@@ -206,6 +206,8 @@ export {
   defineServerTool,
 } from "./utils";
 
+export type { DefineToolConfig } from "./utils";
+
 // System Prompt
 export { defaultSystemMessage } from "./system-prompt";
 export type { SystemMessageFunction } from "./system-prompt";
@@ -214,7 +216,7 @@ export type { SystemMessageFunction } from "./system-prompt";
 // Services (Cloud Storage, etc.)
 // ============================================
 export {
-  createYourGPTStorage,
+  createCloudStorage,
   processFileToAttachment,
   getAttachmentTypeFromMime,
   CLOUD_MAX_FILE_SIZE,

@@ -1,24 +1,24 @@
 /**
  * Knowledge Base Search Utility
  *
- * Integrates with YourGPT's knowledge base API to search indexed documents.
+ * Integrates with managed cloud knowledge base API to search indexed documents.
  */
 
 import type {
-  YourGPTKnowledgeBaseConfig,
-  YourGPTKnowledgeBaseResult,
-  YourGPTKnowledgeBaseSearchResponse,
+  InternalKnowledgeBaseConfig,
+  InternalKnowledgeBaseResult,
+  InternalKnowledgeBaseSearchResponse,
 } from "@yourgpt/copilot-sdk-core";
 
 const KNOWLEDGE_BASE_API =
   "https://api.yourgpt.ai/chatbot/v1/searchIndexDocument";
 
-// Re-export types from core for convenience
-export type KnowledgeBaseResult = YourGPTKnowledgeBaseResult;
-export type KnowledgeBaseConfig = YourGPTKnowledgeBaseConfig;
+// Re-export types for convenience
+export type KnowledgeBaseResult = InternalKnowledgeBaseResult;
+export type KnowledgeBaseConfig = InternalKnowledgeBaseConfig;
 
 // Extended response with page info (client-side specific)
-export interface KnowledgeBaseSearchResponse extends YourGPTKnowledgeBaseSearchResponse {
+export interface KnowledgeBaseSearchResponse extends InternalKnowledgeBaseSearchResponse {
   page?: number;
 }
 

@@ -31,7 +31,7 @@ GOOGLE_API_KEY=...
 ### 3. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'google',
@@ -39,7 +39,7 @@ GOOGLE_API_KEY=...
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -79,7 +79,7 @@ Gemini supports 1M+ token context:
 
 ```tsx
 // Process entire codebases or books
-<YourGPTProvider
+<CopilotProvider
   systemPrompt={`Here is the entire codebase:
 
   ${entireCodebase}  // Can be 500K+ tokens!
@@ -95,7 +95,7 @@ Gemini supports 1M+ token context:
 Gemini excels at multimodal understanding:
 
 ```tsx
-const { sendMessage } = useYourGPT();
+const { sendMessage } = useCopilot();
 
 // Image analysis
 sendMessage("What's in this image?", [

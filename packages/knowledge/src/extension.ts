@@ -14,14 +14,14 @@ export interface KnowledgeBaseExtensionConfig extends KnowledgeBaseConfig {
 }
 
 /**
- * Create Knowledge Base Extension for YourGPTProvider
+ * Create Knowledge Base Extension for CopilotProvider
  *
  * @example
  * ```tsx
- * import { YourGPTProvider } from '@yourgpt/copilot-sdk-react';
+ * import { CopilotProvider } from '@yourgpt/copilot-sdk-react';
  * import { KnowledgeBaseExtension } from '@yourgpt/copilot-sdk-knowledge';
  *
- * <YourGPTProvider
+ * <CopilotProvider
  *   config={{ provider: 'openai', apiKey: '...' }}
  *   extensions={[
  *     KnowledgeBaseExtension({
@@ -32,7 +32,7 @@ export interface KnowledgeBaseExtensionConfig extends KnowledgeBaseConfig {
  *   ]}
  * >
  *   <ChatWindow showSources={true} />
- * </YourGPTProvider>
+ * </CopilotProvider>
  * ```
  */
 export function KnowledgeBaseExtension(
@@ -58,7 +58,7 @@ export function KnowledgeBaseExtension(
       }
 
       // Could perform initial connection test here
-      console.log("[YourGPT] Knowledge base extension initialized");
+      console.log("[Copilot SDK] Knowledge base extension initialized");
     },
   };
 }

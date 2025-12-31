@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useYourGPTContext } from "../context/YourGPTContext";
+import { useCopilotContext } from "../context/CopilotContext";
 
 /**
  * Provider capabilities for UI feature flags
@@ -90,7 +90,7 @@ const DEFAULT_CAPABILITIES: ProviderCapabilities = {
  * ```
  */
 export function useCapabilities() {
-  const { config } = useYourGPTContext();
+  const { config } = useCopilotContext();
   const [capabilities, setCapabilities] =
     useState<ProviderCapabilities>(DEFAULT_CAPABILITIES);
   const [provider, setProvider] = useState<string>("unknown");

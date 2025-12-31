@@ -31,7 +31,7 @@ MISTRAL_API_KEY=...
 ### 3. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'mistral',
@@ -39,7 +39,7 @@ MISTRAL_API_KEY=...
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -80,7 +80,7 @@ Mistral is based in France and offers European data processing:
 
 ```tsx
 // Good for GDPR compliance
-<YourGPTProvider
+<CopilotProvider
   llm={{
     provider: 'mistral',
     model: 'mistral-large-latest',
@@ -100,7 +100,7 @@ If you need European data residency for compliance, Mistral is an excellent choi
 Mistral's code-specialized model:
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   llm={{
     provider: 'mistral',
     model: 'codestral-latest',

@@ -92,7 +92,7 @@ Tool renderers receive the tool result `data` as props. Return any React compone
 Use hooks for full control:
 
 ```tsx
-import { useYourGPT } from '@yourgpt/copilot-sdk-react';
+import { useCopilot } from '@yourgpt/copilot-sdk-react';
 
 function CustomChat() {
   const {
@@ -100,7 +100,7 @@ function CustomChat() {
     isLoading,
     sendMessage,
     toolExecutions,
-  } = useYourGPT();
+  } = useCopilot();
 
   return (
     <div>

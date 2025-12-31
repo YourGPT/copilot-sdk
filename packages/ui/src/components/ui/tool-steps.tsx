@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { cn } from "../../lib/utils";
+import { TextShimmerLoader } from "./loader";
+import { useCopilotUI } from "../../context/copilot-ui-context";
 
 // ============================================
 // Types
@@ -27,6 +29,53 @@ export interface ToolStepData {
     data?: unknown;
   };
   error?: string;
+  /** Human-readable title (resolved from tool definition) */
+  title?: string;
+  /** Title shown while executing */
+  executingTitle?: string;
+  /** Title shown after completion */
+  completedTitle?: string;
+}
+
+// ============================================
+// Title Utilities
+// ============================================
+
+/**
+ * Convert snake_case or camelCase tool name to human-readable title
+ * @example "get_order_details" -> "Get order details"
+ * @example "fetchUserData" -> "Fetch user data"
+ */
+function toolNameToTitle(name: string): string {
+  // Handle snake_case
+  let result = name.replace(/_/g, " ");
+  // Handle camelCase
+  result = result.replace(/([a-z])([A-Z])/g, "$1 $2");
+  // Capitalize first letter, lowercase rest
+  return result.charAt(0).toUpperCase() + result.slice(1).toLowerCase();
+}
+
+/**
+ * Get the display title based on tool step status
+ */
+function getDisplayTitle(step: ToolStepData): string {
+  const fallbackTitle = toolNameToTitle(step.name);
+
+  switch (step.status) {
+    case "pending":
+      return step.title ?? fallbackTitle;
+    case "executing":
+      if (step.executingTitle) return step.executingTitle;
+      return step.title ? `${step.title}...` : `${fallbackTitle}...`;
+    case "completed":
+      return step.completedTitle ?? step.title ?? fallbackTitle;
+    case "error":
+    case "failed":
+    case "rejected":
+      return step.title ?? fallbackTitle;
+    default:
+      return fallbackTitle;
+  }
 }
 
 // ============================================
@@ -56,35 +105,8 @@ function StatusIndicator({ status, className }: StatusIndicatorProps) {
       );
 
     case "executing":
-      return (
-        <div
-          className={cn(
-            baseClasses,
-            "size-3 flex items-center justify-center",
-            className,
-          )}
-        >
-          <svg
-            className="size-3 animate-spin text-primary"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-        </div>
-      );
+      // Return null - shimmer text handles the loading state
+      return null;
 
     case "completed":
       return (
@@ -148,7 +170,9 @@ export interface ToolStepProps {
   step: ToolStepData;
   /** Show connecting line to next step */
   showLine?: boolean;
-  /** Expanded by default */
+  /** Override debug mode from context */
+  debug?: boolean;
+  /** Expanded by default (for debug mode) */
   defaultExpanded?: boolean;
   className?: string;
 }
@@ -192,16 +216,31 @@ function getResultImage(result: ToolStepData["result"]): string | null {
 }
 
 /**
- * Individual tool step with inline result and expandable args
+ * Individual tool step with shimmer loading, status icons, and debug mode
  */
 export function ToolStep({
   step,
   showLine = false,
-  defaultExpanded = false,
+  debug: debugProp,
+  defaultExpanded,
   className,
 }: ToolStepProps) {
-  const [expanded, setExpanded] = React.useState(defaultExpanded);
-  const hasArgs = step.args && Object.keys(step.args).length > 0;
+  const { isDebug, defaultDebugExpanded } = useCopilotUI();
+  const debug = debugProp ?? isDebug;
+
+  const [expanded, setExpanded] = React.useState(
+    defaultExpanded ?? defaultDebugExpanded ?? false,
+  );
+
+  const displayTitle = getDisplayTitle(step);
+  const hasDebugContent =
+    (step.args && Object.keys(step.args).length > 0) || step.result;
+  const isExecuting = step.status === "executing";
+  const isCompleted = step.status === "completed";
+  const isError =
+    step.status === "error" ||
+    step.status === "failed" ||
+    step.status === "rejected";
 
   return (
     <div className={cn("relative", className)}>
@@ -215,41 +254,43 @@ export function ToolStep({
 
       {/* Step row */}
       <div className="flex items-start gap-2">
-        <StatusIndicator status={step.status} className="mt-0.5" />
+        {/* Status indicator - only show for non-executing states */}
+        {!isExecuting && (
+          <StatusIndicator status={step.status} className="mt-0.5" />
+        )}
 
         <div className="flex-1 min-w-0">
-          {/* Tool name row */}
+          {/* Clickable trigger */}
           <button
             type="button"
-            onClick={() => hasArgs && setExpanded(!expanded)}
-            disabled={!hasArgs}
+            onClick={() => debug && hasDebugContent && setExpanded(!expanded)}
+            disabled={!debug || !hasDebugContent}
             className={cn(
               "flex items-center gap-2 text-left min-w-0 w-full",
-              hasArgs && "cursor-pointer hover:text-foreground",
-              !hasArgs && "cursor-default",
+              debug &&
+                hasDebugContent &&
+                "cursor-pointer hover:text-foreground",
+              !debug && "cursor-default",
             )}
           >
-            {/* Tool name */}
-            <span
-              className={cn(
-                "font-mono text-xs truncate",
-                step.status === "executing" && "text-primary",
-                step.status === "completed" && "text-muted-foreground",
-                step.status === "error" && "text-red-500",
-                step.status === "pending" && "text-muted-foreground/60",
-              )}
-            >
-              {step.name}
-            </span>
+            {/* Title with shimmer for executing state */}
+            {isExecuting ? (
+              <TextShimmerLoader text={displayTitle} size="sm" />
+            ) : (
+              <span
+                className={cn(
+                  "text-sm truncate",
+                  isCompleted && "text-foreground",
+                  isError && "text-red-500",
+                  step.status === "pending" && "text-muted-foreground/60",
+                )}
+              >
+                {displayTitle}
+              </span>
+            )}
 
-            {/* Status text */}
-            <span className="text-[10px] text-muted-foreground/60">
-              {step.status === "executing" && "running..."}
-              {step.status === "error" && !step.result && "failed"}
-            </span>
-
-            {/* Expand indicator - only if has args */}
-            {hasArgs && (
+            {/* Expand indicator - only in debug mode with content */}
+            {debug && hasDebugContent && (
               <svg
                 className={cn(
                   "size-3 text-muted-foreground/40 transition-transform ml-auto flex-shrink-0",
@@ -269,39 +310,46 @@ export function ToolStep({
             )}
           </button>
 
-          {/* Result - ALWAYS VISIBLE when completed */}
-          {step.result && (
-            <div
-              className={cn(
-                "mt-0.5 text-[10px] font-mono rounded px-1.5 py-0.5 overflow-x-auto whitespace-pre-wrap break-all",
-                step.result.success !== false
-                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                  : "bg-red-500/10 text-red-600 dark:text-red-400",
+          {/* Debug: Collapsible content (args + results) */}
+          {debug && expanded && hasDebugContent && (
+            <div className="mt-1.5 space-y-1.5">
+              {/* Arguments */}
+              {step.args && Object.keys(step.args).length > 0 && (
+                <div className="text-[10px] font-mono bg-muted/50 rounded px-2 py-1 overflow-x-auto">
+                  <span className="text-muted-foreground">args: </span>
+                  {JSON.stringify(step.args)}
+                </div>
               )}
-            >
-              → {formatResult(step.result)}
-              {/* Render image if present */}
-              {getResultImage(step.result) && (
-                <img
-                  src={getResultImage(step.result)!}
-                  alt="Screenshot"
-                  className="mt-1.5 rounded border border-border max-w-full max-h-48 object-contain"
-                />
+
+              {/* Result */}
+              {step.result && (
+                <div
+                  className={cn(
+                    "text-[10px] font-mono rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-all",
+                    step.result.success !== false
+                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                      : "bg-red-500/10 text-red-600 dark:text-red-400",
+                  )}
+                >
+                  <span className="text-muted-foreground">result: </span>
+                  {formatResult(step.result)}
+                  {/* Render image if present */}
+                  {getResultImage(step.result) && (
+                    <img
+                      src={getResultImage(step.result)!}
+                      alt="Screenshot"
+                      className="mt-1.5 rounded border border-border max-w-full max-h-48 object-contain"
+                    />
+                  )}
+                </div>
               )}
             </div>
           )}
 
-          {/* Error - ALWAYS VISIBLE */}
-          {step.error && !step.result && (
-            <div className="mt-0.5 text-[10px] font-mono bg-red-500/10 text-red-600 dark:text-red-400 rounded px-1.5 py-0.5 overflow-x-auto whitespace-pre-wrap break-all">
-              → {step.error}
-            </div>
-          )}
-
-          {/* Expandable args only */}
-          {expanded && hasArgs && (
-            <div className="mt-1 text-[10px] text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5 overflow-x-auto">
-              {JSON.stringify(step.args)}
+          {/* Error display (always visible, not just in debug) */}
+          {isError && step.error && !step.result && (
+            <div className="mt-0.5 text-[10px] font-mono bg-red-500/10 text-red-600 dark:text-red-400 rounded px-1.5 py-0.5">
+              {step.error}
             </div>
           )}
         </div>
@@ -316,27 +364,31 @@ export function ToolStep({
 
 export interface ToolStepsProps {
   steps: ToolStepData[];
-  /** Expand all by default */
+  /** Override debug mode from context */
+  debug?: boolean;
+  /** Expand all by default (in debug mode) */
   defaultExpanded?: boolean;
   /** Class name */
   className?: string;
 }
 
 /**
- * Compact tool steps display (chain-of-thought style)
+ * Compact tool steps display with shimmer loading and debug mode
  *
  * @example
  * ```tsx
  * <ToolSteps
  *   steps={[
- *     { id: "1", name: "get_weather", status: "completed", args: { city: "NYC" } },
- *     { id: "2", name: "navigate", status: "executing", args: { path: "/home" } },
+ *     { id: "1", name: "get_weather", status: "completed", title: "Get weather" },
+ *     { id: "2", name: "navigate", status: "executing", executingTitle: "Navigating..." },
  *   ]}
+ *   debug={true}
  * />
  * ```
  */
 export function ToolSteps({
   steps,
+  debug,
   defaultExpanded = false,
   className,
 }: ToolStepsProps) {
@@ -349,6 +401,7 @@ export function ToolSteps({
           key={step.id}
           step={step}
           showLine={index < steps.length - 1}
+          debug={debug}
           defaultExpanded={defaultExpanded}
         />
       ))}

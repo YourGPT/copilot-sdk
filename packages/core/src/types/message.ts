@@ -53,7 +53,7 @@ export interface MessageAttachment {
   type: "image" | "file" | "audio" | "video";
   /** Base64 data (for embedded attachments) */
   data?: string;
-  /** URL for cloud-stored attachments (YourGPT managed storage) */
+  /** URL for cloud-stored attachments (managed cloud storage) */
   url?: string;
   /** MIME type */
   mimeType: string;

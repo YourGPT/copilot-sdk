@@ -7,7 +7,7 @@ export const revalidate = false;
 export function GET() {
   const pages = source.getPages();
 
-  const content = `# YourGPT Copilot SDK
+  const content = `# Copilot SDK
 
 > Open-source SDK for building AI assistants with App Context Awareness.
 

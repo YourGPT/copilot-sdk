@@ -1,7 +1,8 @@
 {
   "name": "@yourgpt/copilot-sdk-knowledge",
   "version": "0.1.0",
-  "description": "Knowledge base extension for YourGPT Copilot SDK",
+  "private": true,
+  "description": "Knowledge base extension for YourGPT Copilot SDK (Coming Soon)",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

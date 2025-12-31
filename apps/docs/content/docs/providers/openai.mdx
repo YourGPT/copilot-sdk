@@ -32,7 +32,7 @@ OPENAI_API_KEY=sk-...
 ### 3. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'openai',
@@ -40,7 +40,7 @@ OPENAI_API_KEY=sk-...
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -82,7 +82,7 @@ llm={{
 GPT-4o supports image analysis:
 
 ```tsx
-const { sendMessage } = useYourGPT();
+const { sendMessage } = useCopilot();
 
 // Send message with image
 sendMessage("What's in this image?", [

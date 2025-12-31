@@ -35,7 +35,7 @@ AI: "I can see a TypeError in your console. The issue is..."
 ## Send Message with Attachment
 
 ```tsx
-const { sendMessage } = useYourGPT();
+const { sendMessage } = useCopilot();
 
 // Send with image
 await sendMessage("Analyze this chart", [
@@ -150,7 +150,7 @@ Cloud storage is recommended for production. Base64 embedding works but increase
 
 ```tsx
 function FileUploader() {
-  const { sendMessage } = useYourGPT();
+  const { sendMessage } = useCopilot();
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -189,7 +189,7 @@ function fileToBase64(file: File): Promise<string> {
 
 ```tsx
 async function sendScreenshot() {
-  const { sendMessage } = useYourGPT();
+  const { sendMessage } = useCopilot();
 
   // Capture using html2canvas or similar
   const canvas = await html2canvas(document.body);
@@ -346,7 +346,7 @@ function UploadProgress({ progress }) {
 
 ```tsx
 function ChatWithAttachments() {
-  const { sendMessage } = useYourGPT();
+  const { sendMessage } = useCopilot();
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

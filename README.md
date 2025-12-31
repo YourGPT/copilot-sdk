@@ -35,32 +35,35 @@ function App() {
 
 ```ts
 // app/api/chat/route.ts
-import { createRuntime } from "@yourgpt/copilot-sdk-runtime";
-import { OpenAIAdapter } from "@yourgpt/copilot-sdk-runtime/adapters";
+import { createRuntime, createOpenAI } from "@yourgpt/llm-sdk";
 
-const runtime = createRuntime({
-  adapter: new OpenAIAdapter({
-    apiKey: process.env.OPENAI_API_KEY!,
-    model: "gpt-4o",
-  }),
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
 });
 
-export const POST = runtime.handler;
+const runtime = createRuntime({
+  provider: openai,
+  model: "gpt-4o",
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
 ```
 
 ## Packages
 
-| Package                          | Description                     |
-| -------------------------------- | ------------------------------- |
-| `@yourgpt/copilot-sdk-core`      | Types, utilities, capture tools |
-| `@yourgpt/copilot-sdk-react`     | React hooks and provider        |
-| `@yourgpt/copilot-sdk-ui`        | Pre-built chat components       |
-| `@yourgpt/copilot-sdk-runtime`   | Server-side LLM adapters        |
-| `@yourgpt/copilot-sdk-knowledge` | Knowledge base integration      |
+| Package                          | Description                              |
+| -------------------------------- | ---------------------------------------- |
+| `@yourgpt/copilot-sdk-core`      | Types, utilities, capture tools          |
+| `@yourgpt/copilot-sdk-react`     | React hooks and provider                 |
+| `@yourgpt/copilot-sdk-ui`        | Pre-built chat components                |
+| `@yourgpt/llm-sdk`               | Multi-provider LLM integration           |
+| `@yourgpt/copilot-sdk-knowledge` | Knowledge base integration (Coming Soon) |
 
 ## Documentation
 
-Visit [yourgpt-copilot.vercel.app](https://yourgpt-copilot.vercel.app)
+Visit [copilot-sdk.yourgpt.ai](https://copilot-sdk.yourgpt.ai)
 
 ## Contributing
 

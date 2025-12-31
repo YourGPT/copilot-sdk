@@ -111,15 +111,15 @@ export interface KnowledgeBaseSearchResponse {
 }
 
 // ============================================
-// YourGPT Knowledge Base Types
-// (For YourGPT's internal KB API)
+// Internal Knowledge Base Types
+// (For managed cloud KB API)
 // ============================================
 
 /**
- * YourGPT Knowledge Base configuration
- * Used for YourGPT's internal searchIndexDocument API
+ * Internal Knowledge Base configuration
+ * Used for managed cloud searchIndexDocument API
  */
-export interface YourGPTKnowledgeBaseConfig {
+export interface InternalKnowledgeBaseConfig {
   /** Project UID for the knowledge base */
   projectUid: string;
   /** Auth token for API calls */
@@ -133,9 +133,9 @@ export interface YourGPTKnowledgeBaseConfig {
 }
 
 /**
- * YourGPT Knowledge Base search result
+ * Internal Knowledge Base search result
  */
-export interface YourGPTKnowledgeBaseResult {
+export interface InternalKnowledgeBaseResult {
   /** Document ID */
   id: string;
   /** Document title */
@@ -151,13 +151,13 @@ export interface YourGPTKnowledgeBaseResult {
 }
 
 /**
- * YourGPT Knowledge Base search response
+ * Internal Knowledge Base search response
  */
-export interface YourGPTKnowledgeBaseSearchResponse {
+export interface InternalKnowledgeBaseSearchResponse {
   /** Whether the search was successful */
   success: boolean;
   /** Search results */
-  results: YourGPTKnowledgeBaseResult[];
+  results: InternalKnowledgeBaseResult[];
   /** Total number of results */
   total?: number;
   /** Error message if failed */

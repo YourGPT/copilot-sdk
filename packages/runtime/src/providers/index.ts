@@ -1,12 +1,12 @@
 /**
  * Providers
  *
- * Multi-provider architecture for YourGPT SDK.
+ * Multi-provider architecture for Copilot SDK.
  * Each provider wraps existing adapters with capabilities metadata.
  *
  * @example
  * ```typescript
- * import { createOpenAI, createAnthropic } from '@yourgpt/copilot-sdk-runtime/providers';
+ * import { createOpenAI, createAnthropic } from '@yourgpt/llm-sdk';
  *
  * // Create a provider
  * const openai = createOpenAI({ apiKey: '...' });

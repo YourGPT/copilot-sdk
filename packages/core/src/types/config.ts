@@ -36,10 +36,10 @@ export interface LLMConfig {
 }
 
 /**
- * YourGPT Cloud configuration (for managed hosting)
+ * Cloud configuration (for managed hosting)
  */
 export interface CloudConfig {
-  /** YourGPT API key */
+  /** API key */
   apiKey: string;
   /** Bot ID */
   botId: string;
@@ -62,7 +62,7 @@ export interface Extension {
 /**
  * Main SDK configuration
  */
-export interface YourGPTConfig {
+export interface CopilotConfig {
   /** LLM configuration (for self-hosted) */
   config?: LLMConfig;
   /** Cloud configuration (for managed hosting) */

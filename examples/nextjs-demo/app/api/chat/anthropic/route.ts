@@ -1,4 +1,4 @@
-import { createAnthropic, createRuntime } from "@yourgpt/copilot-sdk-runtime";
+import { createAnthropic, createRuntime } from "@yourgpt/llm-sdk";
 
 const anthropic = createAnthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,

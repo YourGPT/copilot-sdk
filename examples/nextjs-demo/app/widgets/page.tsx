@@ -1,6 +1,6 @@
 "use client";
 
-import { YourGPTProvider, useTools } from "@yourgpt/copilot-sdk-react";
+import { CopilotProvider, useTools } from "@yourgpt/copilot-sdk-react";
 import { CopilotChat } from "@yourgpt/copilot-sdk-ui";
 import { weatherTool, analyticsChartTool, statsTool } from "@/lib/tools";
 import { WeatherCard, ChartCard, StatsCard } from "@/components/tools";
@@ -72,9 +72,9 @@ export default function WidgetsDemo() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-140px)]">
           {/* Chat Area */}
           <div className="lg:col-span-2 border rounded-xl overflow-hidden bg-card">
-            <YourGPTProvider runtimeUrl="/api/chat/openai" debug>
+            <CopilotProvider runtimeUrl="/api/chat/openai" debug>
               <WidgetsDemoChat />
-            </YourGPTProvider>
+            </CopilotProvider>
           </div>
 
           {/* Info Sidebar */}

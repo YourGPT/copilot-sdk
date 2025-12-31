@@ -63,7 +63,7 @@ ollama serve
 ### 4. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'ollama',
@@ -72,7 +72,7 @@ ollama serve
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -129,7 +129,7 @@ All data stays on your machine:
 
 ```tsx
 // Sensitive data never leaves your network
-<YourGPTProvider
+<CopilotProvider
   llm={{ provider: 'ollama', model: 'llama3.1' }}
   systemPrompt="Process this confidential data..."
 >
@@ -141,7 +141,7 @@ Works without internet:
 
 ```tsx
 // Perfect for air-gapped environments
-<YourGPTProvider
+<CopilotProvider
   llm={{
     provider: 'ollama',
     model: 'llama3.1',

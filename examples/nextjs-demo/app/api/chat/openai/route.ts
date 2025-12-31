@@ -1,4 +1,4 @@
-import { createOpenAI, createRuntime } from "@yourgpt/copilot-sdk-runtime";
+import { createOpenAI, createRuntime } from "@yourgpt/llm-sdk";
 
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,

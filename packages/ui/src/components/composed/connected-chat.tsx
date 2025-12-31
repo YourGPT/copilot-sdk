@@ -2,7 +2,7 @@
 
 import React from "react";
 import {
-  useYourGPT,
+  useCopilot,
   type UIMessage,
   type ChatToolExecution,
 } from "@yourgpt/copilot-sdk-react";
@@ -10,7 +10,7 @@ import { Chat, type ChatProps } from "./chat";
 import type { ToolExecutionData } from "./tools/tool-execution-list";
 
 /**
- * Props for CopilotChat - auto-connects to YourGPTProvider context
+ * Props for CopilotChat - auto-connects to CopilotProvider context
  * No need to pass messages, sendMessage, etc. - handled internally
  */
 export type CopilotChatProps = Omit<
@@ -28,22 +28,22 @@ export type CopilotChatProps = Omit<
 /**
  * CopilotChat - Auto-connected chat component
  *
- * Automatically connects to YourGPTProvider context.
+ * Automatically connects to CopilotProvider context.
  * No need to use hooks or pass messages - everything is handled internally.
  *
  * @example
  * ```tsx
- * import { YourGPTProvider } from '@yourgpt/copilot-sdk-react';
+ * import { CopilotProvider } from '@yourgpt/copilot-sdk-react';
  * import { CopilotChat } from '@yourgpt/copilot-sdk-ui';
  *
  * function App() {
  *   return (
- *     <YourGPTProvider runtimeUrl="/api/chat">
+ *     <CopilotProvider runtimeUrl="/api/chat">
  *       <CopilotChat
  *         title="AI Assistant"
  *         placeholder="Ask anything..."
  *       />
- *     </YourGPTProvider>
+ *     </CopilotProvider>
  *   );
  * }
  * ```
@@ -74,7 +74,7 @@ export function CopilotChat(props: CopilotChatProps) {
     toolExecutions: rawToolExecutions,
     approveToolExecution,
     rejectToolExecution,
-  } = useYourGPT();
+  } = useCopilot();
 
   // Convert tool executions to the expected format
   const toolExecutions: ToolExecutionData[] = rawToolExecutions.map(

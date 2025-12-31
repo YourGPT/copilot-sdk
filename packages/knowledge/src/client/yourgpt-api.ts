@@ -1,10 +1,10 @@
 import type { Source } from "@yourgpt/copilot-sdk-core";
 
 /**
- * YourGPT Knowledge Base configuration
+ * Knowledge Base configuration
  */
 export interface KnowledgeBaseConfig {
-  /** YourGPT API key */
+  /** API key */
   apiKey: string;
   /** Bot ID with knowledge base configured */
   botId: string;
@@ -47,9 +47,9 @@ export interface SearchResult {
 }
 
 /**
- * YourGPT Knowledge Base API Client
+ * Knowledge Base API Client
  */
-export class YourGPTKnowledgeBase {
+export class KnowledgeBase {
   private config: KnowledgeBaseConfig;
   private baseUrl: string;
 
@@ -194,10 +194,10 @@ export class YourGPTKnowledgeBase {
 }
 
 /**
- * Create YourGPT Knowledge Base client
+ * Create Knowledge Base client
  */
 export function createKnowledgeBaseClient(
   config: KnowledgeBaseConfig,
-): YourGPTKnowledgeBase {
-  return new YourGPTKnowledgeBase(config);
+): KnowledgeBase {
+  return new KnowledgeBase(config);
 }

@@ -40,7 +40,7 @@ interface ChatOptions {
 
 ```ts
 // lib/providers/my-provider.ts
-import { LLMProvider, ChatOptions, StreamChunk } from '@yourgpt/copilot-sdk-runtime';
+import { LLMProvider, ChatOptions, StreamChunk } from '@yourgpt/llm-sdk';
 
 export class MyCustomProvider implements LLMProvider {
   private apiKey: string;
@@ -117,7 +117,7 @@ export class MyCustomProvider implements LLMProvider {
 
 ```ts
 // app/api/chat/route.ts
-import { createRuntime } from '@yourgpt/copilot-sdk-runtime';
+import { createRuntime } from '@yourgpt/llm-sdk';
 import { MyCustomProvider } from '@/lib/providers/my-provider';
 
 const runtime = createRuntime({
@@ -139,7 +139,7 @@ export async function POST(req: Request) {
 ## Use on Frontend
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'my-custom',
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -201,7 +201,7 @@ async chat(options: ChatOptions) {
 Many providers are OpenAI-compatible. Use the built-in adapter:
 
 ```ts
-import { createRuntime, OpenAICompatibleProvider } from '@yourgpt/copilot-sdk-runtime';
+import { createRuntime, OpenAICompatibleProvider } from '@yourgpt/llm-sdk';
 
 const runtime = createRuntime({
   providers: {

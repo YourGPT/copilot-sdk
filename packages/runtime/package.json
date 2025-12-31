@@ -1,24 +1,26 @@
 {
-  "name": "@yourgpt/copilot-sdk-runtime",
+  "name": "@yourgpt/llm-sdk",
   "version": "0.1.0",
-  "description": "Backend runtime server for YourGPT Copilot SDK",
+  "description": "LLM SDK for YourGPT - Multi-provider LLM integration",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
     "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.mjs",
-      "require": "./dist/adapters/index.js",
-      "types": "./dist/adapters/index.d.ts"
+      "require": "./dist/adapters/index.js"
     }
   },
+  "homepage": "https://copilot-sdk.yourgpt.ai",
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",
@@ -64,13 +66,15 @@
   },
   "keywords": [
     "yourgpt",
-    "copilot",
+    "llm",
     "ai",
-    "chatbot",
-    "runtime",
-    "server",
     "openai",
-    "anthropic"
+    "anthropic",
+    "gemini",
+    "groq",
+    "ollama",
+    "multi-provider",
+    "streaming"
   ],
   "sideEffects": false,
   "engines": {

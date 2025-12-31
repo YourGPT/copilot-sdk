@@ -304,6 +304,13 @@ export class ChatWithTools {
     this.chat.setTools(tools);
   }
 
+  /**
+   * Set dynamic context (from useAIContext hook)
+   */
+  setContext(context: string): void {
+    this.chat.setContext(context);
+  }
+
   // ============================================
   // Tool Registration
   // ============================================

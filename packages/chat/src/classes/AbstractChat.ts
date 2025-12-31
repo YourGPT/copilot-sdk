@@ -13,6 +13,7 @@
 import type {
   MessageAttachment,
   AIResponseMode,
+  ToolResponse,
 } from "@yourgpt/copilot-sdk-core";
 import type { ChatState } from "../interfaces/ChatState";
 import type {
@@ -47,43 +48,69 @@ import { SimpleChatState } from "../interfaces/ChatState";
 // ============================================
 
 /**
- * Build tool result content for AI based on _aiResponseMode and _aiContext
+ * Tool definition with AI response control fields
+ */
+interface ToolWithAIConfig {
+  name: string;
+  aiResponseMode?: AIResponseMode;
+  aiContext?:
+    | string
+    | ((result: ToolResponse, args: Record<string, unknown>) => string);
+}
+
+/**
+ * Build tool result content for AI based on aiResponseMode and aiContext
  * This transforms client-side tool results before sending to the LLM
  *
+ * Priority for responseMode: result._aiResponseMode > tool.aiResponseMode > "full"
+ * Priority for context: result._aiContext > tool.aiContext > undefined
+ *
  * @param result - The tool result (may include _aiResponseMode, _aiContext, _aiContent)
+ * @param tool - Optional tool definition with aiResponseMode and aiContext
+ * @param args - Tool arguments (for dynamic aiContext functions)
  * @returns The content string to send to the AI
  */
-function buildToolResultContentForAI(result: unknown): string {
+function buildToolResultContentForAI(
+  result: unknown,
+  tool?: ToolWithAIConfig,
+  args?: Record<string, unknown>,
+): string {
   if (typeof result === "string") return result;
 
-  const typedResult = result as {
-    _aiResponseMode?: AIResponseMode;
-    _aiContext?: string;
-    _aiContent?: Array<{ type: string; data?: string; text?: string }>;
-    [key: string]: unknown;
-  } | null;
+  const typedResult = result as ToolResponse | null;
 
-  const responseMode = typedResult?._aiResponseMode ?? "full";
+  // Priority: result._aiResponseMode > tool.aiResponseMode > "full"
+  const responseMode =
+    typedResult?._aiResponseMode ?? tool?.aiResponseMode ?? "full";
 
   // Check for multimodal content
   if (typedResult?._aiContent) {
     return JSON.stringify(typedResult._aiContent);
   }
 
+  // Get AI context: result._aiContext > tool.aiContext (string or function)
+  let aiContext: string | undefined = typedResult?._aiContext;
+  if (!aiContext && tool?.aiContext) {
+    aiContext =
+      typeof tool.aiContext === "function"
+        ? tool.aiContext(typedResult as ToolResponse, args ?? {})
+        : tool.aiContext;
+  }
+
   switch (responseMode) {
     case "none":
-      return typedResult?._aiContext ?? "[Result displayed to user]";
+      return aiContext ?? "[Result displayed to user]";
 
     case "brief":
-      return typedResult?._aiContext ?? "[Tool executed successfully]";
+      return aiContext ?? "[Tool executed successfully]";
 
     case "full":
     default:
-      if (typedResult?._aiContext) {
+      if (aiContext) {
         // Include context as prefix, then full data (without the control fields)
         const { _aiResponseMode, _aiContext, _aiContent, ...dataOnly } =
-          typedResult;
-        return `${_aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
+          typedResult ?? {};
+        return `${aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
       }
       return JSON.stringify(result);
   }
@@ -437,6 +464,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Dynamic context from useAIContext hook
+   */
+  protected dynamicContext: string = "";
+
+  /**
+   * Set dynamic context (appended to system prompt)
+   */
+  setContext(context: string): void {
+    this.dynamicContext = context;
+    this.debug("Context updated", { length: context.length });
+  }
+
+  /**
    * Build the request payload
    */
   protected buildRequest() {
@@ -447,14 +487,58 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       inputSchema: tool.inputSchema,
     }));
 
+    // Build a map of toolCallId -> { toolName, args } from assistant messages
+    const toolCallMap = new Map<
+      string,
+      { toolName: string; args: Record<string, unknown> }
+    >();
+    for (const msg of this.state.messages) {
+      if (msg.role === "assistant" && msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          try {
+            const args = tc.function?.arguments
+              ? JSON.parse(tc.function.arguments)
+              : {};
+            toolCallMap.set(tc.id, { toolName: tc.function.name, args });
+          } catch {
+            toolCallMap.set(tc.id, { toolName: tc.function.name, args: {} });
+          }
+        }
+      }
+    }
+
+    // Create a lookup for tool definitions by name
+    const toolDefMap = new Map<string, ToolWithAIConfig>();
+    if (this.config.tools) {
+      for (const tool of this.config.tools) {
+        toolDefMap.set(tool.name, {
+          name: tool.name,
+          aiResponseMode: tool.aiResponseMode,
+          aiContext: tool.aiContext,
+        });
+      }
+    }
+
     return {
       messages: this.state.messages.map((m) => {
-        // For tool messages, transform based on _aiResponseMode at SEND time
+        // For tool messages, transform based on aiResponseMode at SEND time
         // This preserves full data in storage while sending brief to AI
-        if (m.role === "tool" && m.content) {
+        if (m.role === "tool" && m.content && m.toolCallId) {
           try {
             const fullResult = JSON.parse(m.content);
-            const transformedContent = buildToolResultContentForAI(fullResult);
+
+            // Look up the tool name and args from the tool call
+            const toolCallInfo = toolCallMap.get(m.toolCallId);
+            const toolDef = toolCallInfo
+              ? toolDefMap.get(toolCallInfo.toolName)
+              : undefined;
+            const toolArgs = toolCallInfo?.args;
+
+            const transformedContent = buildToolResultContentForAI(
+              fullResult,
+              toolDef,
+              toolArgs,
+            );
             return {
               role: m.role,
               content: transformedContent,
@@ -484,7 +568,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         };
       }),
       threadId: this.config.threadId,
-      systemPrompt: this.config.systemPrompt,
+      systemPrompt: this.dynamicContext
+        ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
+        : this.config.systemPrompt,
       llm: this.config.llm,
       tools: tools?.length ? tools : undefined,
     };

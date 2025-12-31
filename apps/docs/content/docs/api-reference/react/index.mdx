@@ -17,10 +17,10 @@ npm install @yourgpt/copilot-sdk-react
 
 <Cards>
   <Card title="Hooks" href="/docs/api-reference/react/hooks">
-    useYourGPT, useTools, useAIContext
+    useCopilot, useTools, useAIContext
   </Card>
   <Card title="Components" href="/docs/api-reference/react/components">
-    YourGPTProvider and context components
+    CopilotProvider and context components
   </Card>
 </Cards>
 
@@ -29,15 +29,15 @@ npm install @yourgpt/copilot-sdk-react
 ## Quick Start
 
 ```tsx
-import { YourGPTProvider, useYourGPT, useTools } from '@yourgpt/copilot-sdk-react';
+import { CopilotProvider, useCopilot, useTools } from '@yourgpt/copilot-sdk-react';
 import { CopilotChat } from '@yourgpt/copilot-sdk-chat';
 
 function App() {
   return (
-    <YourGPTProvider runtimeUrl="/api/chat">
+    <CopilotProvider runtimeUrl="/api/chat">
       <MyTools />
       <CopilotChat />
-    </YourGPTProvider>
+    </CopilotProvider>
   );
 }
 

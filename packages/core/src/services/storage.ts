@@ -1,8 +1,8 @@
 /**
- * YourGPT Cloud Storage Service
+ * Cloud Storage Service
  *
  * Provides managed file storage for premium users.
- * Files are uploaded to YourGPT cloud via presigned URLs.
+ * Files are uploaded to managed cloud via presigned URLs.
  */
 
 import type { MessageAttachment } from "../types/message";
@@ -39,7 +39,7 @@ export interface StorageService {
  * Storage configuration
  */
 export interface StorageConfig {
-  /** YourGPT API key (must start with "ygpt_" for premium) */
+  /** Cloud API key (must start with "ygpt_" for premium) */
   apiKey: string;
   /** Custom API endpoint */
   endpoint?: string;
@@ -50,15 +50,15 @@ export interface StorageConfig {
 /** Default max file size for cloud storage (25MB) */
 export const CLOUD_MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-/** Default YourGPT API endpoint */
+/** Default Cloud API endpoint */
 export const DEFAULT_YOURGPT_ENDPOINT = "https://api.yourgpt.ai";
 
 /**
- * Create YourGPT managed storage service
+ * Create managed cloud storage service
  *
  * @example
  * ```ts
- * const storage = createYourGPTStorage({
+ * const storage = createCloudStorage({
  *   apiKey: "ygpt_...",
  * });
  *
@@ -68,7 +68,7 @@ export const DEFAULT_YOURGPT_ENDPOINT = "https://api.yourgpt.ai";
  * }
  * ```
  */
-export function createYourGPTStorage(config: StorageConfig): StorageService {
+export function createCloudStorage(config: StorageConfig): StorageService {
   const endpoint = config.endpoint || DEFAULT_YOURGPT_ENDPOINT;
   const maxFileSize = config.maxFileSize || CLOUD_MAX_FILE_SIZE;
 
@@ -82,7 +82,7 @@ export function createYourGPTStorage(config: StorageConfig): StorageService {
     },
 
     /**
-     * Upload file to YourGPT cloud storage
+     * Upload file to managed cloud storage
      */
     async upload(file: File, options?: UploadOptions): Promise<UploadResult> {
       // Validate file size
@@ -91,7 +91,7 @@ export function createYourGPTStorage(config: StorageConfig): StorageService {
         throw new Error(`File size exceeds ${sizeMB}MB limit`);
       }
 
-      // 1. Request presigned upload URL from YourGPT API
+      // 1. Request presigned upload URL from Cloud API
       const presignResponse = await fetch(`${endpoint}/v1/storage/upload-url`, {
         method: "POST",
         headers: {

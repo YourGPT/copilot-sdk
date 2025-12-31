@@ -39,7 +39,7 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 ### 3. Configure Provider
 
 ```tsx
-<YourGPTProvider
+<CopilotProvider
   runtimeUrl="/api/chat"
   llm={{
     provider: 'azure',
@@ -48,7 +48,7 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
   }}
 >
   <CopilotChat />
-</YourGPTProvider>
+</CopilotProvider>
 ```
 
 ---
@@ -110,7 +110,7 @@ Deploy in your preferred Azure region:
 
 ```ts
 // app/api/chat/route.ts
-import { createRuntime } from '@yourgpt/copilot-sdk-runtime';
+import { createRuntime } from '@yourgpt/llm-sdk';
 
 const runtime = createRuntime({
   providers: {

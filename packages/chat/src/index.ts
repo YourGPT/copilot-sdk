@@ -1,7 +1,7 @@
 /**
  * @yourgpt/copilot-sdk-chat
  *
- * Framework-agnostic chat core for YourGPT Copilot SDK.
+ * Framework-agnostic chat core for Copilot SDK.
  *
  * This package provides the core chat functionality that can be used
  * with any UI framework (React, Vue, Svelte, Angular, etc).

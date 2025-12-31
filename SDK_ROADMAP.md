@@ -228,7 +228,7 @@ registerComponent("InteractiveForm", FormComponent);
 @yourgpt/copilot-sdk-react        # React hooks and provider
 @yourgpt/vue          # Vue composables (coming soon)
 @yourgpt/copilot-sdk-ui           # Pre-built chat components
-@yourgpt/copilot-sdk-runtime      # Server-side LLM adapters
+@yourgpt/llm-sdk                  # Multi-provider LLM integration
 ```
 
 ### Framework-Agnostic Design

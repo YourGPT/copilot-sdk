@@ -1,10 +1,12 @@
 ---
 title: Backend Tools
-description: Execute tools securely on the server
+description: Execute tools securely on the server with full API access
 icon: Server
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Cards, Card } from 'fumadocs-ui/components/card';
 
 # Backend Tools
 
@@ -21,13 +23,23 @@ Execute tools securely on your backend with access to databases, APIs, and secre
 | No secrets access | Full secrets access |
 | Limited capabilities | Database, APIs, files |
 
+Backend tools are perfect for:
+- Database queries and mutations
+- Calling internal microservices
+- External API integrations with secret keys
+- File operations and data processing
+
 ---
 
-## Basic Server Tool
+## Quick Start
+
+### Inline Definition (Simple)
+
+Define tools directly in your runtime config:
 
 ```ts
 // app/api/chat/route.ts
-import { createRuntime, createOpenAI } from '@yourgpt/copilot-sdk-runtime';
+import { createRuntime, createOpenAI } from '@yourgpt/llm-sdk';
 import { z } from 'zod';
 
 const runtime = createRuntime({
@@ -45,153 +57,426 @@ const runtime = createRuntime({
         const orders = await db.orders.findMany({
           where: { userId },
           take: limit,
-          orderBy: { createdAt: 'desc' },
         });
-
         return { success: true, data: orders };
       },
     },
   },
 });
-```
 
----
-
-## Database Access
-
-```ts
-tools: {
-  search_products: {
-    description: 'Search products in the catalog',
-    parameters: z.object({
-      query: z.string(),
-      category: z.string().optional(),
-      minPrice: z.number().optional(),
-      maxPrice: z.number().optional(),
-    }),
-    handler: async ({ query, category, minPrice, maxPrice }) => {
-      const products = await prisma.product.findMany({
-        where: {
-          AND: [
-            { name: { contains: query, mode: 'insensitive' } },
-            category ? { category } : {},
-            minPrice ? { price: { gte: minPrice } } : {},
-            maxPrice ? { price: { lte: maxPrice } } : {},
-          ],
-        },
-        take: 20,
-      });
-
-      return {
-        success: true,
-        data: products,
-        _aiContext: `Found ${products.length} products matching "${query}"`,
-      };
-    },
-  },
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
 }
 ```
 
----
+### Using `defineServerTool` (Recommended)
 
-## External API Calls
-
-```ts
-tools: {
-  check_inventory: {
-    description: 'Check real-time inventory from warehouse',
-    parameters: z.object({
-      sku: z.string(),
-    }),
-    handler: async ({ sku }) => {
-      const response = await fetch(
-        `${process.env.WAREHOUSE_API}/inventory/${sku}`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WAREHOUSE_API_KEY}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      return {
-        success: true,
-        data: {
-          sku,
-          quantity: data.available,
-          warehouse: data.location,
-        },
-      };
-    },
-  },
-}
-```
-
----
-
-## Email & Notifications
+For better organization and type safety, use the `defineServerTool` helper:
 
 ```ts
-tools: {
-  send_order_confirmation: {
-    description: 'Send order confirmation email',
-    parameters: z.object({
-      orderId: z.string(),
-      email: z.string().email(),
-    }),
-    handler: async ({ orderId, email }) => {
-      const order = await db.orders.findUnique({
-        where: { id: orderId },
-        include: { items: true },
-      });
+// tools/orders.ts
+import { defineServerTool, success, failure } from '@yourgpt/copilot-sdk-core';
+import { z } from 'zod';
 
-      await resend.emails.send({
-        from: 'orders@example.com',
-        to: email,
-        subject: `Order Confirmation #${orderId}`,
-        html: renderOrderEmail(order),
-      });
+export const getOrdersTool = defineServerTool({
+  name: 'get_orders',
+  description: 'Get orders for the current user',
+  schema: z.object({
+    status: z.enum(['pending', 'shipped', 'delivered']).optional(),
+    limit: z.number().default(10),
+  }),
+  handler: async ({ status, limit }, context) => {
+    // Access auth from context
+    const token = context?.headers?.authorization;
+    if (!token) {
+      return failure('Authentication required');
+    }
 
-      return {
-        success: true,
-        data: { sent: true, to: email },
-        _aiContext: `Confirmation email sent to ${email}`,
-      };
-    },
-  },
-}
-```
-
----
-
-## Authentication Context
-
-Access the current user in tools:
-
-```ts
-const runtime = createRuntime({
-  tools: {
-    get_my_profile: {
-      description: 'Get current user profile',
-      parameters: z.object({}),
-      handler: async (_, { request }) => {
-        const token = request.headers.get('authorization');
-        const user = await verifyToken(token);
-
-        if (!user) {
-          return { success: false, error: 'Not authenticated' };
-        }
-
-        const profile = await db.users.findUnique({
-          where: { id: user.id },
-        });
-
-        return { success: true, data: profile };
-      },
-    },
+    const orders = await orderService.getOrders({ status, limit, token });
+    return success(orders, `Found ${orders.length} orders`);
   },
 });
+```
+
+```ts
+// app/api/chat/route.ts
+import { createRuntime, createOpenAI } from '@yourgpt/llm-sdk';
+import { getOrdersTool } from '@/tools/orders';
+
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: [getOrdersTool],
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+---
+
+## Modular Tool Organization
+
+For larger projects, organize tools into separate files:
+
+### File Structure
+
+```
+src/
+├── tools/
+│   ├── index.ts          # Barrel export
+│   ├── orders.ts         # Order-related tools
+│   ├── inventory.ts      # Inventory tools
+│   └── notifications.ts  # Email/SMS tools
+└── app/
+    └── api/
+        └── chat/
+            └── route.ts  # Uses tools from tools/
+```
+
+### Example: tools/index.ts
+
+```ts
+// Export individual tools
+export { getOrdersTool, createOrderTool, cancelOrderTool } from './orders';
+export { checkInventoryTool, updateStockTool } from './inventory';
+export { sendEmailTool, sendSmsTool } from './notifications';
+
+// Or export grouped tool arrays
+import { getOrdersTool, createOrderTool, cancelOrderTool } from './orders';
+import { checkInventoryTool, updateStockTool } from './inventory';
+
+export const allServerTools = [
+  getOrdersTool,
+  createOrderTool,
+  cancelOrderTool,
+  checkInventoryTool,
+  updateStockTool,
+];
+```
+
+### Using in Runtime
+
+```ts
+import { createRuntime, createOpenAI } from '@yourgpt/llm-sdk';
+import { allServerTools } from '@/tools';
+
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+});
+```
+
+---
+
+## Internal Microservices Pattern
+
+For service-to-service communication within your infrastructure:
+
+<Tabs items={['Service Client', 'Tool Definition', 'Complete Example']}>
+  <Tab value="Service Client">
+```ts
+// lib/services/inventory-service.ts
+
+// Service configuration from environment
+const config = {
+  baseUrl: process.env.INVENTORY_SERVICE_URL || 'http://inventory:3001',
+  timeout: 5000,
+};
+
+// Reusable fetch wrapper with internal auth
+async function callInventoryService<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), config.timeout);
+
+  try {
+    const response = await fetch(`${config.baseUrl}${endpoint}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Service-Token': process.env.INTERNAL_SERVICE_TOKEN!,
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Inventory service error: ${response.status}`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export const inventoryService = {
+  async checkStock(sku: string) {
+    return callInventoryService<{ quantity: number; warehouse: string }>(
+      `/stock/${sku}`
+    );
+  },
+
+  async updateStock(sku: string, quantity: number) {
+    return callInventoryService<{ success: boolean }>(
+      `/stock/${sku}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ quantity }),
+      }
+    );
+  },
+};
+```
+  </Tab>
+  <Tab value="Tool Definition">
+```ts
+// tools/inventory.ts
+import { defineServerTool, success, failure } from '@yourgpt/copilot-sdk-core';
+import { z } from 'zod';
+import { inventoryService } from '@/lib/services/inventory-service';
+
+export const checkInventoryTool = defineServerTool({
+  name: 'check_inventory',
+  description: 'Check real-time inventory for a product SKU',
+  schema: z.object({
+    sku: z.string().describe('Product SKU to check'),
+  }),
+  handler: async ({ sku }) => {
+    try {
+      const stock = await inventoryService.checkStock(sku);
+      return success({
+        sku,
+        available: stock.quantity,
+        warehouse: stock.warehouse,
+      });
+    } catch (error) {
+      return failure(`Failed to check inventory: ${error.message}`);
+    }
+  },
+});
+
+export const updateInventoryTool = defineServerTool({
+  name: 'update_inventory',
+  description: 'Update stock quantity for a product',
+  schema: z.object({
+    sku: z.string(),
+    quantity: z.number().int().min(0),
+  }),
+  needsApproval: true, // Require user confirmation
+  approvalMessage: ({ sku, quantity }) =>
+    `Update inventory for ${sku} to ${quantity} units?`,
+  handler: async ({ sku, quantity }) => {
+    try {
+      await inventoryService.updateStock(sku, quantity);
+      return success({ sku, newQuantity: quantity });
+    } catch (error) {
+      return failure(`Failed to update inventory: ${error.message}`);
+    }
+  },
+});
+```
+  </Tab>
+  <Tab value="Complete Example">
+```ts
+// tools/user-service.ts
+import { defineServerTool, success, failure } from '@yourgpt/copilot-sdk-core';
+import { z } from 'zod';
+
+// Service configuration
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://user-service:3002';
+const SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN;
+
+// Helper for service calls
+async function callUserService<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${USER_SERVICE_URL}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Service-Token': SERVICE_TOKEN!,
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) throw new Error(`User service: ${res.status}`);
+  return res.json();
+}
+
+// Tool: Get user by ID
+export const getUserTool = defineServerTool({
+  name: 'get_user',
+  description: 'Get user details by ID from user service',
+  schema: z.object({
+    userId: z.string().describe('The user ID to look up'),
+  }),
+  handler: async ({ userId }) => {
+    try {
+      const user = await callUserService<User>(`/users/${userId}`);
+      return success(user, `Found user: ${user.name}`);
+    } catch (error) {
+      return failure(`Could not find user: ${error.message}`);
+    }
+  },
+});
+
+// Tool: Search users
+export const searchUsersTool = defineServerTool({
+  name: 'search_users',
+  description: 'Search for users by name or email',
+  schema: z.object({
+    query: z.string().describe('Search query'),
+    limit: z.number().optional().default(10),
+  }),
+  handler: async ({ query, limit }) => {
+    try {
+      const users = await callUserService<User[]>(
+        `/users/search?q=${encodeURIComponent(query)}&limit=${limit}`
+      );
+      return success(users, `Found ${users.length} users`);
+    } catch (error) {
+      return failure(`Search failed: ${error.message}`);
+    }
+  },
+});
+
+// Export all user tools
+export const userTools = [getUserTool, searchUsersTool];
+```
+  </Tab>
+</Tabs>
+
+---
+
+## Tool Context
+
+The handler receives a second argument with runtime context:
+
+```ts
+handler: async (params, context) => {
+  // Abort signal for cancellation
+  context?.signal
+
+  // Thread/conversation ID
+  context?.threadId
+
+  // Unique ID for this tool call (for logging/tracing)
+  context?.toolCallId
+
+  // Request headers (for auth)
+  context?.headers?.authorization
+
+  // Full request metadata
+  context?.request?.method  // 'POST'
+  context?.request?.url     // '/api/chat'
+  context?.request?.headers // All headers
+
+  // Custom data from runtime config
+  context?.data?.userId
+  context?.data?.tenantId
+}
+```
+
+### Authentication Pattern
+
+```ts
+export const getProfileTool = defineServerTool({
+  name: 'get_my_profile',
+  description: 'Get current user profile',
+  schema: z.object({}),
+  handler: async (_, context) => {
+    // Extract auth token from headers
+    const token = context?.headers?.authorization;
+    if (!token) {
+      return failure('Authentication required');
+    }
+
+    // Verify token and get user
+    const user = await verifyToken(token);
+    if (!user) {
+      return failure('Invalid or expired token');
+    }
+
+    // Fetch profile
+    const profile = await db.users.findUnique({
+      where: { id: user.id },
+      select: { id: true, name: true, email: true },
+    });
+
+    return success(profile);
+  },
+});
+```
+
+### Passing Custom Context
+
+```ts
+// app/api/chat/route.ts
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: [myTool],
+  // Custom context available in all tool handlers via context.data
+  toolContext: {
+    tenantId: 'tenant_123',
+    environment: 'production',
+  },
+});
+
+// In tool handler:
+handler: async (params, context) => {
+  const tenantId = context?.data?.tenantId;
+  // ...
+}
+```
+
+---
+
+## AI Response Control
+
+Control what the AI sees from tool results:
+
+```ts
+export const getSensitiveDataTool = defineServerTool({
+  name: 'get_sensitive_data',
+  description: 'Fetch sensitive records',
+  schema: z.object({ recordId: z.string() }),
+
+  // AI only gets brief summary, not full data
+  aiResponseMode: 'brief',
+  aiContext: (result, args) =>
+    `Retrieved record ${args.recordId} - displayed to user`,
+
+  handler: async ({ recordId }) => {
+    const data = await fetchSensitiveRecord(recordId);
+    return success(data);
+  },
+});
+```
+
+**Response Modes:**
+
+| Mode | AI Sees | Use Case |
+|------|---------|----------|
+| `'full'` | Complete data (default) | AI should analyze/explain |
+| `'brief'` | Only `aiContext` summary | UI renders data, AI acknowledges |
+| `'none'` | `"[Result displayed]"` | Tool handles everything |
+
+You can also override per-result:
+
+```ts
+handler: async ({ chartType }) => {
+  const chartData = await generateChart(chartType);
+  return {
+    success: true,
+    data: chartData,
+    _aiResponseMode: 'none', // Override for this result
+    _aiContext: `[${chartType} chart displayed to user]`,
+  };
+}
 ```
 
 ---
@@ -199,36 +484,63 @@ const runtime = createRuntime({
 ## Error Handling
 
 ```ts
-tools: {
-  process_payment: {
-    description: 'Process a payment',
-    parameters: z.object({
-      amount: z.number(),
-      currency: z.string(),
-    }),
-    handler: async ({ amount, currency }) => {
-      try {
-        const result = await stripe.charges.create({
-          amount: Math.round(amount * 100),
-          currency,
-        });
+handler: async ({ orderId }) => {
+  try {
+    const order = await orderService.get(orderId);
 
-        return { success: true, data: { chargeId: result.id } };
-      } catch (error) {
-        return {
-          success: false,
-          error: 'Payment failed. Please try again.',
-          _aiContext: `Payment error: ${error.message}`,
-        };
-      }
-    },
-  },
+    if (!order) {
+      return failure(`Order ${orderId} not found`);
+    }
+
+    return success(order);
+  } catch (error) {
+    // Log full error internally
+    console.error('Order fetch error:', error);
+
+    // Return user-friendly message
+    return failure('Unable to retrieve order. Please try again.');
+  }
 }
 ```
 
 <Callout type="info">
-Always return `success: false` with a user-friendly error message. Use `_aiContext` to give the AI more details for debugging.
+Always return `success: false` with a user-friendly error message. The AI will see this and can help the user troubleshoot.
 </Callout>
+
+---
+
+## Full `defineServerTool` Options
+
+```ts
+const myTool = defineServerTool({
+  // Required
+  name: 'my_tool',
+  description: 'What this tool does (for LLM)',
+  schema: z.object({
+    param1: z.string().describe('Description for LLM'),
+    param2: z.number().optional(),
+  }),
+  handler: async (params, context) => {
+    return success(result);
+  },
+
+  // Display (optional)
+  title: 'My Tool',
+  executingTitle: 'Running my tool...',
+  completedTitle: 'Tool completed',
+
+  // AI response control (optional)
+  aiResponseMode: 'brief', // 'none' | 'brief' | 'full'
+  aiContext: (result, args) => `Summary for AI`,
+
+  // Approval (optional)
+  needsApproval: true, // or (params) => params.amount > 100
+  approvalMessage: 'This action requires approval',
+
+  // Availability (optional)
+  available: true, // Can be used to conditionally disable
+});
+```
 
 ---
 
@@ -236,34 +548,147 @@ Always return `success: false` with a user-friendly error message. Use `_aiConte
 
 ```tsx
 // Frontend: UI interactions
-useTools({
-  show_product_modal: {
-    description: 'Show product details modal',
-    parameters: z.object({ productId: z.string() }),
-    handler: async ({ productId }) => {
-      openModal(<ProductModal id={productId} />);
-      return { success: true };
-    },
+useTool({
+  name: 'show_order_modal',
+  description: 'Display order details in a modal',
+  handler: ({ orderId }) => {
+    openModal(<OrderDetails id={orderId} />);
+    return { success: true };
   },
 });
 
 // Backend: Data operations
-const runtime = createRuntime({
-  tools: {
-    get_product_details: {
-      description: 'Get product details from database',
-      parameters: z.object({ productId: z.string() }),
-      handler: async ({ productId }) => {
-        return await db.products.findUnique({ where: { id: productId } });
-      },
-    },
+const getOrderTool = defineServerTool({
+  name: 'fetch_order',
+  description: 'Fetch order from database',
+  schema: z.object({ orderId: z.string() }),
+  handler: async ({ orderId }) => {
+    const order = await db.orders.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+    return success(order);
   },
 });
 ```
+
+The AI can call `fetch_order` (backend) to get data, then `show_order_modal` (frontend) to display it.
+
+---
+
+## Framework Integrations
+
+The runtime works with any HTTP framework. Choose your preferred setup:
+
+<Tabs items={['Next.js', 'Express', 'Hono', 'Node.js HTTP']}>
+  <Tab value="Next.js">
+```ts
+// app/api/chat/route.ts
+import { createRuntime, createOpenAI } from '@yourgpt/llm-sdk';
+import { allServerTools } from '@/tools';
+
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+Or use the helper:
+
+```ts
+// app/api/chat/route.ts
+import { createNextHandler } from '@yourgpt/llm-sdk';
+import { allServerTools } from '@/tools';
+
+export const POST = createNextHandler({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+});
+```
+  </Tab>
+  <Tab value="Express">
+```ts
+// server.ts
+import express from 'express';
+import { createExpressMiddleware, createOpenAI } from '@yourgpt/llm-sdk';
+import { allServerTools } from './tools';
+
+const app = express();
+app.use(express.json());
+
+// Mount the chat endpoint
+app.use('/api/chat', createExpressMiddleware({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+}));
+
+app.listen(3001, () => {
+  console.log('Server running on http://localhost:3001');
+});
+```
+  </Tab>
+  <Tab value="Hono">
+```ts
+// server.ts
+import { serve } from '@hono/node-server';
+import { createRuntime, createOpenAI, createHonoApp } from '@yourgpt/llm-sdk';
+import { allServerTools } from './tools';
+
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+});
+
+const app = createHonoApp(runtime);
+
+serve({ fetch: app.fetch, port: 3001 }, (info) => {
+  console.log(`Server running on http://localhost:${info.port}`);
+});
+```
+
+**Built-in endpoints:** `POST /` or `POST /chat` (chat), `POST /chat/loop` (agentic), `GET /tools`, `GET /capabilities`
+  </Tab>
+  <Tab value="Node.js HTTP">
+```ts
+// server.ts
+import http from 'http';
+import { createNodeHandler, createOpenAI } from '@yourgpt/llm-sdk';
+import { allServerTools } from './tools';
+
+const handler = createNodeHandler({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: allServerTools,
+});
+
+const server = http.createServer(handler);
+server.listen(3001, () => {
+  console.log('Server running on http://localhost:3001');
+});
+```
+  </Tab>
+</Tabs>
 
 ---
 
 ## Next Steps
 
-- [Frontend Tools](/docs/tools/frontend-tools) - Client-side tools
-- [Agentic Loop](/docs/tools/agentic-loop) - Multi-step execution
+<Cards>
+  <Card title="Frontend Tools" href="/docs/tools/frontend-tools" icon="Monitor">
+    Client-side tools for UI interactions
+  </Card>
+  <Card title="Agentic Loop" href="/docs/tools/agentic-loop" icon="RefreshCw">
+    Multi-step tool execution
+  </Card>
+  <Card title="Generative UI" href="/docs/generative-ui" icon="Palette">
+    Render custom components from tools
+  </Card>
+</Cards>
