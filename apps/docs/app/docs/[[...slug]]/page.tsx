@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
+import { TocFooter } from "@/components/toc-footer";
 
 interface PageProps {
   params: Promise<{ slug?: string[] }>;
@@ -27,6 +28,7 @@ export default async function Page(props: PageProps) {
       full={page.data.full}
       tableOfContent={{
         style: "clerk",
+        footer: <TocFooter />,
       }}
     >
       <DocsTitle>{page.data.title}</DocsTitle>
