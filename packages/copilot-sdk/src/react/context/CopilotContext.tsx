@@ -161,9 +161,17 @@ export interface CopilotContextValue {
 
   // Tool approval handlers (for needsApproval tools)
 
-  /** Approve a tool execution that requires approval */
+  /**
+   * Approve a tool execution with optional extra data.
+   * The extraData is passed to the tool handler via context.approvalData.
+   *
+   * @param executionId - The tool execution ID
+   * @param extraData - Optional data from user's action (e.g., selected item)
+   * @param permissionLevel - Optional permission level for persistence
+   */
   approveToolExecution?: (
     executionId: string,
+    extraData?: Record<string, unknown>,
     permissionLevel?: PermissionLevel,
   ) => void;
   /** Reject a tool execution that requires approval */

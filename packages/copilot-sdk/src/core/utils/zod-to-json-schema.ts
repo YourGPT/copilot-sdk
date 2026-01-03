@@ -259,12 +259,24 @@ export interface DefineToolConfig<
     params: TSchema["_output"],
     context?: ToolContext,
   ) => Promise<ToolResponse> | ToolResponse;
-  /** Optional render function */
+  /** Optional render function for custom UI */
   render?: (props: {
-    status: "pending" | "executing" | "completed" | "error";
+    status:
+      | "pending"
+      | "approval-required"
+      | "executing"
+      | "completed"
+      | "error";
     args: TSchema["_output"];
     result?: ToolResponse;
     error?: string;
+    toolCallId: string;
+    toolName: string;
+    approval?: {
+      onApprove: (extraData?: Record<string, unknown>) => void;
+      onReject: (reason?: string) => void;
+      message?: string;
+    };
   }) => unknown;
   /** Whether the tool is available */
   available?: boolean;

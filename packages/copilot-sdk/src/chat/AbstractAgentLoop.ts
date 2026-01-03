@@ -53,11 +53,14 @@ export class AbstractAgentLoop implements AgentLoopActions {
   // Registered tools
   private registeredTools: Map<string, ToolDefinition> = new Map();
 
-  // Pending approvals
+  // Pending approvals - resolve with approval result including extraData
   private pendingApprovals: Map<
     string,
     {
-      resolve: (approved: boolean) => void;
+      resolve: (result: {
+        approved: boolean;
+        extraData?: Record<string, unknown>;
+      }) => void;
       execution: ToolExecution;
     }
   > = new Map();
@@ -259,6 +262,9 @@ export class AbstractAgentLoop implements AgentLoopActions {
       return errorResult;
     }
 
+    // Track approval data for passing to handler
+    let approvalData: Record<string, unknown> | undefined;
+
     // Check if approval is needed
     if (tool.needsApproval && !this.config.autoApprove) {
       // Get approval message (can be string or function)
@@ -268,15 +274,17 @@ export class AbstractAgentLoop implements AgentLoopActions {
           : tool.approvalMessage;
 
       execution.approvalStatus = "required";
+      execution.approvalMessage = approvalMessage;
       this.updateToolExecution(toolCall.id, {
         approvalStatus: "required",
+        approvalMessage,
       });
       this.callbacks.onApprovalRequired?.(execution);
 
-      // Wait for approval
-      const approved = await this.waitForApproval(toolCall.id, execution);
+      // Wait for approval - now returns { approved, extraData }
+      const approvalResult = await this.waitForApproval(toolCall.id, execution);
 
-      if (!approved) {
+      if (!approvalResult.approved) {
         const rejectedResult: ToolResponse = {
           toolCallId: toolCall.id,
           success: false,
@@ -291,9 +299,10 @@ export class AbstractAgentLoop implements AgentLoopActions {
         return rejectedResult;
       }
 
-      this.updateToolExecution(toolCall.id, {
-        approvalStatus: "approved",
-      });
+      // Store approval data for handler
+      approvalData = approvalResult.extraData;
+
+      // Note: approvalStatus is already set to "approved" in approveToolExecution
     }
 
     // Execute the tool
@@ -303,8 +312,10 @@ export class AbstractAgentLoop implements AgentLoopActions {
       if (!tool.handler) {
         throw new Error(`Tool "${toolCall.name}" has no handler`);
       }
+      // Pass approvalData to handler via context
       const result = await tool.handler(toolCall.args, {
         data: { toolCallId: toolCall.id },
+        approvalData,
       });
 
       this.updateToolExecution(toolCall.id, {
@@ -345,11 +356,12 @@ export class AbstractAgentLoop implements AgentLoopActions {
 
   /**
    * Wait for user approval
+   * Returns approval result with optional extraData from user's action
    */
   private waitForApproval(
     executionId: string,
     execution: ToolExecution,
-  ): Promise<boolean> {
+  ): Promise<{ approved: boolean; extraData?: Record<string, unknown> }> {
     return new Promise((resolve) => {
       this.pendingApprovals.set(executionId, { resolve, execution });
     });
@@ -360,16 +372,23 @@ export class AbstractAgentLoop implements AgentLoopActions {
   // ============================================
 
   /**
-   * Approve a tool execution
+   * Approve a tool execution with optional extra data
    */
   approveToolExecution(
     executionId: string,
+    extraData?: Record<string, unknown>,
     _permissionLevel?: PermissionLevel,
   ): void {
     const pending = this.pendingApprovals.get(executionId);
     if (pending) {
-      pending.resolve(true);
+      pending.resolve({ approved: true, extraData });
       this.pendingApprovals.delete(executionId);
+
+      // Store approvalData in execution record
+      this.updateToolExecution(executionId, {
+        approvalStatus: "approved",
+        approvalData: extraData,
+      });
     }
   }
 
@@ -388,7 +407,7 @@ export class AbstractAgentLoop implements AgentLoopActions {
           error: reason,
         });
       }
-      pending.resolve(false);
+      pending.resolve({ approved: false });
       this.pendingApprovals.delete(executionId);
     }
   }
@@ -440,8 +459,8 @@ export class AbstractAgentLoop implements AgentLoopActions {
    */
   dispose(): void {
     // Reject all pending approvals
-    for (const [id, pending] of this.pendingApprovals) {
-      pending.resolve(false);
+    for (const [_id, pending] of this.pendingApprovals) {
+      pending.resolve({ approved: false });
     }
     this.pendingApprovals.clear();
     this.registeredTools.clear();

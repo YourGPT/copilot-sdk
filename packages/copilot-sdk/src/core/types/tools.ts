@@ -124,6 +124,24 @@ export interface ToolContext {
     /** Request headers */
     headers?: Record<string, string>;
   };
+
+  /**
+   * Data passed from user's approval action.
+   * Only present when tool has `needsApproval: true` and user approved with extra data.
+   *
+   * @example
+   * ```typescript
+   * // In render function:
+   * approval.onApprove({ supervisor: selectedSupervisor });
+   *
+   * // In handler:
+   * handler: async (params, context) => {
+   *   const supervisor = context?.approvalData?.supervisor;
+   *   await assignToSupervisor(params.ticketId, supervisor);
+   * }
+   * ```
+   */
+  approvalData?: Record<string, unknown>;
 }
 
 // ============================================
@@ -205,17 +223,88 @@ export interface ToolResponse<T = unknown> {
 }
 
 /**
- * Props passed to tool render function
+ * Approval callbacks passed to render when tool requires user action.
+ * Only present when status is "approval-required".
+ */
+export interface ToolApprovalCallbacks {
+  /**
+   * Approve execution and optionally pass extra data to the handler.
+   * The extraData is available in handler via `context.approvalData`.
+   *
+   * @example
+   * ```tsx
+   * // Simple approval
+   * approval.onApprove();
+   *
+   * // Approval with data (e.g., user selection)
+   * approval.onApprove({ supervisor: { name: "John", role: "Manager" } });
+   * ```
+   */
+  onApprove: (extraData?: Record<string, unknown>) => void;
+
+  /**
+   * Reject the tool execution with optional reason.
+   * This stops the tool from executing and returns an error to AI.
+   */
+  onReject: (reason?: string) => void;
+
+  /** Custom message from tool's approvalMessage config */
+  message?: string;
+}
+
+/**
+ * Props passed to tool render function.
+ *
+ * The render function is called for every status change, enabling
+ * full lifecycle rendering similar to Vercel AI SDK.
+ *
+ * @example
+ * ```tsx
+ * render: ({ status, args, approval, result }) => {
+ *   if (status === "approval-required" && approval) {
+ *     return <ApprovalCard onConfirm={() => approval.onApprove()} />;
+ *   }
+ *   if (status === "executing") {
+ *     return <LoadingSkeleton />;
+ *   }
+ *   if (status === "completed") {
+ *     return <ResultCard data={result.data} />;
+ *   }
+ *   return null;
+ * }
+ * ```
  */
 export interface ToolRenderProps<TParams = Record<string, unknown>> {
-  /** Current execution status */
-  status: "pending" | "executing" | "completed" | "error";
+  /**
+   * Current execution status:
+   * - `pending`: Tool call received, waiting to start
+   * - `approval-required`: Waiting for user approval (when needsApproval is set)
+   * - `executing`: Handler is running
+   * - `completed`: Handler finished successfully
+   * - `error`: Handler failed
+   */
+  status: "pending" | "approval-required" | "executing" | "completed" | "error";
+
   /** Arguments passed to the tool */
   args: TParams;
+
   /** Result if completed */
   result?: ToolResponse;
+
   /** Error if failed */
   error?: string;
+
+  /** Tool call ID */
+  toolCallId: string;
+
+  /** Tool name */
+  toolName: string;
+
+  /**
+   * Approval callbacks - only present when status is "approval-required".
+   * Use these to create custom approval UIs that can pass extra data to the handler.
+   */
+  approval?: ToolApprovalCallbacks;
 }
 
 /**

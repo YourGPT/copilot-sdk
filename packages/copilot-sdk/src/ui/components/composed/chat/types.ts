@@ -1,6 +1,7 @@
 import React from "react";
 import type { ToolExecutionData, ToolApprovalStatus } from "../tools";
 import type { PermissionLevel } from "../../ui/permission-confirmation";
+import type { ToolDefinition } from "../../../../core";
 
 /**
  * Message attachment (images, files, etc.)
@@ -52,6 +53,22 @@ export type { ToolApprovalStatus, PermissionLevel };
 // ============================================
 
 /**
+ * Approval callbacks for custom tool renderers.
+ * Only provided when approvalStatus is 'required'.
+ */
+export interface ToolApprovalCallbacks {
+  /**
+   * Approve execution with optional extra data.
+   * The extraData is passed to the tool handler via context.approvalData.
+   */
+  onApprove: (extraData?: Record<string, unknown>) => void;
+  /** Reject the execution with optional reason */
+  onReject: (reason?: string) => void;
+  /** Custom message from tool config */
+  message?: string;
+}
+
+/**
  * Props passed to custom tool renderer components
  *
  * @example
@@ -64,6 +81,19 @@ export type { ToolApprovalStatus, PermissionLevel };
  *   }
  *   const { city, temperature } = execution.result;
  *   return <div>{city}: {temperature}°</div>;
+ * }
+ *
+ * // With approval callbacks for interactive tools
+ * function EscalationCard({ execution, approval }: ToolRendererProps) {
+ *   if (execution.approvalStatus === 'required' && approval) {
+ *     return (
+ *       <SelectionCard
+ *         onSelect={(item) => approval.onApprove({ selectedItem: item })}
+ *         onCancel={() => approval.onReject('Cancelled')}
+ *       />
+ *     );
+ *   }
+ *   // ... other states
  * }
  * ```
  */
@@ -89,7 +119,14 @@ export interface ToolRendererProps {
     error?: string;
     /** Approval status for tools requiring confirmation */
     approvalStatus?: ToolApprovalStatus;
+    /** Data passed from user's approval action */
+    approvalData?: Record<string, unknown>;
   };
+  /**
+   * Approval callbacks - only provided when approvalStatus is 'required'.
+   * Use these to create custom approval UIs.
+   */
+  approval?: ToolApprovalCallbacks;
 }
 
 /**
@@ -212,11 +249,21 @@ export type ChatProps = {
 
   // === Generative UI ===
   /**
+   * Registered tools for accessing tool's render function.
+   * Passed automatically by CopilotChat from context.
+   *
+   * Priority: toolRenderers > tool.render > default ToolSteps
+   */
+  registeredTools?: ToolDefinition[];
+
+  /**
    * Custom renderers for tool results (Generative UI)
    *
    * Map tool names to React components that render their results.
    * When a tool execution matches a key, the custom component is rendered
-   * instead of the default ToolSteps display.
+   * instead of tool's render function or default ToolSteps display.
+   *
+   * Higher priority than tool's built-in render function.
    *
    * @example
    * ```tsx
@@ -231,9 +278,15 @@ export type ChatProps = {
   toolRenderers?: ToolRenderers;
 
   // === Tool Approval (Human-in-the-loop) ===
-  /** Called when user approves a tool execution */
+  /**
+   * Called when user approves a tool execution.
+   * @param executionId - The tool execution ID
+   * @param extraData - Optional data from user's action (e.g., selected item)
+   * @param permissionLevel - Optional permission level for persistence
+   */
   onApproveToolExecution?: (
     executionId: string,
+    extraData?: Record<string, unknown>,
     permissionLevel?: PermissionLevel,
   ) => void;
   /** Called when user rejects a tool execution */

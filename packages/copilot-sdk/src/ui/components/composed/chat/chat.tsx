@@ -96,6 +96,7 @@ export function Chat({
   onSuggestionClick,
   // Tool Executions
   isProcessing = false,
+  registeredTools,
   toolRenderers,
   onApproveToolExecution,
   onRejectToolExecution,
@@ -434,6 +435,7 @@ export function Chat({
                 size={fontSize}
                 isLastMessage={isLastMessage}
                 isLoading={isLoading}
+                registeredTools={registeredTools}
                 toolRenderers={toolRenderers}
                 onApproveToolExecution={onApproveToolExecution}
                 onRejectToolExecution={onRejectToolExecution}

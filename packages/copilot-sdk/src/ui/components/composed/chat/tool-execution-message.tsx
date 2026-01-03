@@ -13,12 +13,29 @@ import type { ToolExecutionData } from "../tools/tool-execution-list";
 interface ToolExecutionMessageProps {
   executions: ToolExecutionData[];
   assistantAvatar?: { src?: string; fallback?: string };
-  onApprove?: (executionId: string, permissionLevel?: PermissionLevel) => void;
+  /** Called when user approves with optional extraData from custom UI */
+  onApprove?: (
+    executionId: string,
+    extraData?: Record<string, unknown>,
+    permissionLevel?: PermissionLevel,
+  ) => void;
   onReject?: (
     executionId: string,
     reason?: string,
     permissionLevel?: PermissionLevel,
   ) => void;
+  /** Custom tool renderers that can handle approval UI */
+  toolRenderers?: Record<
+    string,
+    React.ComponentType<{
+      execution: ToolExecutionData;
+      approval?: {
+        onApprove: (extraData?: Record<string, unknown>) => void;
+        onReject: (reason?: string) => void;
+        message?: string;
+      };
+    }>
+  >;
   className?: string;
 }
 
@@ -31,6 +48,7 @@ export function ToolExecutionMessage({
   assistantAvatar = { fallback: "AI" },
   onApprove,
   onReject,
+  toolRenderers,
   className,
 }: ToolExecutionMessageProps) {
   if (!executions || executions.length === 0) return null;
@@ -121,23 +139,44 @@ export function ToolExecutionMessage({
         {/* Tool Approval Confirmations */}
         {pendingApprovals.length > 0 && (
           <div className="mb-2 space-y-2">
-            {pendingApprovals.map((tool) => (
-              <PermissionConfirmation
-                key={tool.id}
-                state="pending"
-                toolName={tool.name}
-                message={
-                  tool.approvalMessage ||
-                  `This tool wants to execute. Do you approve?`
-                }
-                onApprove={(permissionLevel) =>
-                  onApprove?.(tool.id, permissionLevel)
-                }
-                onReject={(permissionLevel) =>
-                  onReject?.(tool.id, undefined, permissionLevel)
-                }
-              />
-            ))}
+            {pendingApprovals.map((tool) => {
+              // Check if there's a custom renderer for this tool
+              const CustomRenderer = toolRenderers?.[tool.name];
+
+              if (CustomRenderer) {
+                // Use custom renderer with approval callbacks
+                return (
+                  <CustomRenderer
+                    key={tool.id}
+                    execution={tool}
+                    approval={{
+                      onApprove: (extraData) => onApprove?.(tool.id, extraData),
+                      onReject: (reason) => onReject?.(tool.id, reason),
+                      message: tool.approvalMessage,
+                    }}
+                  />
+                );
+              }
+
+              // Default: use PermissionConfirmation
+              return (
+                <PermissionConfirmation
+                  key={tool.id}
+                  state="pending"
+                  toolName={tool.name}
+                  message={
+                    tool.approvalMessage ||
+                    `This tool wants to execute. Do you approve?`
+                  }
+                  onApprove={(permissionLevel) =>
+                    onApprove?.(tool.id, undefined, permissionLevel)
+                  }
+                  onReject={(permissionLevel) =>
+                    onReject?.(tool.id, undefined, permissionLevel)
+                  }
+                />
+              );
+            })}
           </div>
         )}
 

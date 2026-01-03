@@ -11,6 +11,7 @@ import {
 } from "../../ui/permission-confirmation";
 import { FollowUpQuestions, parseFollowUps } from "../../ui/follow-up";
 import type { ChatMessage, MessageAttachment, ToolRenderers } from "./types";
+import type { ToolDefinition, ToolRenderProps } from "../../../../core";
 
 type DefaultMessageProps = {
   message: ChatMessage;
@@ -25,11 +26,14 @@ type DefaultMessageProps = {
   isLastMessage?: boolean;
   /** Whether the chat is currently loading/streaming */
   isLoading?: boolean;
-  /** Custom renderers for tool results (Generative UI) */
+  /** Registered tools (for accessing tool's render function) */
+  registeredTools?: ToolDefinition[];
+  /** Custom renderers for tool results (Generative UI) - higher priority than tool.render */
   toolRenderers?: ToolRenderers;
   /** Called when user approves a tool execution */
   onApproveToolExecution?: (
     executionId: string,
+    extraData?: Record<string, unknown>,
     permissionLevel?: PermissionLevel,
   ) => void;
   /** Called when user rejects a tool execution */
@@ -58,6 +62,7 @@ export function DefaultMessage({
   size = "sm",
   isLastMessage = false,
   isLoading = false,
+  registeredTools,
   toolRenderers,
   onApproveToolExecution,
   onRejectToolExecution,
@@ -139,16 +144,24 @@ export function DefaultMessage({
     (exec) => exec.approvalStatus !== "required",
   );
 
-  // Split completed tools into those with custom renderers and those without
-  const toolsWithCustomRenderer = completedTools?.filter(
-    (exec) => toolRenderers && toolRenderers[exec.name],
+  // Helper: check if tool has any custom render (toolRenderers or tool.render)
+  const hasCustomRender = (toolName: string): boolean => {
+    if (toolRenderers?.[toolName]) return true;
+    const toolDef = registeredTools?.find((t) => t.name === toolName);
+    if (toolDef?.render) return true;
+    return false;
+  };
+
+  // Split completed tools: those with custom render vs default ToolSteps
+  const toolsWithCustomRender = completedTools?.filter((exec) =>
+    hasCustomRender(exec.name),
   );
-  const toolsWithoutCustomRenderer = completedTools?.filter(
-    (exec) => !toolRenderers || !toolRenderers[exec.name],
+  const toolsWithoutCustomRender = completedTools?.filter(
+    (exec) => !hasCustomRender(exec.name),
   );
 
-  // Convert tools without custom renderers to ToolStepData format
-  const toolSteps = toolsWithoutCustomRenderer?.map((exec) => ({
+  // Convert tools without custom render to ToolStepData format
+  const toolSteps = toolsWithoutCustomRender?.map((exec) => ({
     id: exec.id,
     name: exec.name,
     args: exec.args,
@@ -190,25 +203,59 @@ export function DefaultMessage({
           </MessageContent>
         )}
 
-        {/* Custom Tool Renderers (Generative UI) */}
-        {toolsWithCustomRenderer && toolsWithCustomRenderer.length > 0 && (
+        {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
+        {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
           <div className="mt-2 space-y-2">
-            {toolsWithCustomRenderer.map((exec) => {
-              const Renderer = toolRenderers![exec.name];
-              return (
-                <Renderer
-                  key={exec.id}
-                  execution={{
-                    id: exec.id,
-                    name: exec.name,
-                    args: exec.args,
-                    status: exec.status,
-                    result: exec.result,
-                    error: exec.error,
-                    approvalStatus: exec.approvalStatus,
-                  }}
-                />
+            {toolsWithCustomRender.map((exec) => {
+              // PRIORITY 1: toolRenderers (app-level override)
+              const Renderer = toolRenderers?.[exec.name];
+              if (Renderer) {
+                return (
+                  <Renderer
+                    key={exec.id}
+                    execution={{
+                      id: exec.id,
+                      name: exec.name,
+                      args: exec.args,
+                      status: exec.status,
+                      result: exec.result,
+                      error: exec.error,
+                      approvalStatus: exec.approvalStatus,
+                    }}
+                  />
+                );
+              }
+
+              // PRIORITY 2: tool's own render function
+              const toolDef = registeredTools?.find(
+                (t) => t.name === exec.name,
               );
+              if (toolDef?.render) {
+                // Map execution status to ToolRenderProps status
+                let status: ToolRenderProps["status"] = "pending";
+                if (exec.status === "executing") status = "executing";
+                else if (exec.status === "completed") status = "completed";
+                else if (
+                  exec.status === "error" ||
+                  exec.status === "failed" ||
+                  exec.status === "rejected"
+                )
+                  status = "error";
+
+                const renderProps: ToolRenderProps = {
+                  status,
+                  args: exec.args,
+                  result: exec.result,
+                  error: exec.error,
+                  toolCallId: exec.id,
+                  toolName: exec.name,
+                };
+                const output = toolDef.render(renderProps) as React.ReactNode;
+                return <React.Fragment key={exec.id}>{output}</React.Fragment>;
+              }
+
+              // Shouldn't reach here since we filtered, but fallback
+              return null;
             })}
           </div>
         )}
@@ -220,26 +267,72 @@ export function DefaultMessage({
           </div>
         )}
 
-        {/* Tool Approval Confirmations (with permission options) - show last for pending tools */}
+        {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
         {pendingApprovalTools && pendingApprovalTools.length > 0 && (
           <div className="mt-2 space-y-2">
-            {pendingApprovalTools.map((tool) => (
-              <PermissionConfirmation
-                key={tool.id}
-                state="pending"
-                toolName={tool.name}
-                message={
-                  tool.approvalMessage ||
-                  `This tool wants to execute. Do you approve?`
-                }
-                onApprove={(permissionLevel) =>
-                  onApproveToolExecution?.(tool.id, permissionLevel)
-                }
-                onReject={(permissionLevel) =>
-                  onRejectToolExecution?.(tool.id, undefined, permissionLevel)
-                }
-              />
-            ))}
+            {pendingApprovalTools.map((tool) => {
+              // Approval callbacks for custom renders
+              const approvalCallbacks = {
+                onApprove: (extraData?: Record<string, unknown>) =>
+                  onApproveToolExecution?.(tool.id, extraData),
+                onReject: (reason?: string) =>
+                  onRejectToolExecution?.(tool.id, reason),
+                message: tool.approvalMessage,
+              };
+
+              // PRIORITY 1: toolRenderers (app-level override)
+              const CustomRenderer = toolRenderers?.[tool.name];
+              if (CustomRenderer) {
+                return (
+                  <CustomRenderer
+                    key={tool.id}
+                    execution={tool}
+                    approval={approvalCallbacks}
+                  />
+                );
+              }
+
+              // PRIORITY 2: tool's own render function
+              const toolDef = registeredTools?.find(
+                (t) => t.name === tool.name,
+              );
+              if (toolDef?.render) {
+                const renderProps: ToolRenderProps = {
+                  status: "approval-required",
+                  args: tool.args,
+                  result: tool.result,
+                  error: tool.error,
+                  toolCallId: tool.id,
+                  toolName: tool.name,
+                  approval: approvalCallbacks,
+                };
+                const output = toolDef.render(renderProps) as React.ReactNode;
+                return <React.Fragment key={tool.id}>{output}</React.Fragment>;
+              }
+
+              // PRIORITY 3: Default PermissionConfirmation
+              return (
+                <PermissionConfirmation
+                  key={tool.id}
+                  state="pending"
+                  toolName={tool.name}
+                  message={
+                    tool.approvalMessage ||
+                    `This tool wants to execute. Do you approve?`
+                  }
+                  onApprove={(permissionLevel) =>
+                    onApproveToolExecution?.(
+                      tool.id,
+                      undefined,
+                      permissionLevel,
+                    )
+                  }
+                  onReject={(permissionLevel) =>
+                    onRejectToolExecution?.(tool.id, undefined, permissionLevel)
+                  }
+                />
+              );
+            })}
           </div>
         )}
 

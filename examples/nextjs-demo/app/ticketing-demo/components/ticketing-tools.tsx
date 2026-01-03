@@ -665,23 +665,23 @@ Marcus`;
 
     escalate_ticket: tool({
       title: (args) => `Escalate (${args.priority || "High"})`,
-      executingTitle: "Preparing escalation...",
-      completedTitle: () => {
-        // Dynamic title based on escalation state
-        const escalatedTo = dashboard.escalatedTo;
-        return escalatedTo ? `Escalated to ${escalatedTo}` : "Escalation ready";
-      },
+      executingTitle: "Assigning to supervisor...",
+      completedTitle: "Ticket escalated",
       description:
-        "Escalate ticket to supervisor. Shows a selection card for user to choose supervisor.",
+        "Escalate ticket to supervisor. Pauses for user to select supervisor before completing.",
       location: "client",
+      // NEW: This pauses execution until user selects a supervisor
+      needsApproval: true,
+      approvalMessage: "Select a supervisor to escalate this ticket to",
       aiResponseMode: "none",
-      aiContext: () => {
-        // AI context reads from dashboard state to know if assigned
-        const escalatedTo = dashboard.escalatedTo;
-        if (escalatedTo) {
-          return `[Escalation COMPLETED: Ticket has been escalated to ${escalatedTo}. The supervisor has been notified and will take over this case. Acknowledge the escalation to the user.]`;
+      aiContext: (result) => {
+        const data = result.data as
+          | { supervisor: { name: string; role: string }; reason: string }
+          | undefined;
+        if (data?.supervisor) {
+          return `[Escalation COMPLETED: Ticket has been escalated to ${data.supervisor.name} (${data.supervisor.role}). Reason: ${data.reason}. The supervisor has been notified and will take over this case.]`;
         }
-        return `[Escalation card shown to user - waiting for them to select supervisor and confirm. Do not proceed until user completes the escalation.]`;
+        return `[Escalation failed or was cancelled]`;
       },
       inputSchema: {
         type: "object",
@@ -695,19 +695,76 @@ Marcus`;
         },
         required: ["reason", "priority"],
       },
-      handler: async () => {
-        // Handler just returns - the actual assignment happens in the card's onAssign
-        return success({ pending: true });
+      // Handler receives user's selection via context.approvalData
+      handler: async (params, context) => {
+        // Get the supervisor selected by user from approval data
+        const supervisor = context?.approvalData?.supervisor as
+          | { name: string; role: string }
+          | undefined;
+
+        if (!supervisor) {
+          return { success: false, error: "No supervisor selected" };
+        }
+
+        // Update dashboard state
+        dashboard.setEscalatedTo(`${supervisor.name} (${supervisor.role})`);
+
+        // Return the result - this becomes the tool response sent to AI
+        return success({
+          supervisor,
+          reason: params.reason as string,
+          priority: params.priority as string,
+        });
       },
-      render: (props) => (
-        <EscalationCard
-          reason={props.args.reason as string}
-          priority={props.args.priority as string}
-          onAssign={(supervisor) => {
-            dashboard.setEscalatedTo(`${supervisor.name} (${supervisor.role})`);
-          }}
-        />
-      ),
+      // Render handles all statuses including approval-required
+      render: (props) => {
+        const { status, args, approval, result } = props;
+
+        // Waiting for user to select supervisor
+        if (status === "approval-required" && approval) {
+          return (
+            <EscalationCard
+              reason={args.reason as string}
+              priority={args.priority as string}
+              onAssign={(supervisor) => {
+                // Pass supervisor to handler via approval.onApprove
+                approval.onApprove({ supervisor });
+              }}
+              onCancel={() => approval.onReject("Cancelled by user")}
+            />
+          );
+        }
+
+        // Completed - show assigned state
+        if (status === "completed" && result?.data) {
+          const data = result.data as {
+            supervisor: { name: string; role: string };
+            reason: string;
+            priority: string;
+          };
+          return (
+            <EscalationCard
+              reason={data.reason}
+              priority={data.priority}
+              initialAssigned={true}
+              initialSupervisor={data.supervisor.name}
+            />
+          );
+        }
+
+        // Error or rejected
+        if (status === "error") {
+          return (
+            <div className="bg-card border border-red-500/30 rounded-xl p-4">
+              <span className="text-sm text-red-500">
+                Escalation failed: {props.error || "Unknown error"}
+              </span>
+            </div>
+          );
+        }
+
+        return null;
+      },
     }),
   } as any);
 

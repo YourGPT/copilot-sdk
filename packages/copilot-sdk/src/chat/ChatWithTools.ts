@@ -338,10 +338,14 @@ export class ChatWithTools {
   // ============================================
 
   /**
-   * Approve a tool execution
+   * Approve a tool execution with optional extra data
    */
-  approveToolExecution(id: string, permissionLevel?: PermissionLevel): void {
-    this.agentLoop.approveToolExecution(id, permissionLevel);
+  approveToolExecution(
+    id: string,
+    extraData?: Record<string, unknown>,
+    permissionLevel?: PermissionLevel,
+  ): void {
+    this.agentLoop.approveToolExecution(id, extraData, permissionLevel);
   }
 
   /**

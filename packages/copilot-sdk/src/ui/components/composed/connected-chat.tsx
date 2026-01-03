@@ -74,6 +74,7 @@ export function CopilotChat(props: CopilotChatProps) {
     toolExecutions: rawToolExecutions,
     approveToolExecution,
     rejectToolExecution,
+    registeredTools,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -247,6 +248,7 @@ export function CopilotChat(props: CopilotChatProps) {
       isProcessing={isProcessingToolResults}
       onApproveToolExecution={approveToolExecution}
       onRejectToolExecution={rejectToolExecution}
+      registeredTools={registeredTools}
     />
   );
 }

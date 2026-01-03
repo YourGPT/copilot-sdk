@@ -229,18 +229,47 @@ export function CopilotPanel() {
       );
     },
 
-    escalate_ticket: ({ execution }: ToolRendererProps) => {
-      if (isLoading(execution.status)) return <EscalationSkeleton />;
-      if (execution.status !== "completed") return null;
-      return (
-        <EscalationCard
-          reason={execution.args.reason as string}
-          priority={execution.args.priority as string}
-          onAssign={(supervisor) => {
-            dashboard.setEscalatedTo(`${supervisor.name} (${supervisor.role})`);
-          }}
-        />
-      );
+    escalate_ticket: ({ execution, approval }: ToolRendererProps) => {
+      // IMPORTANT: Check approval status FIRST (before loading check)
+      // When approvalStatus is "required", show the selection card even if status is "pending"
+      if (execution.approvalStatus === "required" && approval) {
+        return (
+          <EscalationCard
+            reason={execution.args.reason as string}
+            priority={execution.args.priority as string}
+            onAssign={(supervisor) => {
+              // Pass supervisor to handler via approval.onApprove
+              approval.onApprove({ supervisor });
+            }}
+            onCancel={() => approval.onReject("Cancelled by user")}
+          />
+        );
+      }
+
+      // Executing - show skeleton while handler runs (after approval)
+      if (execution.status === "executing") {
+        return <EscalationSkeleton />;
+      }
+
+      // Completed - show assigned state
+      if (execution.status === "completed") {
+        const data = getResultData<{
+          supervisor: { name: string; role: string };
+          reason: string;
+          priority: string;
+        }>(execution.result);
+        if (!data) return null;
+        return (
+          <EscalationCard
+            reason={data.reason}
+            priority={data.priority}
+            initialAssigned={true}
+            initialSupervisor={data.supervisor.name}
+          />
+        );
+      }
+
+      return null;
     },
   };
 

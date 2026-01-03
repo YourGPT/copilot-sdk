@@ -45,6 +45,8 @@ export interface ToolExecutionData {
   approvalStatus?: ToolApprovalStatus;
   /** Message shown in approval UI */
   approvalMessage?: string;
+  /** Data passed from user's approval action (e.g., selected item) */
+  approvalData?: Record<string, unknown>;
 }
 
 /**

@@ -56,6 +56,10 @@ export interface ToolExecution {
   error?: string;
   startedAt?: Date;
   completedAt?: Date;
+  /** Custom approval message from tool definition */
+  approvalMessage?: string;
+  /** Data passed from user's approval action (e.g., selected supervisor) */
+  approvalData?: Record<string, unknown>;
 }
 
 /**
@@ -123,15 +127,33 @@ export interface AgentLoopState {
  * Agent loop actions interface
  */
 export interface AgentLoopActions {
+  /**
+   * Approve a tool execution with optional extra data.
+   * The extraData is passed to the tool handler via context.approvalData.
+   *
+   * @param executionId - The tool execution ID
+   * @param extraData - Optional data from user's approval action (e.g., selected item)
+   * @param permissionLevel - Optional permission level for persistence
+   */
   approveToolExecution: (
     executionId: string,
+    extraData?: Record<string, unknown>,
     permissionLevel?: PermissionLevel,
   ) => void;
+
+  /**
+   * Reject a tool execution.
+   *
+   * @param executionId - The tool execution ID
+   * @param reason - Optional rejection reason
+   * @param permissionLevel - Optional permission level for persistence
+   */
   rejectToolExecution: (
     executionId: string,
     reason?: string,
     permissionLevel?: PermissionLevel,
   ) => void;
+
   clearToolExecutions: () => void;
 }
 

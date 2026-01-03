@@ -84,7 +84,11 @@ export interface CopilotContextValue {
   registeredTools: ToolDefinition[];
   toolExecutions: ToolExecution[];
   pendingApprovals: ToolExecution[];
-  approveToolExecution: (id: string, permissionLevel?: PermissionLevel) => void;
+  approveToolExecution: (
+    id: string,
+    extraData?: Record<string, unknown>,
+    permissionLevel?: PermissionLevel,
+  ) => void;
   rejectToolExecution: (
     id: string,
     reason?: string,
@@ -244,8 +248,12 @@ export function CopilotProvider({
   }, []);
 
   const approveToolExecution = useCallback(
-    (id: string, permissionLevel?: PermissionLevel) => {
-      chatRef.current?.approveToolExecution(id, permissionLevel);
+    (
+      id: string,
+      extraData?: Record<string, unknown>,
+      permissionLevel?: PermissionLevel,
+    ) => {
+      chatRef.current?.approveToolExecution(id, extraData, permissionLevel);
     },
     [],
   );

@@ -23,6 +23,7 @@ interface EscalationCardProps {
   reason: string;
   priority: string;
   onAssign?: (supervisor: Supervisor) => void;
+  onCancel?: () => void;
   initialAssigned?: boolean;
   initialSupervisor?: string;
 }
@@ -31,6 +32,7 @@ export function EscalationCard({
   reason,
   priority,
   onAssign,
+  onCancel,
   initialAssigned = false,
   initialSupervisor,
 }: EscalationCardProps) {
@@ -84,6 +86,7 @@ Reason: ${reason}`;
 
   const handleCancel = () => {
     setCancelled(true);
+    onCancel?.();
   };
 
   // Cancelled state
