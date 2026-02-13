@@ -163,7 +163,7 @@ export const INITIAL_API_KEYS: ApiKeys = {
 };
 
 // OpenRouter model options for the model selector
-// Source: https://openrouter.ai/models, https://openrouter.ai/rankings
+// Source: https://openrouter.ai/models (Updated: February 2026)
 export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
   // OpenRouter Special
   {
@@ -171,7 +171,23 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Auto (Best for prompt)",
     provider: "OpenRouter",
   },
-  // Anthropic Claude - https://openrouter.ai/anthropic
+  // OpenAI GPT-5.x (Current - 2026)
+  { id: "openai/gpt-5.2-pro", name: "GPT-5.2 Pro", provider: "OpenAI" },
+  { id: "openai/gpt-5.2", name: "GPT-5.2", provider: "OpenAI" },
+  { id: "openai/gpt-5.2-chat", name: "GPT-5.2 Chat", provider: "OpenAI" },
+  { id: "openai/gpt-5.1-codex", name: "GPT-5.1 Codex", provider: "OpenAI" },
+  { id: "openai/gpt-5.1", name: "GPT-5.1", provider: "OpenAI" },
+  // Anthropic Claude 4.x (Current - 2026)
+  {
+    id: "anthropic/claude-opus-4.6",
+    name: "Claude Opus 4.6",
+    provider: "Anthropic",
+  },
+  {
+    id: "anthropic/claude-opus-4.5",
+    name: "Claude Opus 4.5",
+    provider: "Anthropic",
+  },
   {
     id: "anthropic/claude-sonnet-4",
     name: "Claude Sonnet 4",
@@ -197,13 +213,17 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Claude 3 Haiku",
     provider: "Anthropic",
   },
-  // OpenAI
-  { id: "openai/gpt-4o", name: "GPT-4o", provider: "OpenAI" },
-  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", provider: "OpenAI" },
-  { id: "openai/gpt-4-turbo", name: "GPT-4 Turbo", provider: "OpenAI" },
-  { id: "openai/o1", name: "o1", provider: "OpenAI" },
-  { id: "openai/o1-mini", name: "o1 Mini", provider: "OpenAI" },
-  // Google Gemini
+  // Google Gemini 3.x & 2.x (Current - 2026)
+  {
+    id: "google/gemini-3-pro-preview",
+    name: "Gemini 3 Pro Preview",
+    provider: "Google",
+  },
+  {
+    id: "google/gemini-3-flash-preview",
+    name: "Gemini 3 Flash Preview",
+    provider: "Google",
+  },
   { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "Google" },
   {
     id: "google/gemini-2.5-flash",
@@ -211,16 +231,20 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     provider: "Google",
   },
   {
-    id: "google/gemini-2.0-flash-001",
-    name: "Gemini 2.0 Flash",
-    provider: "Google",
-  },
-  {
     id: "google/gemini-flash-1.5",
     name: "Gemini Flash 1.5",
     provider: "Google",
   },
-  // Meta Llama
+  // xAI Grok 4.x (Current - 2026)
+  { id: "x-ai/grok-4.1-fast", name: "Grok 4.1 Fast", provider: "xAI" },
+  {
+    id: "x-ai/grok-4-fast-reasoning",
+    name: "Grok 4 Fast Reasoning",
+    provider: "xAI",
+  },
+  { id: "x-ai/grok-3-mini-beta", name: "Grok 3 Mini Beta", provider: "xAI" },
+  { id: "x-ai/grok-3-fast", name: "Grok 3 Fast", provider: "xAI" },
+  // Meta Llama 3.x
   {
     id: "meta-llama/llama-3.3-70b-instruct",
     name: "Llama 3.3 70B",
@@ -231,22 +255,29 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Llama 3.1 405B",
     provider: "Meta",
   },
-  // DeepSeek
+  // DeepSeek (Current - 2026)
   {
-    id: "deepseek/deepseek-chat-v3-0324",
-    name: "DeepSeek V3",
+    id: "deepseek/deepseek-chat-v3",
+    name: "DeepSeek Chat V3",
     provider: "DeepSeek",
   },
   {
-    id: "deepseek/deepseek-r1-0528:free",
+    id: "deepseek/deepseek-r1",
+    name: "DeepSeek R1",
+    provider: "DeepSeek",
+  },
+  {
+    id: "deepseek/deepseek-r1:free",
     name: "DeepSeek R1 (Free)",
     provider: "DeepSeek",
   },
-  // Mistral
-  { id: "mistralai/mistral-large", name: "Mistral Large", provider: "Mistral" },
+  // Mistral (Current - 2026)
+  {
+    id: "mistralai/mistral-large-2411",
+    name: "Mistral Large 2411",
+    provider: "Mistral",
+  },
   { id: "mistralai/mistral-nemo", name: "Mistral Nemo", provider: "Mistral" },
-  // xAI
-  { id: "x-ai/grok-2", name: "Grok 2", provider: "xAI" },
 ];
 
 export const INITIAL_GENERATIVE_UI: GenerativeUIConfig = {

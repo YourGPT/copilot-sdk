@@ -19,8 +19,10 @@
 export {
   openrouter,
   createOpenRouter as createOpenRouterModel,
+  fetchOpenRouterModels,
+  searchOpenRouterModels,
 } from "./provider";
-export type { OpenRouterProviderOptions } from "./provider";
+export type { OpenRouterProviderOptions, OpenRouterModel } from "./provider";
 
 import { createOpenAIAdapter } from "../../adapters/openai";
 import {
@@ -45,40 +47,64 @@ interface ModelCapabilities {
  * OpenRouter supports 500+ models - use any valid model ID.
  */
 const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
-  // OpenAI
-  "openai/gpt-4o": {
+  // OpenAI GPT-5.x (Current - 2026)
+  "openai/gpt-5.2-pro": {
     vision: true,
     tools: true,
     jsonMode: true,
-    maxTokens: 128000,
+    maxTokens: 400000,
   },
-  "openai/gpt-4o-mini": {
+  "openai/gpt-5.2": {
     vision: true,
     tools: true,
     jsonMode: true,
-    maxTokens: 128000,
+    maxTokens: 400000,
   },
-  "openai/gpt-4-turbo": {
+  "openai/gpt-5.2-chat": {
     vision: true,
     tools: true,
     jsonMode: true,
-    maxTokens: 128000,
+    maxTokens: 400000,
   },
-  "openai/o1": {
+  "openai/gpt-5.1-codex": {
     vision: true,
-    tools: false,
-    jsonMode: false,
-    maxTokens: 128000,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 300000,
+  },
+  "openai/gpt-5.1": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 300000,
   },
 
-  // Anthropic
+  // Anthropic Claude 4.x (Current - 2026)
+  "anthropic/claude-opus-4.6": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1000000,
+  },
+  "anthropic/claude-opus-4.5": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1000000,
+  },
+  "anthropic/claude-sonnet-4": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 200000,
+  },
   "anthropic/claude-3.5-sonnet": {
     vision: true,
     tools: true,
     jsonMode: true,
     maxTokens: 200000,
   },
-  "anthropic/claude-3.5-sonnet-20241022": {
+  "anthropic/claude-3-5-haiku": {
     vision: true,
     tools: true,
     jsonMode: true,
@@ -97,7 +123,31 @@ const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
     maxTokens: 200000,
   },
 
-  // Google
+  // Google Gemini 3.x & 2.x (Current - 2026)
+  "google/gemini-3-pro-preview": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1048576,
+  },
+  "google/gemini-3-flash-preview": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1048576,
+  },
+  "google/gemini-2.5-pro": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1048576,
+  },
+  "google/gemini-2.5-flash": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 1048576,
+  },
   "google/gemini-pro-1.5": {
     vision: true,
     tools: true,
@@ -111,7 +161,39 @@ const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
     maxTokens: 1000000,
   },
 
-  // Meta Llama
+  // xAI Grok 4.x (Current - 2026)
+  "x-ai/grok-4.1-fast": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 131072,
+  },
+  "x-ai/grok-4-fast-reasoning": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 131072,
+  },
+  "x-ai/grok-3-mini-beta": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 131072,
+  },
+  "x-ai/grok-3-fast": {
+    vision: true,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 131072,
+  },
+
+  // Meta Llama 3.x
+  "meta-llama/llama-3.3-70b-instruct": {
+    vision: false,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 131072,
+  },
   "meta-llama/llama-3.1-405b-instruct": {
     vision: false,
     tools: true,
@@ -125,8 +207,28 @@ const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
     maxTokens: 131072,
   },
 
-  // Mistral
-  "mistralai/mistral-large": {
+  // DeepSeek (Current - 2026)
+  "deepseek/deepseek-chat-v3": {
+    vision: false,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 64000,
+  },
+  "deepseek/deepseek-r1": {
+    vision: false,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 64000,
+  },
+  "deepseek/deepseek-r1:free": {
+    vision: false,
+    tools: true,
+    jsonMode: true,
+    maxTokens: 64000,
+  },
+
+  // Mistral (Current - 2026)
+  "mistralai/mistral-large-2411": {
     vision: false,
     tools: true,
     jsonMode: true,
@@ -137,14 +239,6 @@ const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
     tools: true,
     jsonMode: true,
     maxTokens: 32768,
-  },
-
-  // DeepSeek
-  "deepseek/deepseek-chat": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 64000,
   },
 
   // OpenRouter Auto (magic model - picks best for your prompt)
