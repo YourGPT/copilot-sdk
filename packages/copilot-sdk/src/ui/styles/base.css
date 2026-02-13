@@ -149,3 +149,42 @@
 .csdk-loader-loading-dots {
   animation: csdk-loading-dots 1.4s infinite;
 }
+
+/* Streamdown Link Dialog - Force correct text colors */
+/* Title: "Open external link?" */
+[data-streamdown="link-safety-modal"] .font-semibold {
+  color: rgb(250, 250, 250) !important;
+}
+
+/* Subtitle: "You're about to visit an external website." */
+[data-streamdown="link-safety-modal"] .text-muted-foreground {
+  color: rgb(160, 160, 160) !important;
+}
+
+/* URL display box */
+[data-streamdown="link-safety-modal"] .font-mono {
+  color: rgb(250, 250, 250) !important;
+}
+
+/* Copy link button text */
+[data-streamdown="link-safety-modal"] button.bg-background {
+  color: rgb(250, 250, 250) !important;
+}
+
+/* Light mode overrides */
+:root:not(.dark) [data-streamdown="link-safety-modal"] .font-semibold {
+  color: rgb(10, 10, 10) !important;
+}
+
+:root:not(.dark) [data-streamdown="link-safety-modal"] .text-muted-foreground {
+  color: rgb(100, 100, 100) !important;
+}
+
+:root:not(.dark) [data-streamdown="link-safety-modal"] .font-mono {
+  color: rgb(10, 10, 10) !important;
+}
+
+:root:not(.dark) [data-streamdown="link-safety-modal"] button.bg-background {
+  color: rgb(10, 10, 10) !important;
+}
+

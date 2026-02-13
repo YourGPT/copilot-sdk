@@ -122,7 +122,7 @@ export function DefaultMessage({
           showUserAvatar ? "justify-end" : "justify-end",
         )}
       >
-        <div className="flex flex-col items-end max-w-[80%]">
+        <div className="flex flex-col items-end max-w-[80%] min-w-0">
           {/* Text content */}
           {message.content && (
             <MessageContent
