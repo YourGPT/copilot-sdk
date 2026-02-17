@@ -1,8 +1,8 @@
 /**
- * Ollama Express Server Demo
+ * Ollama Express Server
  *
- * A complete Express server using Ollama as the LLM provider.
- * Perfect for building local AI applications without API keys.
+ * Express server using Ollama as the LLM provider.
+ * Includes a CopilotProvider-compatible endpoint for the React client.
  *
  * Prerequisites:
  * - Ollama installed and running (ollama serve)
@@ -14,6 +14,7 @@ import express from "express";
 import cors from "cors";
 import { createRuntime } from "@yourgpt/llm-sdk";
 import { createOllama } from "@yourgpt/llm-sdk/ollama";
+import { serverTools } from "./tools.js";
 
 const app = express();
 app.use(cors());
@@ -34,15 +35,24 @@ const ollama = createOllama({
   },
 });
 
-// Create runtime with Ollama
+// Create runtime with Ollama + server-side tools
 const runtime = createRuntime({
   provider: ollama,
   model: MODEL,
-  systemPrompt: "You are a helpful AI assistant running locally via Ollama.",
+  systemPrompt:
+    "You are a helpful AI assistant running locally via Ollama. You have access to weather and calculator tools.",
+  tools: serverTools,
 });
 
 // ============================================
-// ENDPOINTS
+// COPILOT SDK ENDPOINT
+// Used by CopilotProvider in the React client
+// ============================================
+
+app.post("/api/copilot", runtime.expressHandler());
+
+// ============================================
+// ADDITIONAL ENDPOINTS
 // ============================================
 
 /**
@@ -71,74 +81,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 /**
- * Chat with tools
- */
-app.post("/api/chat/tools", async (req, res) => {
-  console.log("[/api/chat/tools] Chat with tools");
-
-  // Add tools to the request
-  const requestWithTools = {
-    ...req.body,
-    tools: [
-      {
-        name: "get_weather",
-        description: "Get weather for a location",
-        location: "server",
-        inputSchema: {
-          type: "object",
-          properties: {
-            location: { type: "string", description: "City name" },
-          },
-          required: ["location"],
-        },
-        handler: async (params: { location: string }) => {
-          // Simulate weather API
-          return {
-            success: true,
-            data: {
-              location: params.location,
-              temperature: Math.floor(Math.random() * 30) + 10,
-              condition: ["sunny", "cloudy", "rainy"][
-                Math.floor(Math.random() * 3)
-              ],
-            },
-          };
-        },
-      },
-      {
-        name: "calculate",
-        description: "Calculate a math expression",
-        location: "server",
-        inputSchema: {
-          type: "object",
-          properties: {
-            expression: { type: "string", description: "Math expression" },
-          },
-          required: ["expression"],
-        },
-        handler: async (params: { expression: string }) => {
-          try {
-            // Simple eval for demo (use a proper math parser in production)
-            const result = Function(
-              `"use strict"; return (${params.expression})`,
-            )();
-            return { success: true, data: { result } };
-          } catch {
-            return { success: false, error: "Invalid expression" };
-          }
-        },
-      },
-    ],
-  };
-
-  await runtime.stream(requestWithTools).pipeToResponse(res);
-});
-
-/**
  * Health check
  */
 app.get("/api/health", async (_req, res) => {
-  // Check Ollama connection
   let ollamaStatus = "unknown";
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
@@ -158,9 +103,9 @@ app.get("/api/health", async (_req, res) => {
       status: ollamaStatus,
     },
     endpoints: [
+      "POST /api/copilot - CopilotProvider SSE endpoint",
       "POST /api/chat/stream - SSE streaming",
       "POST /api/chat - Non-streaming JSON",
-      "POST /api/chat/tools - Chat with tools",
     ],
   });
 });
@@ -205,30 +150,10 @@ app.listen(port, () => {
 ╚════════════════════════════════════════════════════╝
 
 Endpoints:
-  POST /api/chat/stream  - SSE streaming
-  POST /api/chat         - Non-streaming JSON
-  POST /api/chat/tools   - Chat with server-side tools
-  GET  /api/health       - Health check
-  GET  /api/models       - List available models
-
-Test Commands:
-
-# Streaming chat
-curl -X POST http://localhost:${port}/api/chat/stream \\
-  -H "Content-Type: application/json" \\
-  -d '{"messages":[{"role":"user","content":"Hello!"}]}'
-
-# Non-streaming chat
-curl -X POST http://localhost:${port}/api/chat \\
-  -H "Content-Type: application/json" \\
-  -d '{"messages":[{"role":"user","content":"What is 2+2?"}]}'
-
-# Chat with tools
-curl -X POST http://localhost:${port}/api/chat/tools \\
-  -H "Content-Type: application/json" \\
-  -d '{"messages":[{"role":"user","content":"What is the weather in Paris?"}]}'
-
-# List models
-curl http://localhost:${port}/api/models
+  POST /api/copilot        - CopilotProvider SSE endpoint
+  POST /api/chat/stream    - SSE streaming
+  POST /api/chat           - Non-streaming JSON
+  GET  /api/health         - Health check
+  GET  /api/models         - List available models
   `);
 });
