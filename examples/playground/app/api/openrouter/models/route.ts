@@ -9,9 +9,8 @@ export const runtime = "edge";
  */
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const apiKey = searchParams.get("apiKey") || undefined;
-    const search = searchParams.get("search") || "";
+    const apiKey = request.headers.get("x-openrouter-key") || undefined;
+    const search = request.nextUrl.searchParams.get("search") || "";
 
     // Fetch all models
     const models = await fetchOpenRouterModels(apiKey);

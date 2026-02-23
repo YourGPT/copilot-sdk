@@ -32,14 +32,14 @@ export function useOpenRouterModels(
     setError(null);
 
     try {
-      const params = new URLSearchParams();
+      const headers: Record<string, string> = {};
       if (apiKey) {
-        params.set("apiKey", apiKey);
+        headers["x-openrouter-key"] = apiKey;
       }
 
-      const response = await fetch(
-        `/playground/api/openrouter/models?${params}`,
-      );
+      const response = await fetch(`/playground/api/openrouter/models`, {
+        headers,
+      });
       const data = await response.json();
 
       if (data.success) {

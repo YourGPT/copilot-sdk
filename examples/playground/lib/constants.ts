@@ -162,8 +162,8 @@ export const INITIAL_API_KEYS: ApiKeys = {
   openrouter: "",
 };
 
-// OpenRouter model options for the model selector
-// Source: https://openrouter.ai/models (Updated: February 2026)
+// OpenRouter model options for the model selector (static fallback)
+// Source: https://openrouter.ai/api/v1/models (Verified: February 2026)
 export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
   // OpenRouter Special
   {
@@ -171,16 +171,22 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Auto (Best for prompt)",
     provider: "OpenRouter",
   },
-  // OpenAI GPT-5.x (Current - 2026)
+  // OpenAI
   { id: "openai/gpt-5.2-pro", name: "GPT-5.2 Pro", provider: "OpenAI" },
   { id: "openai/gpt-5.2", name: "GPT-5.2", provider: "OpenAI" },
   { id: "openai/gpt-5.2-chat", name: "GPT-5.2 Chat", provider: "OpenAI" },
-  { id: "openai/gpt-5.1-codex", name: "GPT-5.1 Codex", provider: "OpenAI" },
+  { id: "openai/gpt-5.2-codex", name: "GPT-5.2 Codex", provider: "OpenAI" },
   { id: "openai/gpt-5.1", name: "GPT-5.1", provider: "OpenAI" },
-  // Anthropic Claude 4.x (Current - 2026)
+  { id: "openai/gpt-5.1-codex", name: "GPT-5.1 Codex", provider: "OpenAI" },
+  // Anthropic
   {
     id: "anthropic/claude-opus-4.6",
     name: "Claude Opus 4.6",
+    provider: "Anthropic",
+  },
+  {
+    id: "anthropic/claude-sonnet-4.6",
+    name: "Claude Sonnet 4.6",
     provider: "Anthropic",
   },
   {
@@ -188,32 +194,12 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Claude Opus 4.5",
     provider: "Anthropic",
   },
+  // Google Gemini
   {
-    id: "anthropic/claude-sonnet-4",
-    name: "Claude Sonnet 4",
-    provider: "Anthropic",
+    id: "google/gemini-3.1-pro-preview",
+    name: "Gemini 3.1 Pro Preview",
+    provider: "Google",
   },
-  {
-    id: "anthropic/claude-3.5-sonnet",
-    name: "Claude 3.5 Sonnet",
-    provider: "Anthropic",
-  },
-  {
-    id: "anthropic/claude-3-5-haiku",
-    name: "Claude 3.5 Haiku",
-    provider: "Anthropic",
-  },
-  {
-    id: "anthropic/claude-3-opus",
-    name: "Claude 3 Opus",
-    provider: "Anthropic",
-  },
-  {
-    id: "anthropic/claude-3-haiku",
-    name: "Claude 3 Haiku",
-    provider: "Anthropic",
-  },
-  // Google Gemini 3.x & 2.x (Current - 2026)
   {
     id: "google/gemini-3-pro-preview",
     name: "Gemini 3 Pro Preview",
@@ -224,60 +210,30 @@ export const OPENROUTER_MODELS: OpenRouterModelOption[] = [
     name: "Gemini 3 Flash Preview",
     provider: "Google",
   },
-  { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "Google" },
-  {
-    id: "google/gemini-2.5-flash",
-    name: "Gemini 2.5 Flash",
-    provider: "Google",
-  },
-  {
-    id: "google/gemini-flash-1.5",
-    name: "Gemini Flash 1.5",
-    provider: "Google",
-  },
-  // xAI Grok 4.x (Current - 2026)
+  // xAI
   { id: "x-ai/grok-4.1-fast", name: "Grok 4.1 Fast", provider: "xAI" },
+  // DeepSeek
   {
-    id: "x-ai/grok-4-fast-reasoning",
-    name: "Grok 4 Fast Reasoning",
-    provider: "xAI",
-  },
-  { id: "x-ai/grok-3-mini-beta", name: "Grok 3 Mini Beta", provider: "xAI" },
-  { id: "x-ai/grok-3-fast", name: "Grok 3 Fast", provider: "xAI" },
-  // Meta Llama 3.x
-  {
-    id: "meta-llama/llama-3.3-70b-instruct",
-    name: "Llama 3.3 70B",
-    provider: "Meta",
-  },
-  {
-    id: "meta-llama/llama-3.1-405b-instruct",
-    name: "Llama 3.1 405B",
-    provider: "Meta",
-  },
-  // DeepSeek (Current - 2026)
-  {
-    id: "deepseek/deepseek-chat-v3",
-    name: "DeepSeek Chat V3",
+    id: "deepseek/deepseek-v3.2",
+    name: "DeepSeek V3.2",
     provider: "DeepSeek",
   },
   {
-    id: "deepseek/deepseek-r1",
-    name: "DeepSeek R1",
+    id: "deepseek/deepseek-v3.2-speciale",
+    name: "DeepSeek V3.2 Speciale",
     provider: "DeepSeek",
   },
+  // Mistral
   {
-    id: "deepseek/deepseek-r1:free",
-    name: "DeepSeek R1 (Free)",
-    provider: "DeepSeek",
-  },
-  // Mistral (Current - 2026)
-  {
-    id: "mistralai/mistral-large-2411",
-    name: "Mistral Large 2411",
+    id: "mistralai/mistral-large-2512",
+    name: "Mistral Large 3",
     provider: "Mistral",
   },
-  { id: "mistralai/mistral-nemo", name: "Mistral Nemo", provider: "Mistral" },
+  {
+    id: "mistralai/devstral-2512",
+    name: "Devstral 2",
+    provider: "Mistral",
+  },
 ];
 
 export const INITIAL_GENERATIVE_UI: GenerativeUIConfig = {
