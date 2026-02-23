@@ -2,10 +2,16 @@
  * Google Gemini LLM Adapter
  *
  * Supports: Gemini 2.0, 1.5 Pro, 1.5 Flash, etc.
- * Features: Vision, Audio, Video, PDF, Tools/Function Calling
+ * Features: Vision, Audio, Video, PDF, Tools/Function Calling, Google Search Grounding
  */
 
-import type { LLMConfig, StreamEvent, Message } from "../core/stream-events";
+import type {
+  LLMConfig,
+  StreamEvent,
+  Message,
+  WebSearchConfig,
+  Citation,
+} from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
 import type {
   LLMAdapter,
@@ -32,6 +38,11 @@ export interface GoogleAdapterConfig {
     category: string;
     threshold: string;
   }>;
+  /**
+   * Enable native Google Search grounding for Gemini.
+   * When true, Gemini can search Google to answer questions.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**
@@ -271,6 +282,9 @@ export class GoogleAdapter implements LLMAdapter {
     const client = await this.getClient();
     const modelId = request.config?.model || this.model;
 
+    // Check for web search configuration (from request or adapter config)
+    const webSearchConfig = request.webSearch ?? this.config.webSearch;
+
     // Get the generative model
     const model = client.getGenerativeModel({
       model: modelId,
@@ -337,7 +351,21 @@ export class GoogleAdapter implements LLMAdapter {
     }
 
     // Prepare tools
-    const tools = formatToolsForGemini(request.actions);
+    const functionTools = formatToolsForGemini(request.actions);
+
+    // Build tools array - combine function declarations with google search if enabled
+    const toolsArray: Array<Record<string, unknown>> = [];
+
+    if (functionTools) {
+      toolsArray.push(functionTools);
+    }
+
+    // Add Google Search grounding if enabled
+    if (webSearchConfig) {
+      toolsArray.push({
+        google_search: {},
+      });
+    }
 
     const messageId = generateMessageId();
 
@@ -351,7 +379,7 @@ export class GoogleAdapter implements LLMAdapter {
         systemInstruction: systemInstruction
           ? { parts: [{ text: systemInstruction }] }
           : undefined,
-        tools: tools ? [tools] : undefined,
+        tools: toolsArray.length > 0 ? toolsArray : undefined,
         generationConfig: {
           temperature: request.config?.temperature ?? this.config.temperature,
           maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
@@ -369,6 +397,9 @@ export class GoogleAdapter implements LLMAdapter {
         name: string;
         args: Record<string, unknown>;
       } | null = null;
+
+      // Track citations from grounding metadata
+      const collectedCitations: Citation[] = [];
 
       for await (const chunk of result.stream) {
         // Check for abort
@@ -424,6 +455,39 @@ export class GoogleAdapter implements LLMAdapter {
             };
           }
         }
+
+        // Extract grounding metadata (citations) from candidate
+        const groundingMetadata = (
+          candidate as {
+            groundingMetadata?: {
+              groundingChunks?: Array<{
+                web?: { uri: string; title?: string };
+              }>;
+              searchEntryPoint?: { renderedContent?: string };
+            };
+          }
+        )?.groundingMetadata;
+
+        if (groundingMetadata?.groundingChunks) {
+          for (const chunk of groundingMetadata.groundingChunks) {
+            if (chunk.web?.uri) {
+              const url = chunk.web.uri;
+              const domain = extractDomain(url);
+              // Check if we already have this citation
+              if (!collectedCitations.some((c) => c.url === url)) {
+                collectedCitations.push({
+                  index: collectedCitations.length + 1,
+                  url,
+                  title: chunk.web.title || domain,
+                  domain,
+                  favicon: domain
+                    ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+                    : undefined,
+                });
+              }
+            }
+          }
+        }
       }
 
       // Get usage from the final response
@@ -444,8 +508,45 @@ export class GoogleAdapter implements LLMAdapter {
             total_tokens: response.usageMetadata.totalTokenCount || 0,
           };
         }
+
+        // Also check final response for grounding metadata
+        const finalCandidate = response.candidates?.[0];
+        const finalGrounding = (
+          finalCandidate as {
+            groundingMetadata?: {
+              groundingChunks?: Array<{
+                web?: { uri: string; title?: string };
+              }>;
+            };
+          }
+        )?.groundingMetadata;
+
+        if (finalGrounding?.groundingChunks) {
+          for (const chunk of finalGrounding.groundingChunks) {
+            if (chunk.web?.uri) {
+              const url = chunk.web.uri;
+              const domain = extractDomain(url);
+              if (!collectedCitations.some((c) => c.url === url)) {
+                collectedCitations.push({
+                  index: collectedCitations.length + 1,
+                  url,
+                  title: chunk.web.title || domain,
+                  domain,
+                  favicon: domain
+                    ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+                    : undefined,
+                });
+              }
+            }
+          }
+        }
       } catch {
         // Ignore usage retrieval errors
+      }
+
+      // Emit citations if we collected any
+      if (collectedCitations.length > 0) {
+        yield { type: "citation", citations: collectedCitations };
       }
 
       // Emit message end
@@ -561,4 +662,16 @@ export function createGoogleAdapter(
   config: GoogleAdapterConfig,
 ): GoogleAdapter {
   return new GoogleAdapter(config);
+}
+
+/**
+ * Extract domain from URL
+ */
+function extractDomain(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname;
+  } catch {
+    return "";
+  }
 }

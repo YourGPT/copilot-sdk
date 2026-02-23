@@ -9,4 +9,5 @@ export {
   type ChatResponse,
   type StreamChunk,
   type TransportConfig,
+  type Citation,
 } from "./ChatTransport";

@@ -1,4 +1,9 @@
-import type { LLMConfig, StreamEvent } from "../core/stream-events";
+import type {
+  LLMConfig,
+  StreamEvent,
+  WebSearchConfig,
+  Citation,
+} from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
 import type { LLMAdapter, ChatCompletionRequest } from "./base";
 import { formatMessagesForOpenAI, formatTools } from "./base";
@@ -12,6 +17,11 @@ export interface OpenAIAdapterConfig {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Enable native web search for GPT models.
+   * Uses OpenAI's web_search_preview tool.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**
@@ -122,9 +132,30 @@ export class OpenAIAdapter implements LLMAdapter {
       ) as Array<Record<string, unknown>>;
     }
 
-    const tools = request.actions?.length
+    // Build tools array
+    const tools: Array<Record<string, unknown>> = request.actions?.length
       ? formatTools(request.actions)
-      : undefined;
+      : [];
+
+    // Check for web search configuration (from request or adapter config)
+    const webSearchConfig = request.webSearch ?? this.config.webSearch;
+
+    if (webSearchConfig) {
+      // Add web_search_preview tool for OpenAI
+      const webSearchTool: Record<string, unknown> = {
+        type: "web_search_preview",
+      };
+
+      // Add search context config if provided
+      const wsConfig =
+        typeof webSearchConfig === "object" ? webSearchConfig : {};
+
+      if (wsConfig.userLocation) {
+        webSearchTool.search_context_size = "medium"; // OpenAI uses size, not location
+      }
+
+      tools.push(webSearchTool);
+    }
 
     const messageId = generateMessageId();
 
@@ -135,7 +166,7 @@ export class OpenAIAdapter implements LLMAdapter {
       const stream = await client.chat.completions.create({
         model: request.config?.model || this.model,
         messages,
-        tools,
+        tools: tools.length > 0 ? tools : undefined,
         temperature: request.config?.temperature ?? this.config.temperature,
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
@@ -147,6 +178,10 @@ export class OpenAIAdapter implements LLMAdapter {
         name: string;
         arguments: string;
       } | null = null;
+
+      // Track citations from web search
+      const collectedCitations: Citation[] = [];
+      let citationIndex = 0;
 
       let usage:
         | {
@@ -163,10 +198,43 @@ export class OpenAIAdapter implements LLMAdapter {
         }
 
         const delta = chunk.choices[0]?.delta;
+        const choice = chunk.choices[0];
 
         // Handle content
         if (delta?.content) {
           yield { type: "message:delta", content: delta.content };
+        }
+
+        // Handle annotations (citations from web search) - OpenAI includes these in delta
+        const annotations = (
+          delta as {
+            annotations?: Array<{
+              type: string;
+              url_citation?: { url: string; title?: string };
+            }>;
+          }
+        )?.annotations;
+
+        if (annotations && annotations.length > 0) {
+          for (const annotation of annotations) {
+            if (
+              annotation.type === "url_citation" &&
+              annotation.url_citation?.url
+            ) {
+              citationIndex++;
+              const url = annotation.url_citation.url;
+              const domain = extractDomain(url);
+              collectedCitations.push({
+                index: citationIndex,
+                url,
+                title: annotation.url_citation.title || domain,
+                domain,
+                favicon: domain
+                  ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+                  : undefined,
+              });
+            }
+          }
         }
 
         // Handle tool calls
@@ -211,7 +279,7 @@ export class OpenAIAdapter implements LLMAdapter {
         }
 
         // Check for finish
-        if (chunk.choices[0]?.finish_reason) {
+        if (choice?.finish_reason) {
           // Complete any pending tool call
           if (currentToolCall) {
             yield {
@@ -221,6 +289,12 @@ export class OpenAIAdapter implements LLMAdapter {
             };
           }
         }
+      }
+
+      // Emit citations if we collected any
+      if (collectedCitations.length > 0) {
+        const uniqueCitations = deduplicateCitations(collectedCitations);
+        yield { type: "citation", citations: uniqueCitations };
       }
 
       // Emit message end
@@ -234,6 +308,33 @@ export class OpenAIAdapter implements LLMAdapter {
       };
     }
   }
+}
+
+/**
+ * Extract domain from URL
+ */
+function extractDomain(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Deduplicate citations by URL
+ */
+function deduplicateCitations(citations: Citation[]): Citation[] {
+  const seen = new Map<string, Citation>();
+  let index = 0;
+  for (const citation of citations) {
+    if (!seen.has(citation.url)) {
+      index++;
+      seen.set(citation.url, { ...citation, index });
+    }
+  }
+  return Array.from(seen.values());
 }
 
 /**

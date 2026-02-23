@@ -44,6 +44,48 @@ function App() {
 | `/ui`    | Pre-built UI components        |
 | `/core`  | Types, utilities, tool helpers |
 
+## Built-in Tools
+
+### Web Search
+
+Add real-time web search capabilities to your AI copilot. **No extra API key needed** - use your existing OpenAI or Google key.
+
+```typescript
+import { createWebSearchTool } from "@yourgpt/copilot-sdk/core";
+
+// Use OpenAI's built-in search (recommended)
+const webSearch = createWebSearchTool({
+  provider: "openai",
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Or use Google's built-in search
+const webSearch = createWebSearchTool({
+  provider: "google",
+  apiKey: process.env.GOOGLE_API_KEY,
+});
+
+const runtime = createRuntime({
+  provider: openai,
+  model: "gpt-4o",
+  tools: [webSearch],
+});
+```
+
+**Native Providers (No extra API needed):**
+
+- `openai` - OpenAI's built-in web search
+- `google` - Google's grounding with Google Search
+- `anthropic` - Anthropic's built-in web search
+
+**Third-Party Providers:**
+
+- [Tavily](https://tavily.com/) - AI-native search with answer generation
+- [Serper](https://serper.dev/) - Google Search API
+- [Brave](https://brave.com/search/api/) - Privacy-focused search
+- [Exa](https://exa.ai/) - Semantic AI search
+- [SearXNG](https://docs.searxng.org/) - Self-hosted metasearch
+
 ## Examples
 
 Explore real-world implementations and demo projects.

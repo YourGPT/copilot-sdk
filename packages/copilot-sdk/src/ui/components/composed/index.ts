@@ -17,6 +17,7 @@ export {
   type ThreadPickerCompoundProps,
   type ChatProps,
   type ChatMessage,
+  type CitationConfig,
   type ToolRendererProps,
   type ToolRenderers,
   type WelcomeConfig,

@@ -6,6 +6,7 @@
  */
 
 import type { MessageAttachment, ToolCall, Source } from "../../core";
+import type { Citation } from "../interfaces/ChatTransport";
 
 /**
  * Chat message roles
@@ -42,6 +43,18 @@ export interface UIMessage {
 }
 
 /**
+ * Tool result from streaming
+ */
+export interface StreamToolResult {
+  id: string;
+  name: string;
+  status: "pending" | "executing" | "completed" | "failed";
+  args?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+}
+
+/**
  * Stream state during message generation
  */
 export interface StreamingMessageState {
@@ -57,6 +70,10 @@ export interface StreamingMessageState {
     name: string;
     args: Record<string, unknown>;
   }>;
+  /** Tool results received from server */
+  toolResults: Map<string, StreamToolResult>;
+  /** Citations from native web search */
+  citations: Citation[];
   /** Whether action is required (tool execution) */
   requiresAction: boolean;
   /** Finish reason if done */

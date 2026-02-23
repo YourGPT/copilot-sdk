@@ -253,7 +253,6 @@ export function useThreadManager(
 
     // For custom adapters, create a new manager
     // (This is rare and usually for server-side persistence)
-    console.log("[useThreadManager] Creating new manager with custom adapter");
     return createReactThreadManager(
       {
         adapter: config.adapter,

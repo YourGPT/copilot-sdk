@@ -3,9 +3,21 @@ import { copyFileSync, mkdirSync } from "fs";
 
 export default defineConfig({
   entry: {
+    // Core modules
     "core/index": "src/core/index.ts",
     "react/index": "src/react/index.ts",
     "ui/index": "src/ui/index.ts",
+
+    // Tool subpath exports (tree-shakeable)
+    "tools/web-search/index": "src/tools/web-search/index.ts",
+    "tools/tavily/index": "src/tools/tavily/index.ts",
+    "tools/exa/index": "src/tools/exa/index.ts",
+    "tools/serper/index": "src/tools/serper/index.ts",
+    "tools/brave/index": "src/tools/brave/index.ts",
+    "tools/searxng/index": "src/tools/searxng/index.ts",
+    "tools/openai/index": "src/tools/openai/index.ts",
+    "tools/google/index": "src/tools/google/index.ts",
+    "tools/anthropic/index": "src/tools/anthropic/index.ts",
   },
   format: ["cjs", "esm"],
   dts: true,

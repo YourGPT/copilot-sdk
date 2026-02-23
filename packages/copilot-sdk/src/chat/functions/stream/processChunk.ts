@@ -71,6 +71,70 @@ export function processStreamChunk(
         requiresAction: true,
       };
 
+    // Handle tool action events from server
+    case "action:start": {
+      const newResults = new Map(state.toolResults);
+      newResults.set(chunk.id, {
+        id: chunk.id,
+        name: chunk.name,
+        status: "executing",
+      });
+      return { ...state, toolResults: newResults };
+    }
+
+    case "action:args": {
+      const existing = state.toolResults.get(chunk.id);
+      if (existing) {
+        const newResults = new Map(state.toolResults);
+        try {
+          newResults.set(chunk.id, {
+            ...existing,
+            args: JSON.parse(chunk.args),
+          });
+        } catch {
+          // Keep existing args if parse fails
+        }
+        return { ...state, toolResults: newResults };
+      }
+      return state;
+    }
+
+    case "action:end": {
+      const existing = state.toolResults.get(chunk.id);
+      const newResults = new Map(state.toolResults);
+      newResults.set(chunk.id, {
+        id: chunk.id,
+        name: chunk.name,
+        status: chunk.error ? "failed" : "completed",
+        args: existing?.args,
+        result: chunk.result,
+        error: chunk.error,
+      });
+      return { ...state, toolResults: newResults };
+    }
+
+    case "tool:result": {
+      const existing = state.toolResults.get(chunk.id);
+      const newResults = new Map(state.toolResults);
+      newResults.set(chunk.id, {
+        id: chunk.id,
+        name: chunk.name,
+        status: chunk.result?.success ? "completed" : "failed",
+        args: existing?.args,
+        result: chunk.result,
+        error: chunk.result?.error,
+      });
+      return { ...state, toolResults: newResults };
+    }
+
+    case "citation": {
+      // Append new citations to existing ones
+      return {
+        ...state,
+        citations: [...state.citations, ...chunk.citations],
+      };
+    }
+
     case "done":
       return {
         ...state,
@@ -133,6 +197,8 @@ export function createStreamState(messageId: string): StreamingMessageState {
     content: "",
     thinking: "",
     toolCalls: [],
+    toolResults: new Map(),
+    citations: [],
     requiresAction: false,
     finishReason: undefined,
   };

@@ -17,6 +17,7 @@ export type {
   ChatMessage,
   ChatProps,
   ChatHeaderConfig,
+  CitationConfig,
   MessageAttachment,
   ToolRendererProps,
   ToolRenderers,

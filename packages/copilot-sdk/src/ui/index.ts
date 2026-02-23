@@ -47,8 +47,55 @@ export {
   useChatContainer,
 } from "./components/ui/chat-container";
 
-// Source primitives
-export { Source, SourceContent, SourceTrigger } from "./components/ui/source";
+// Source primitives (for citations/references)
+export {
+  Source,
+  SourceTrigger,
+  SourceContent,
+  SourceGroup,
+  SimpleSource,
+  type SourceProps,
+  type SourceTriggerProps,
+  type SourceContentProps,
+  type SourceGroupProps,
+  type SourceItem,
+  type SimpleSourceProps,
+} from "./components/ui/source";
+
+// Search results primitives (for web search tool)
+export {
+  SearchResults,
+  SearchAnswer,
+  SearchResultsWithAnswer,
+  type SearchResultsProps,
+  type SearchAnswerProps,
+  type SearchResultsWithAnswerProps,
+} from "./components/ui/search-results";
+
+// Citation components (for displaying sources/references)
+export {
+  // Components
+  CitationBadge,
+  CitationSuperscript,
+  SourcePill,
+  SourcesBar,
+  SourcesCollapsible,
+  SourcesList,
+  MessageWithCitations,
+  // Utilities
+  annotationsToCitations,
+  resultsToCitations,
+  // Types
+  type Citation,
+  type CitationsConfig,
+  type CitationBadgeProps,
+  type CitationSuperscriptProps,
+  type SourcePillProps,
+  type SourcesBarProps,
+  type SourcesCollapsibleProps,
+  type SourcesListProps,
+  type MessageWithCitationsProps,
+} from "./components/ui/citations";
 
 // Reasoning primitives
 export {
@@ -190,6 +237,8 @@ export {
   type ToolRenderers,
   // Welcome screen config
   type WelcomeConfig,
+  // Citation/Sources config (web search)
+  type CitationConfig,
   // Persistence types
   type CopilotChatPersistenceConfig,
   type CopilotChatClassNames,
