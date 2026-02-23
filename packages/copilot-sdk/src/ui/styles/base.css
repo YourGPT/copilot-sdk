@@ -33,6 +33,7 @@
     --input: hsl(240 5.9% 90%);
     --ring: hsl(240 5.9% 10%);
     --radius: 0.5rem;
+    --csdk-link-color: #2563eb;
   }
 
   .dark {
@@ -55,6 +56,7 @@
     --border: hsl(240 3.7% 15.9%);
     --input: hsl(240 3.7% 15.9%);
     --ring: hsl(240 4.9% 83.9%);
+    --csdk-link-color: #60a5fa;
   }
 }
 
@@ -150,50 +152,35 @@
   animation: csdk-loading-dots 1.4s infinite;
 }
 
-/* Streamdown Link Dialog - Fix CSS variable inheritance from parent message context
- * Users can override these by defining --csdk-dialog-foreground and --csdk-dialog-muted-foreground at :root level
+/* Streamdown link-safety-modal (targets streamdown@^2.1.0 internal structure)
+ * Fixes CSS variable inheritance from parent message context.
+ * Users can override via --csdk-dialog-foreground and --csdk-dialog-muted-foreground at :root level.
  */
-[data-streamdown="link-safety-modal"] > div {
-  /* Reset to root-level CSS variables, breaking inheritance from parent message */
-  --foreground: var(--csdk-dialog-foreground, 0 0% 98%);
-  --muted-foreground: var(--csdk-dialog-muted-foreground, 0 0% 62.7%);
-}
 
-/* Streamdown link-safety-modal has backdrop blur on the modal wrapper itself */
-/* The modal wrapper div has: bg-background/50 backdrop-blur-sm */
-/* Ensure it covers the full viewport, not constrained by parent containers */
+/* Backdrop: cover full viewport, center the dialog */
 [data-streamdown="link-safety-modal"] {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-
-  /* Center the actual dialog content */
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* The actual dialog content card should be constrained, not the backdrop wrapper */
+/* Dialog card: reset CSS variables to light defaults, constrain width, apply foreground color */
 [data-streamdown="link-safety-modal"] > div {
+  --foreground: var(--csdk-dialog-foreground, 240 10% 3.9%);
+  --muted-foreground: var(--csdk-dialog-muted-foreground, 240 3.8% 46.1%);
   max-width: min(500px, 90vw);
   margin: 0;
   width: 100%;
-}
-
-:root:not(.dark) [data-streamdown="link-safety-modal"] > div {
-  --foreground: var(--csdk-dialog-foreground, 240 10% 3.9%);
-  --muted-foreground: var(--csdk-dialog-muted-foreground, 240 3.8% 46.1%);
-}
-
-/* Apply the reset variables to specific elements inside the dialog card */
-[data-streamdown="link-safety-modal"] > div .font-semibold,
-[data-streamdown="link-safety-modal"] > div .font-mono,
-[data-streamdown="link-safety-modal"] > div button.bg-background {
   color: hsl(var(--foreground));
+}
+
+/* Dark mode override */
+.dark [data-streamdown="link-safety-modal"] > div,
+:root.dark [data-streamdown="link-safety-modal"] > div {
+  --foreground: var(--csdk-dialog-foreground, 0 0% 98%);
+  --muted-foreground: var(--csdk-dialog-muted-foreground, 0 0% 62.7%);
 }
 
 [data-streamdown="link-safety-modal"] > div .text-muted-foreground {

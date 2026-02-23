@@ -85,7 +85,7 @@ const MessageContent = ({
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
-    "csdk-message-content rounded-lg p-2 break-words whitespace-normal max-w-full leading-relaxed overflow-hidden",
+    "csdk-message-content rounded-lg p-2 break-words whitespace-normal max-w-full leading-relaxed overflow-x-auto overflow-y-hidden",
     // Typography - simple Tailwind utilities (no prose)
     "[&_p]:my-1 [&_p]:leading-relaxed",
     "[&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc [&_ul]:list-outside",
@@ -93,9 +93,9 @@ const MessageContent = ({
     "[&_li]:my-0.5 [&_li]:pl-0",
     "[&_pre]:my-2 [&_blockquote]:my-2 [&_blockquote]:pl-3 [&_blockquote]:border-l-2 [&_blockquote]:border-current/30",
     "[&_code]:bg-current/10 [&_code]:px-1 [&_code]:rounded [&_code]:text-[0.9em]",
-    "[&_a]:underline [&_a]:!text-blue-600 dark:[&_a]:!text-blue-400 [&_a]:break-all",
-    "[&_button[data-streamdown='link']]:underline [&_button[data-streamdown='link']]:!text-blue-600 dark:[&_button[data-streamdown='link']]:!text-blue-400 [&_button[data-streamdown='link']]:break-all [&_button[data-streamdown='link']]:font-medium",
-    "[&_.text-primary]:!text-blue-600 dark:[&_.text-primary]:!text-blue-400",
+    "[&_a]:underline [&_a]:text-[var(--csdk-link-color)] [&_a]:[overflow-wrap:anywhere]",
+    "[&_button[data-streamdown='link']]:underline [&_button[data-streamdown='link']]:text-[var(--csdk-link-color)] [&_button[data-streamdown='link']]:[overflow-wrap:anywhere] [&_button[data-streamdown='link']]:font-medium",
+    "[&_.text-primary]:text-[var(--csdk-link-color)]",
     "[&_strong]:font-semibold",
     textSizeMap[size],
     className,

@@ -29,6 +29,7 @@
   --border: hsl(45 8% 84%);
   --input: hsl(47 6% 69%);
   --ring: hsl(16 56% 52%);
+  --csdk-link-color: hsl(210 70% 45%);
 
   --radius: 0.5rem;
 }
@@ -65,4 +66,5 @@
   --border: hsl(55 5% 23%);
   --input: hsl(52 5% 31%);
   --ring: hsl(14 62% 60%);
+  --csdk-link-color: hsl(210 70% 65%);
 }
