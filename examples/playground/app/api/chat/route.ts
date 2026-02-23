@@ -7,9 +7,12 @@ const anthropic = createAnthropic({
 
 const runtime = createRuntime({
   provider: anthropic,
-  model: "claude-3-5-haiku-20241022",
-  systemPrompt:
-    "You are a helpful assistant. When the user asks you to perform an action, ALWAYS use the available tools. Do not just respond with text.",
+  model: "claude-sonnet-4-20250514", // Use a model that supports web search
+  systemPrompt: `You are a helpful assistant with web search capabilities.
+When users ask about current events, news, real-time data, or recent information, search the web to provide accurate and up-to-date answers.
+Always cite your sources when using web search results.`,
+  // Enable native web search - single API call, citations included!
+  webSearch: true,
   debug: true,
 });
 
@@ -21,6 +24,11 @@ export async function GET() {
   return Response.json({
     status: "ok",
     provider: "anthropic",
-    model: "claude-3-5-haiku-20241022",
+    model: "claude-sonnet-4-20250514",
+    webSearch: {
+      enabled: true,
+      type: "native",
+      note: "Using Claude's native web search (single API call)",
+    },
   });
 }
