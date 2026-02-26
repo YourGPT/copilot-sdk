@@ -1,0 +1,27 @@
+{
+  "name": "ollama-demo-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "server": "tsx src/server.ts",
+    "chat": "tsx src/index.ts chat",
+    "tools": "tsx src/index.ts tools",
+    "vision": "tsx src/index.ts vision",
+    "options": "tsx src/index.ts options"
+  },
+  "dependencies": {
+    "@yourgpt/llm-sdk": "workspace:*",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

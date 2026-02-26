@@ -1,0 +1,356 @@
+---
+title: Ollama
+description: Run LLMs locally with no API keys
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<ProviderHeader
+  provider="ollama"
+  name="Ollama"
+  description="Local AI inference, full privacy"
+/>
+
+Run powerful LLMs locally on your machine. No API keys, no cloud, no costs - just privacy and control.
+
+---
+
+## Setup
+
+### 1. Install Ollama
+
+First, install Ollama on your machine:
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Windows: Download from https://ollama.ai
+```
+
+### 2. Pull a Model
+
+```bash
+# Start Ollama server
+ollama serve
+
+# Pull a model (in another terminal)
+ollama pull llama3.1        # Best for chat & tools (~4.7GB)
+ollama pull llava           # For vision support (~4.7GB)
+ollama pull qwen2.5:1.5b    # Lightweight option (~986MB)
+```
+
+### 3. Install Packages
+
+```bash
+npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk
+```
+
+<Callout type="info">
+**No additional SDK required!** Ollama uses native `fetch` - no `openai` or other provider SDK needed.
+</Callout>
+
+### 4. Usage
+
+```ts
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+
+const ollama = createOllama();
+const model = ollama('llama3.1');
+
+for await (const event of model.stream({
+  messages: [{ id: '1', role: 'user', content: 'Hello!' }],
+})) {
+  if (event.type === 'message:delta') {
+    process.stdout.write(event.content);
+  }
+}
+```
+
+### 5. Streaming (API Route)
+
+```ts title="app/api/chat/route.ts"
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+
+const ollama = createOllama();
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+
+  const model = ollama('llama3.1');
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const event of model.stream({
+        messages,
+        system: 'You are a helpful assistant.',
+      })) {
+        if (event.type === 'message:delta') {
+          controller.enqueue(new TextEncoder().encode(event.content));
+        }
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/plain' },
+  });
+}
+```
+
+---
+
+## Available Models
+
+| Model | Vision | Tools | Context | Size |
+|-------|--------|-------|---------|------|
+| `llama3.1` | ❌ | ✅ | 128k | ~4.7GB |
+| `llama3.2-vision` | ✅ | ✅ | 128k | ~4.7GB |
+| `llava` | ✅ | ❌ | 4k | ~4.7GB |
+| `mistral` | ❌ | ✅ | 8k | ~4.1GB |
+| `mixtral` | ❌ | ✅ | 32k | ~26GB |
+| `qwen2.5:1.5b` | ❌ | ✅ | 32k | ~986MB |
+| `deepseek` | ❌ | ✅ | 16k | ~4GB |
+| `codellama` | ❌ | ❌ | 16k | ~3.8GB |
+
+```ts
+// Use any Ollama model
+ollama('llama3.1')           // General purpose, tool support
+ollama('llava')              // Vision capable
+ollama('mistral')            // Fast, good for coding
+ollama('qwen2.5:1.5b')       // Lightweight, great for testing
+```
+
+---
+
+## Ollama-Specific Options
+
+Ollama supports unique configuration options for fine-tuning model behavior:
+
+```ts
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+
+const ollama = createOllama({
+  baseUrl: 'http://localhost:11434',  // Custom server URL
+  options: {
+    // Context & Performance
+    num_ctx: 8192,           // Context window size
+    num_batch: 512,          // Batch size for processing
+    num_gpu: 1,              // Number of GPUs to use
+
+    // Sampling
+    temperature: 0.7,        // Creativity (0.0-2.0)
+    top_p: 0.9,              // Nucleus sampling
+    top_k: 40,               // Top-k sampling
+
+    // Repetition Control
+    repeat_penalty: 1.1,     // Penalize repetition
+    repeat_last_n: 64,       // Look back window
+
+    // Advanced
+    mirostat: 0,             // Mirostat sampling (0, 1, or 2)
+    mirostat_eta: 0.1,       // Mirostat learning rate
+    mirostat_tau: 5.0,       // Mirostat target entropy
+    seed: 42,                // For reproducible outputs
+  },
+});
+```
+
+---
+
+## Tool Calling
+
+Ollama supports tool calling with compatible models (llama3.1, mistral, qwen2):
+
+```ts
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+
+const ollama = createOllama();
+const model = ollama('llama3.1');
+
+for await (const event of model.stream({
+  messages: [{ id: '1', role: 'user', content: "What's the weather in San Francisco?" }],
+  actions: [
+    {
+      name: 'get_weather',
+      description: 'Get current weather for a location',
+      parameters: {
+        city: { type: 'string', required: true, description: 'City name' },
+      },
+      handler: async ({ city }) => {
+        return { temperature: 65, condition: 'foggy', city };
+      },
+    },
+  ],
+})) {
+  if (event.type === 'action:start') {
+    console.log(`\nTool called: ${event.name}`);
+  }
+  if (event.type === 'action:result') {
+    console.log(`Result: ${JSON.stringify(event.result)}`);
+  }
+  if (event.type === 'message:delta') {
+    process.stdout.write(event.content);
+  }
+}
+```
+
+<Callout type="warn">
+Not all models support tool calling. Use `llama3.1`, `mistral`, or `qwen2` for best results.
+</Callout>
+
+---
+
+## Vision
+
+Use vision-capable models like LLaVA to analyze images:
+
+```ts
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+import { readFileSync } from 'fs';
+
+const ollama = createOllama();
+const model = ollama('llava');
+
+// Read image and convert to base64
+const imageBuffer = readFileSync('./image.png');
+const base64Image = imageBuffer.toString('base64');
+
+for await (const event of model.stream({
+  messages: [
+    {
+      id: '1',
+      role: 'user',
+      content: 'What do you see in this image?',
+      metadata: {
+        attachments: [
+          {
+            type: 'image',
+            data: base64Image,
+            mimeType: 'image/png',
+          },
+        ],
+      },
+    },
+  ],
+})) {
+  if (event.type === 'message:delta') {
+    process.stdout.write(event.content);
+  }
+}
+```
+
+---
+
+## With Copilot UI
+
+Use with the Copilot React components:
+
+```tsx title="app/providers.tsx"
+'use client';
+
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      {children}
+    </CopilotProvider>
+  );
+}
+```
+
+```ts title="app/api/chat/route.ts"
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+
+const ollama = createOllama();
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+  const model = ollama('llama3.1');
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const event of model.stream({ messages })) {
+        if (event.type === 'message:delta') {
+          controller.enqueue(new TextEncoder().encode(event.content));
+        }
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/plain' },
+  });
+}
+```
+
+---
+
+## Why Ollama?
+
+| Benefit | Description |
+|---------|-------------|
+| **Privacy** | All data stays on your machine - nothing sent to external servers |
+| **No API Keys** | No billing, no rate limits, no account required |
+| **Offline** | Works completely offline once models are downloaded |
+| **No Costs** | Run unlimited inferences without paying per token |
+| **Fast Iteration** | No network latency for local development |
+| **Customizable** | Fine-tune with Ollama modelfiles |
+
+<Callout type="info">
+Ollama is perfect for development, testing, privacy-sensitive applications, and air-gapped environments.
+</Callout>
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `llama3.1` | Default model |
+
+---
+
+## Troubleshooting
+
+### Cannot connect to Ollama
+
+```bash
+# Make sure Ollama is running
+ollama serve
+
+# Check if it's responding
+curl http://localhost:11434/api/tags
+```
+
+### Model not found
+
+```bash
+# Pull the required model
+ollama pull llama3.1
+ollama pull llava  # for vision
+```
+
+### Tool calling not working
+
+Not all models support tool calling. Supported models:
+- `llama3.1` ✅
+- `mistral` ✅
+- `qwen2` ✅
+
+Models like `codellama` and `gemma2` don't support tools.
+
+---
+
+## Next Steps
+
+- [OpenAI](/docs/providers/openai) - Cloud-based alternative
+- [Custom Provider](/docs/providers/custom-provider) - Build your own
+- [Examples](https://github.com/YourGPT/copilot-sdk/tree/main/examples/ollama-demo) - Full demo project

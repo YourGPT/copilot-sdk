@@ -23,7 +23,7 @@ Install the SDK and the provider's official SDK. Each provider returns a model i
 
 ### Installation
 
-<Tabs items={['OpenAI / Google / xAI', 'Anthropic']}>
+<Tabs items={['OpenAI / Google / xAI', 'Anthropic', 'Ollama']}>
   <Tab value="OpenAI / Google / xAI">
     ```bash
     npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk openai
@@ -36,6 +36,14 @@ Install the SDK and the provider's official SDK. Each provider returns a model i
     ```bash
     npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk @anthropic-ai/sdk
     ```
+  </Tab>
+  <Tab value="Ollama">
+    ```bash
+    npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk
+    ```
+    <Callout type="info">
+    **No additional SDK needed!** Ollama uses native `fetch` for local inference.
+    </Callout>
   </Tab>
 </Tabs>
 
@@ -99,6 +107,11 @@ const model = google('gemini-2.0-flash');
 import { xai } from '@yourgpt/llm-sdk/xai';
 const model = xai('grok-3-fast');
 
+// Ollama (Local)
+import { createOllama } from '@yourgpt/llm-sdk/ollama';
+const ollama = createOllama();
+const model = ollama('llama3.1');
+
 // Use any model
 const result = await streamText({
   model,
@@ -120,20 +133,22 @@ Your tools, UI, and all frontend code remain unchanged. The SDK normalizes respo
 | Anthropic | `@yourgpt/llm-sdk/anthropic` | `@anthropic-ai/sdk` | `anthropic('claude-3-5-sonnet-20241022')` |
 | Google | `@yourgpt/llm-sdk/google` | `openai` | `google('gemini-2.0-flash')` |
 | xAI | `@yourgpt/llm-sdk/xai` | `openai` | `xai('grok-3-fast')` |
+| Ollama | `@yourgpt/llm-sdk/ollama` | None | `ollama('llama3.1')` |
 
 ---
 
-## Why Only 2 SDKs?
+## Why So Few SDKs?
 
 Most LLM providers now offer **OpenAI-compatible APIs**. This means you only need:
 
 | SDK | Providers |
 |-----|-----------|
-| `openai` | OpenAI, Google Gemini, xAI Grok, Azure OpenAI, Groq, Together AI, Ollama |
+| `openai` | OpenAI, Google Gemini, xAI Grok, Azure OpenAI, Groq, Together AI |
 | `@anthropic-ai/sdk` | Anthropic Claude (native SDK for full features) |
+| None | Ollama (uses native `fetch` for local inference) |
 
 <Callout type="info">
-Google and xAI use OpenAI-compatible endpoints. We automatically configure the correct `baseURL` for each provider.
+Google and xAI use OpenAI-compatible endpoints. Ollama runs locally and needs no external SDK. We automatically configure the correct `baseURL` for each provider.
 </Callout>
 
 ---
@@ -146,3 +161,4 @@ Google and xAI use OpenAI-compatible endpoints. We automatically configure the c
 | Anthropic | Medium | Excellent | $$ | Long context, safety |
 | Google | Fast | Very Good | $ | Multimodal |
 | xAI | Ultra Fast | Excellent | $ | Speed-critical apps |
+| Ollama | Varies | Good-Excellent | Free | Privacy, offline, development |

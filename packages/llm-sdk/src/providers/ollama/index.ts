@@ -3,6 +3,11 @@
  *
  * Wraps the existing OllamaAdapter with provider interface.
  * Ollama runs models locally on your machine.
+ *
+ * Features:
+ * - Tool/function calling support
+ * - Vision support (with LLaVA and other vision models)
+ * - Ollama-specific options (num_ctx, mirostat, etc.)
  */
 
 import { createOllamaAdapter } from "../../adapters/ollama";
@@ -11,6 +16,7 @@ import {
   type AIProvider,
   type ProviderCapabilities,
   type OllamaProviderConfig,
+  type OllamaModelOptions,
 } from "../types";
 
 // ============================================
@@ -36,15 +42,25 @@ const OLLAMA_MODELS: Record<string, ModelCapabilities> = {
     tools: true,
     maxTokens: 8192,
   },
+  "llama3.1": {
+    vision: false,
+    tools: true,
+    maxTokens: 128000,
+  },
+  "llama3.1:70b": {
+    vision: false,
+    tools: true,
+    maxTokens: 128000,
+  },
   "llama3.2": {
     vision: false,
     tools: true,
-    maxTokens: 8192,
+    maxTokens: 128000,
   },
   "llama3.2-vision": {
     vision: true,
     tools: true,
-    maxTokens: 8192,
+    maxTokens: 128000,
   },
 
   // Mistral series
@@ -154,12 +170,17 @@ const DEFAULT_MODEL_CAPS: ModelCapabilities = {
  */
 export function createOllama(config: OllamaProviderConfig = {}): AIProvider {
   const baseUrl = config.baseUrl ?? "http://localhost:11434";
+  const defaultOptions = config.options;
 
   // Create the callable function
-  const providerFn = (modelId: string) => {
+  const providerFn = (modelId: string, modelOptions?: OllamaModelOptions) => {
     return createOllamaAdapter({
       model: modelId,
       baseUrl,
+      // Merge default options with model-specific options
+      options: modelOptions
+        ? { ...defaultOptions, ...modelOptions }
+        : defaultOptions,
     });
   };
 
@@ -197,3 +218,6 @@ export function createOllama(config: OllamaProviderConfig = {}): AIProvider {
 
 // Alias for consistency
 export const createOllamaProvider = createOllama;
+
+// Re-export types for convenience
+export type { OllamaProviderConfig, OllamaModelOptions } from "../types";

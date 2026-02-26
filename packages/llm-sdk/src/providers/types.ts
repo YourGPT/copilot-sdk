@@ -420,10 +420,42 @@ export interface AzureProviderConfig extends BaseProviderConfig {
 }
 
 /**
+ * Ollama model-specific options
+ * These map to Ollama's native API options
+ */
+export interface OllamaModelOptions {
+  /** Context window size (default varies by model) */
+  num_ctx?: number;
+  /** Max tokens to predict (-1 = infinite, -2 = fill context) */
+  num_predict?: number;
+  /** Mirostat sampling (0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0) */
+  mirostat?: 0 | 1 | 2;
+  /** Mirostat learning rate (default: 0.1) */
+  mirostat_eta?: number;
+  /** Mirostat target entropy (default: 5.0) */
+  mirostat_tau?: number;
+  /** Repeat penalty (default: 1.1) */
+  repeat_penalty?: number;
+  /** Random seed for reproducibility (-1 = random) */
+  seed?: number;
+  /** Top-k sampling (default: 40) */
+  top_k?: number;
+  /** Top-p (nucleus) sampling (default: 0.9) */
+  top_p?: number;
+  /** Min-p sampling (default: 0.0) */
+  min_p?: number;
+  /** Stop sequences */
+  stop?: string[];
+  /** Temperature override (also available in config) */
+  temperature?: number;
+}
+
+/**
  * Ollama provider configuration
  */
 export interface OllamaProviderConfig extends BaseProviderConfig {
-  // baseUrl defaults to http://localhost:11434
+  /** Default Ollama-specific model options */
+  options?: OllamaModelOptions;
 }
 
 // ============================================

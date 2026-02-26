@@ -1,0 +1,20 @@
+{
+  "name": "ollama-demo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:client\"",
+    "dev:server": "cd server && pnpm dev",
+    "dev:client": "cd client && pnpm dev",
+    "start:server": "cd server && pnpm start",
+    "build:client": "cd client && pnpm build",
+    "chat": "cd server && pnpm chat",
+    "tools": "cd server && pnpm tools",
+    "vision": "cd server && pnpm vision",
+    "options": "cd server && pnpm options",
+    "server": "cd server && pnpm server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

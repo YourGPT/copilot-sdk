@@ -160,6 +160,7 @@ export type {
   XAIProviderConfig,
   AzureProviderConfig,
   OllamaProviderConfig,
+  OllamaModelOptions,
   ProviderFormatter,
   AnthropicTool,
   AnthropicToolUse,
