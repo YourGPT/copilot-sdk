@@ -29,6 +29,7 @@
   --border: hsl(0 0% 90%);
   --input: hsl(0 0% 90%);
   --ring: hsl(0 0% 0%);
+  --csdk-link-color: #2563eb;
 
   --radius: 0.375rem;
 }
@@ -65,4 +66,5 @@
   --border: hsl(0 0% 20%);
   --input: hsl(0 0% 20%);
   --ring: hsl(0 0% 100%);
+  --csdk-link-color: #60a5fa;
 }

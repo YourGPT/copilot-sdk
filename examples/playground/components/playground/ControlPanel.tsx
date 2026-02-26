@@ -73,6 +73,7 @@ import {
   OPENROUTER_MODELS,
   LOADER_VARIANTS,
 } from "@/lib/constants";
+import { useOpenRouterModels } from "@/hooks/useOpenRouterModels";
 import { WeatherModule } from "./modules/WeatherModule";
 import { StockModule } from "./modules/StockModule";
 import { AlertModule } from "./modules/AlertModule";
@@ -148,18 +149,66 @@ function OpenRouterModelSelector({
   const [open, setOpen] = useState(false);
   const [customModel, setCustomModel] = useState("");
 
-  const isPresetModel = OPENROUTER_MODELS.some((m) => m.id === selectedModel);
+  // Fetch live models from OpenRouter API
+  const { models: liveModels, isLoading } = useOpenRouterModels();
+
+  // Use live models if available, otherwise fallback to static list
+  const availableModels = useMemo(() => {
+    if (liveModels.length > 0) {
+      return liveModels.map((m) => ({
+        id: m.id,
+        name: m.name,
+        provider: m.id.split("/")[0] || "Other",
+      }));
+    }
+    return OPENROUTER_MODELS;
+  }, [liveModels]);
+
+  const isPresetModel = availableModels.some((m) => m.id === selectedModel);
   const useCustom =
     customModel !== "" || (!isPresetModel && selectedModel !== "");
 
   const groupedModels = useMemo(() => {
-    const groups: Record<string, typeof OPENROUTER_MODELS> = {};
-    for (const model of OPENROUTER_MODELS) {
+    // Define popular providers order
+    const popularProviders = [
+      "openrouter",
+      "openai",
+      "anthropic",
+      "google",
+      "x-ai",
+      "meta-llama",
+      "deepseek",
+      "mistralai",
+      "qwen",
+    ];
+
+    const groups: Record<string, typeof availableModels> = {};
+    for (const model of availableModels) {
       if (!groups[model.provider]) groups[model.provider] = [];
       groups[model.provider].push(model);
     }
-    return groups;
-  }, []);
+
+    // Sort providers: popular first, then alphabetically
+    const sortedGroups: Record<string, typeof availableModels> = {};
+
+    // Add popular providers first
+    for (const provider of popularProviders) {
+      if (groups[provider]) {
+        sortedGroups[provider] = groups[provider];
+      }
+    }
+
+    // Add remaining providers alphabetically
+    const remainingProviders = Object.keys(groups)
+      .filter((p) => !popularProviders.includes(p))
+      .sort();
+
+    for (const provider of remainingProviders) {
+      sortedGroups[provider] = groups[provider];
+    }
+
+    return sortedGroups;
+  }, [availableModels]);
 
   // Custom Input
   if (useCustom) {
@@ -178,7 +227,7 @@ function OpenRouterModelSelector({
         <button
           onClick={() => {
             setCustomModel("");
-            onModelChange(OPENROUTER_MODELS[0].id);
+            onModelChange(availableModels[0]?.id || "openrouter/auto");
           }}
           className="px-2 h-9 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 transition-colors"
         >
@@ -200,7 +249,11 @@ function OpenRouterModelSelector({
           <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate">
             {selectedModel}
           </span>
-          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+          {isLoading ? (
+            <CircleDot className="h-3.5 w-3.5 shrink-0 opacity-50 animate-spin" />
+          ) : (
+            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -213,7 +266,9 @@ function OpenRouterModelSelector({
             className="h-8 text-xs"
           />
           <CommandList className="max-h-[200px]">
-            <CommandEmpty>No model found.</CommandEmpty>
+            <CommandEmpty>
+              {isLoading ? "Loading models..." : "No model found."}
+            </CommandEmpty>
             {Object.entries(groupedModels).map(([provider, models]) => (
               <CommandGroup key={provider} heading={provider}>
                 {models.map((model) => (

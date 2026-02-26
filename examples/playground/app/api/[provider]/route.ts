@@ -41,9 +41,9 @@ export async function POST(
       );
     }
 
-    // Get API key from URL query param (client-provided) or fallback to env
+    // Get API key from header (client-provided) or fallback to env
     const url = new URL(request.url);
-    const clientApiKey = url.searchParams.get("key");
+    const clientApiKey = request.headers.get("x-api-key");
     const envVarName = envVarNames[providerId as ProviderId];
     const apiKey = clientApiKey || process.env[envVarName];
 
