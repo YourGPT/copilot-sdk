@@ -1,0 +1,473 @@
+---
+title: MCP-UI Interactive Components
+description: Render rich, interactive UIs from MCP tool results
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[MCP-UI](https://github.com/idosal/mcp-ui) is an extension to the Model Context Protocol that allows MCP tools to return interactive UI components instead of just text. This enables rich experiences like product cards, forms, charts, and more.
+
+## What is MCP-UI?
+
+Traditionally, MCP tools return text or images. MCP-UI extends this by allowing tools to return HTML content that renders directly in the chat interface.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Chat Interface                                             │
+├─────────────────────────────────────────────────────────────┤
+│  User: Show me the latest product                           │
+│                                                             │
+│  Assistant: Here's the product you requested:               │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  ┌───────────┐                                      │   │
+│  │  │  Product  │  Wireless Headphones                 │   │
+│  │  │   Image   │  $99.99                              │   │
+│  │  │           │                                      │   │
+│  │  └───────────┘  [Add to Cart] [View Details]        │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                        ▲                                    │
+│                        │                                    │
+│                   MCP-UI Component                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Resource Types
+
+MCP-UI supports three resource types:
+
+### HTML Content (`text/html`)
+
+Inline HTML rendered in a sandboxed iframe:
+
+```typescript
+// MCP tool returning HTML UI
+return {
+  content: [
+    { type: "text", text: "Here's the product:" },
+    {
+      type: "ui",
+      resource: {
+        uri: "ui://shop/product/123",
+        mimeType: "text/html",
+        content: `
+          <div style="padding: 16px; border: 1px solid #ddd; border-radius: 8px;">
+            <h3>Wireless Headphones</h3>
+            <p>$99.99</p>
+            <button onclick="handleAddToCart()">Add to Cart</button>
+          </div>
+          <script>
+            function handleAddToCart() {
+              window.parent.postMessage({
+                source: "mcp-ui",
+                intent: {
+                  type: "intent",
+                  action: "add_to_cart",
+                  data: { productId: "123", quantity: 1 }
+                }
+              }, "*");
+            }
+          </script>
+        `,
+        metadata: {
+          title: "Product Card",
+          height: "200px",
+        },
+      },
+    },
+  ],
+};
+```
+
+### External URL (`text/uri-list`)
+
+Load content from an external URL:
+
+```typescript
+return {
+  content: [
+    {
+      type: "ui",
+      resource: {
+        uri: "ui://analytics/chart",
+        mimeType: "text/uri-list",
+        content: "https://charts.example.com/embed/sales-2024",
+        metadata: {
+          title: "Sales Chart",
+          height: "400px",
+          width: "100%",
+        },
+      },
+    },
+  ],
+};
+```
+
+### Remote DOM (`application/vnd.mcp-ui.remote-dom`)
+
+Advanced rendering using Remote DOM for more complex interactive UIs:
+
+```typescript
+return {
+  content: [
+    {
+      type: "ui",
+      resource: {
+        uri: "ui://app/dashboard",
+        mimeType: "application/vnd.mcp-ui.remote-dom",
+        content: JSON.stringify({
+          // Remote DOM structure
+          tag: "div",
+          children: [...]
+        }),
+      },
+    },
+  ],
+};
+```
+
+---
+
+## Intent Types
+
+MCP-UI components communicate with the host application using intents sent via `postMessage`. The SDK supports five intent types:
+
+### Tool Intent
+
+Request to call another MCP tool:
+
+```javascript
+// From within the iframe
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "tool",
+    name: "add_to_cart",
+    arguments: { productId: "123", quantity: 1 }
+  }
+}, "*");
+```
+
+### Action Intent
+
+Semantic action for the host app to interpret:
+
+```javascript
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "intent",
+    action: "select_variant",
+    data: { variantId: "blue-xl", productId: "123" }
+  }
+}, "*");
+```
+
+### Prompt Intent
+
+Add text to the chat input:
+
+```javascript
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "prompt",
+    text: "Tell me more about the warranty options"
+  }
+}, "*");
+```
+
+### Notify Intent
+
+Show a notification or toast:
+
+```javascript
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "notify",
+    message: "Added to cart!",
+    level: "success"  // "info" | "success" | "warning" | "error"
+  }
+}, "*");
+```
+
+### Link Intent
+
+Open a URL (with user consent by default):
+
+```javascript
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "link",
+    url: "https://shop.example.com/product/123",
+    newTab: true
+  }
+}, "*");
+```
+
+---
+
+## Handling Intents
+
+Use the `useMCPUIIntents` hook to handle intents from MCP-UI components:
+
+```tsx
+import { useMCPUIIntents } from '@yourgpt/copilot-sdk/react';
+
+function ChatWithMCPUI() {
+  const { handleIntent } = useMCPUIIntents({
+    onToolCall: async (name, args, context) => {
+      // Handle tool calls from UI
+      console.log(`Tool called: ${name}`, args);
+      // The SDK can automatically route this to the MCP server
+    },
+
+    onIntent: (action, data, context) => {
+      // Handle semantic actions
+      switch (action) {
+        case "add_to_cart":
+          addToCart(data.productId, data.quantity);
+          break;
+        case "select_variant":
+          setSelectedVariant(data.variantId);
+          break;
+        default:
+          console.log(`Unknown action: ${action}`);
+      }
+    },
+
+    onPrompt: (text) => {
+      // Pre-fill the chat input
+      setChatInput(text);
+    },
+
+    onNotify: (message, level) => {
+      // Show toast notification
+      toast[level || "info"](message);
+    },
+
+    onLink: (url, newTab) => {
+      // Handle link clicks
+      // Return false to prevent default behavior
+      if (url.startsWith("app://")) {
+        router.push(url.replace("app://", "/"));
+        return false;
+      }
+    },
+  });
+
+  return (
+    <CopilotChat onUIIntent={handleIntent} />
+  );
+}
+```
+
+---
+
+## Security & Sandboxing
+
+MCP-UI content is rendered in sandboxed iframes for security. The default sandbox permissions are:
+
+```typescript
+// Default: allow-scripts allow-forms
+const DEFAULT_MCP_UI_SANDBOX = "allow-scripts allow-forms";
+
+// Restricted: allow-scripts only
+const RESTRICTED_MCP_UI_SANDBOX = "allow-scripts";
+```
+
+### Customizing Sandbox Permissions
+
+```typescript
+// In the MCP tool response
+return {
+  content: [
+    {
+      type: "ui",
+      resource: {
+        uri: "ui://app/form",
+        mimeType: "text/html",
+        content: "<form>...</form>",
+        metadata: {
+          // Custom sandbox permissions
+          sandbox: ["allow-scripts", "allow-forms", "allow-same-origin"],
+        },
+      },
+    },
+  ],
+};
+```
+
+<Callout type="warning">
+  Be careful when adding `allow-same-origin` to the sandbox. This allows the iframe to access the parent's cookies and storage, which may be a security risk for untrusted content.
+</Callout>
+
+### Best Practices
+
+1. **Validate intent data** - Always validate data from intents before using it
+2. **Limit permissions** - Use the minimum sandbox permissions needed
+3. **Verify origins** - Check the source of postMessage events
+4. **Sanitize HTML** - If generating HTML dynamically, sanitize user input
+
+---
+
+## Creating MCP-UI Components
+
+When building MCP servers that return UI, follow these patterns:
+
+### Basic Product Card
+
+```typescript
+function createProductCard(product: Product): MCPUIContent {
+  return {
+    type: "ui",
+    resource: {
+      uri: `ui://shop/product/${product.id}`,
+      mimeType: "text/html",
+      content: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            .card {
+              font-family: system-ui;
+              padding: 16px;
+              border: 1px solid #e0e0e0;
+              border-radius: 8px;
+              max-width: 300px;
+            }
+            .price { font-size: 24px; font-weight: bold; }
+            button {
+              background: #0066cc;
+              color: white;
+              border: none;
+              padding: 8px 16px;
+              border-radius: 4px;
+              cursor: pointer;
+            }
+            button:hover { background: #0052a3; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <img src="${product.imageUrl}" alt="${product.name}" width="100%">
+            <h3>${product.name}</h3>
+            <p class="price">$${product.price}</p>
+            <button onclick="addToCart()">Add to Cart</button>
+          </div>
+          <script>
+            function addToCart() {
+              window.parent.postMessage({
+                source: "mcp-ui",
+                intent: {
+                  type: "intent",
+                  action: "add_to_cart",
+                  data: { productId: "${product.id}", quantity: 1 }
+                }
+              }, "*");
+            }
+          </script>
+        </body>
+        </html>
+      `,
+      metadata: {
+        title: product.name,
+        height: "350px",
+      },
+    },
+  };
+}
+```
+
+### Interactive Form
+
+```typescript
+function createFeedbackForm(): MCPUIContent {
+  return {
+    type: "ui",
+    resource: {
+      uri: "ui://app/feedback",
+      mimeType: "text/html",
+      content: `
+        <form id="feedback" onsubmit="submitForm(event)">
+          <label>Rating:</label>
+          <select name="rating" required>
+            <option value="5">Excellent</option>
+            <option value="4">Good</option>
+            <option value="3">Average</option>
+            <option value="2">Poor</option>
+            <option value="1">Terrible</option>
+          </select>
+
+          <label>Comments:</label>
+          <textarea name="comments" rows="3"></textarea>
+
+          <button type="submit">Submit Feedback</button>
+        </form>
+
+        <script>
+          function submitForm(e) {
+            e.preventDefault();
+            const form = document.getElementById('feedback');
+            const data = Object.fromEntries(new FormData(form));
+
+            window.parent.postMessage({
+              source: "mcp-ui",
+              intent: {
+                type: "tool",
+                name: "submit_feedback",
+                arguments: data
+              }
+            }, "*");
+
+            window.parent.postMessage({
+              source: "mcp-ui",
+              intent: {
+                type: "notify",
+                message: "Feedback submitted!",
+                level: "success"
+              }
+            }, "*");
+          }
+        </script>
+      `,
+      metadata: {
+        height: "250px",
+      },
+    },
+  };
+}
+```
+
+---
+
+## Type Guards & Utilities
+
+The SDK provides utilities for working with MCP-UI content:
+
+```typescript
+import {
+  isMCPUIResourceContent,
+  isMCPUIIntent,
+  isMCPUIMessage,
+  parseMCPUIMessage,
+  DEFAULT_MCP_UI_SANDBOX,
+} from '@yourgpt/copilot-sdk/mcp';
+
+// Check if tool result content is MCP-UI
+if (isMCPUIResourceContent(content)) {
+  renderUIContent(content.resource);
+}
+
+// Parse postMessage data
+window.addEventListener("message", (event) => {
+  const intent = parseMCPUIMessage(event.data);
+  if (intent) {
+    handleIntent(intent);
+  }
+});
+```
