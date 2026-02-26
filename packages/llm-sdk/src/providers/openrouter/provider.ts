@@ -27,191 +27,15 @@ import type {
 } from "../../core/types";
 
 // ============================================
-// Popular Models (subset - OpenRouter has 500+)
+// Model Configuration
 // ============================================
 
-interface OpenRouterModelConfig {
-  vision: boolean;
-  tools: boolean;
-  jsonMode: boolean;
-  maxTokens: number;
-}
-
 /**
- * Popular OpenRouter models with known capabilities.
- * OpenRouter supports 500+ models - any model ID will work,
- * but these have pre-configured capabilities.
+ * OpenRouter supports 500+ models dynamically.
+ * Use fetchOpenRouterModels() to get live model list with accurate capabilities.
+ * This default config is used as fallback for all models.
  */
-const OPENROUTER_MODELS: Record<string, OpenRouterModelConfig> = {
-  // OpenAI
-  "openai/gpt-4o": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/gpt-4o-mini": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/gpt-4-turbo": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/o1": {
-    vision: true,
-    tools: false,
-    jsonMode: false,
-    maxTokens: 128000,
-  },
-  "openai/o1-mini": {
-    vision: true,
-    tools: false,
-    jsonMode: false,
-    maxTokens: 128000,
-  },
-
-  // Anthropic
-  "anthropic/claude-3.5-sonnet": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3.5-sonnet-20241022": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3-opus": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3-sonnet": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3-haiku": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-
-  // Google
-  "google/gemini-pro-1.5": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 1000000,
-  },
-  "google/gemini-flash-1.5": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 1000000,
-  },
-  "google/gemini-2.0-flash-exp": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 1000000,
-  },
-
-  // Meta Llama
-  "meta-llama/llama-3.1-405b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-  "meta-llama/llama-3.1-70b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-  "meta-llama/llama-3.1-8b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-  "meta-llama/llama-3.2-90b-vision-instruct": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-
-  // Mistral
-  "mistralai/mistral-large": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "mistralai/mixtral-8x7b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 32768,
-  },
-  "mistralai/mistral-nemo": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-
-  // DeepSeek
-  "deepseek/deepseek-chat": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 64000,
-  },
-  "deepseek/deepseek-coder": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 64000,
-  },
-
-  // Qwen
-  "qwen/qwen-2.5-72b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-  "qwen/qwen-2-vl-72b-instruct": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 32768,
-  },
-
-  // OpenRouter Auto (magic model)
-  "openrouter/auto": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-};
-
-// Default config for unknown models
-const DEFAULT_MODEL_CONFIG: OpenRouterModelConfig = {
+const DEFAULT_MODEL_CONFIG = {
   vision: true,
   tools: true,
   jsonMode: true,
@@ -302,8 +126,9 @@ export function openrouter(
     return client;
   }
 
-  // Get model config (use default for unknown models)
-  const modelConfig = OPENROUTER_MODELS[modelId] ?? DEFAULT_MODEL_CONFIG;
+  // Use default config for all models
+  // Use fetchOpenRouterModels() to get accurate model-specific capabilities
+  const modelConfig = DEFAULT_MODEL_CONFIG;
 
   return {
     provider: "openrouter",
@@ -571,6 +396,100 @@ function formatMessagesForOpenRouter(messages: CoreMessage[]): any[] {
         return msg;
     }
   });
+}
+
+// ============================================
+// Models API - Fetch available models
+// ============================================
+
+/**
+ * OpenRouter model information from the API
+ */
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  description?: string;
+  pricing: {
+    prompt: string;
+    completion: string;
+  };
+  context_length: number;
+  architecture?: {
+    modality?: string;
+    tokenizer?: string;
+    instruct_type?: string | null;
+  };
+  top_provider?: {
+    context_length: number;
+    max_completion_tokens: number;
+    is_moderated: boolean;
+  };
+  per_request_limits?: {
+    prompt_tokens?: string;
+    completion_tokens?: string;
+  };
+}
+
+/**
+ * Fetch available models from OpenRouter API
+ *
+ * @param apiKey - Optional API key (not required for listing models)
+ * @returns Array of available models
+ *
+ * @example
+ * ```ts
+ * const models = await fetchOpenRouterModels();
+ * console.log(models.map(m => m.id));
+ * ```
+ */
+export async function fetchOpenRouterModels(
+  apiKey?: string,
+): Promise<OpenRouterModel[]> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch("https://openrouter.ai/api/v1/models", {
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch models: ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as { data?: OpenRouterModel[] };
+  return data.data || [];
+}
+
+/**
+ * Search OpenRouter models by name, ID, or provider
+ *
+ * @param query - Search query
+ * @param apiKey - Optional API key
+ * @returns Filtered models matching the query
+ *
+ * @example
+ * ```ts
+ * const claudeModels = await searchOpenRouterModels('claude');
+ * const gptModels = await searchOpenRouterModels('gpt');
+ * ```
+ */
+export async function searchOpenRouterModels(
+  query: string,
+  apiKey?: string,
+): Promise<OpenRouterModel[]> {
+  const models = await fetchOpenRouterModels(apiKey);
+  const lowerQuery = query.toLowerCase();
+
+  return models.filter(
+    (model) =>
+      model.id.toLowerCase().includes(lowerQuery) ||
+      model.name.toLowerCase().includes(lowerQuery),
+  );
 }
 
 // Also export as createOpenRouter for backward compatibility

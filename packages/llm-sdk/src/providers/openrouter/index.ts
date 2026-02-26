@@ -19,8 +19,10 @@
 export {
   openrouter,
   createOpenRouter as createOpenRouterModel,
+  fetchOpenRouterModels,
+  searchOpenRouterModels,
 } from "./provider";
-export type { OpenRouterProviderOptions } from "./provider";
+export type { OpenRouterProviderOptions, OpenRouterModel } from "./provider";
 
 import { createOpenAIAdapter } from "../../adapters/openai";
 import {
@@ -30,134 +32,15 @@ import {
 } from "../types";
 
 // ============================================
-// Model Definitions
+// Model Capabilities
 // ============================================
 
-interface ModelCapabilities {
-  vision: boolean;
-  tools: boolean;
-  jsonMode: boolean;
-  maxTokens: number;
-}
-
 /**
- * Popular OpenRouter models with known capabilities.
- * OpenRouter supports 500+ models - use any valid model ID.
+ * OpenRouter supports 500+ models dynamically.
+ * Use fetchOpenRouterModels() to get live model list with accurate capabilities.
+ * This default is used as fallback for all models.
  */
-const OPENROUTER_MODELS: Record<string, ModelCapabilities> = {
-  // OpenAI
-  "openai/gpt-4o": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/gpt-4o-mini": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/gpt-4-turbo": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "openai/o1": {
-    vision: true,
-    tools: false,
-    jsonMode: false,
-    maxTokens: 128000,
-  },
-
-  // Anthropic
-  "anthropic/claude-3.5-sonnet": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3.5-sonnet-20241022": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3-opus": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-  "anthropic/claude-3-haiku": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 200000,
-  },
-
-  // Google
-  "google/gemini-pro-1.5": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 1000000,
-  },
-  "google/gemini-flash-1.5": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 1000000,
-  },
-
-  // Meta Llama
-  "meta-llama/llama-3.1-405b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-  "meta-llama/llama-3.1-70b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 131072,
-  },
-
-  // Mistral
-  "mistralai/mistral-large": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-  "mistralai/mixtral-8x7b-instruct": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 32768,
-  },
-
-  // DeepSeek
-  "deepseek/deepseek-chat": {
-    vision: false,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 64000,
-  },
-
-  // OpenRouter Auto (magic model - picks best for your prompt)
-  "openrouter/auto": {
-    vision: true,
-    tools: true,
-    jsonMode: true,
-    maxTokens: 128000,
-  },
-};
-
-// Default for unknown models
-const DEFAULT_CAPABILITIES: ModelCapabilities = {
+const DEFAULT_CAPABILITIES = {
   vision: true,
   tools: true,
   jsonMode: true,
@@ -215,30 +98,29 @@ export function createOpenRouter(
     });
   };
 
-  // Get capabilities helper
+  // Get capabilities helper - uses default capabilities for all models
+  // Use fetchOpenRouterModels() to get accurate model-specific capabilities
   const getCapabilities = (modelId: string): ProviderCapabilities => {
-    const model = OPENROUTER_MODELS[modelId] ?? DEFAULT_CAPABILITIES;
-
     return {
-      supportsVision: model.vision,
-      supportsTools: model.tools,
+      supportsVision: DEFAULT_CAPABILITIES.vision,
+      supportsTools: DEFAULT_CAPABILITIES.tools,
       supportsThinking: false,
       supportsStreaming: true,
       supportsPDF: false,
       supportsAudio: false,
       supportsVideo: false,
-      maxTokens: model.maxTokens,
-      supportedImageTypes: model.vision
+      maxTokens: DEFAULT_CAPABILITIES.maxTokens,
+      supportedImageTypes: DEFAULT_CAPABILITIES.vision
         ? ["image/png", "image/jpeg", "image/gif", "image/webp"]
         : [],
-      supportsJsonMode: model.jsonMode,
+      supportsJsonMode: DEFAULT_CAPABILITIES.jsonMode,
       supportsSystemMessages: true,
     };
   };
 
   return createCallableProvider(providerFn, {
     name: "openrouter",
-    supportedModels: Object.keys(OPENROUTER_MODELS),
+    supportedModels: [], // Use fetchOpenRouterModels() to get live model list
     getCapabilities,
   });
 }

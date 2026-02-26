@@ -539,11 +539,11 @@ importers:
         specifier: ^0.5.19
         version: 0.5.19(tailwindcss@4.1.18)
       '@yourgpt/copilot-sdk':
-        specifier: ^1.4.35
-        version: 1.4.35(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: workspace:*
+        version: link:../../packages/copilot-sdk
       '@yourgpt/llm-sdk':
-        specifier: ^1.5.42
-        version: 1.5.42(@anthropic-ai/sdk@0.71.2(zod@3.25.76))(@google/generative-ai@0.24.1)(openai@6.16.0(ws@8.18.0)(zod@3.25.76))
+        specifier: workspace:*
+        version: link:../../packages/llm-sdk
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -3695,33 +3695,6 @@ packages:
     resolution: {integrity: sha512-lrW200hZdbfRtztbygyaq/6jP6AKE8qQN2KvPcJ+x7wiD038YtnYtZ82IMNJ69GJibV7bwL3y9FgK+5w/pYt6g==}
     cpu: [x64]
     os: [win32]
-
-  '@yourgpt/copilot-sdk@1.4.35':
-    resolution: {integrity: sha512-q/WauKxw1GYJVIepYWIurNGRZ6w9npesAk2xzJkSA9AkDA44t532uWdwsC8Cb2GVrxMSskWRuNuxvdU9c/NoAQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      react: ^18.0.0 || ^19.0.0
-      react-dom: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      react:
-        optional: true
-      react-dom:
-        optional: true
-
-  '@yourgpt/llm-sdk@1.5.42':
-    resolution: {integrity: sha512-xw+z+YZ9JwWsLrLc3QLFjN5bRiMssGoMhPkzKFCrClFDeqPPaI+N9qJ/VE9Avf+Aaw3zl8H7b76CVcdddnPJYA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@anthropic-ai/sdk': '>=0.20.0'
-      '@google/generative-ai': '>=0.21.0'
-      openai: '>=4.0.0'
-    peerDependenciesMeta:
-      '@anthropic-ai/sdk':
-        optional: true
-      '@google/generative-ai':
-        optional: true
-      openai:
-        optional: true
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -7711,20 +7684,6 @@ snapshots:
     optionalDependencies:
       '@types/react': 18.3.27
 
-  '@base-ui/react@1.0.0(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@babel/runtime': 7.28.4
-      '@base-ui/utils': 0.2.3(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@floating-ui/react-dom': 2.1.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@floating-ui/utils': 0.2.10
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
-      reselect: 5.1.1
-      tabbable: 6.3.0
-      use-sync-external-store: 1.6.0(react@19.2.3)
-    optionalDependencies:
-      '@types/react': 18.3.27
-
   '@base-ui/utils@0.2.3(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.28.4
@@ -7733,17 +7692,6 @@ snapshots:
       react-dom: 18.3.1(react@18.3.1)
       reselect: 5.1.1
       use-sync-external-store: 1.6.0(react@18.3.1)
-    optionalDependencies:
-      '@types/react': 18.3.27
-
-  '@base-ui/utils@0.2.3(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@babel/runtime': 7.28.4
-      '@floating-ui/utils': 0.2.10
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
-      reselect: 5.1.1
-      use-sync-external-store: 1.6.0(react@19.2.3)
     optionalDependencies:
       '@types/react': 18.3.27
 
@@ -10238,11 +10186,6 @@ snapshots:
       react: 18.3.1
       shiki: 3.20.0
 
-  '@streamdown/code@1.0.1(react@19.2.3)':
-    dependencies:
-      react: 19.2.3
-      shiki: 3.20.0
-
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
@@ -10625,40 +10568,6 @@ snapshots:
 
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
-
-  '@yourgpt/copilot-sdk@1.4.35(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@base-ui/react': 1.0.0(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-avatar': 1.1.11(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-hover-card': 1.1.15(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@radix-ui/react-slot': 1.2.4(@types/react@18.3.27)(react@19.2.3)
-      '@radix-ui/react-tooltip': 1.2.8(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@streamdown/code': 1.0.1(react@19.2.3)
-      class-variance-authority: 0.7.1
-      clsx: 2.1.1
-      html-to-image: 1.11.13
-      html2canvas: 1.4.1
-      lucide-react: 0.561.0(react@19.2.3)
-      streamdown: 2.1.0(react@19.2.3)
-      tailwind-merge: 3.4.0
-      use-stick-to-bottom: 1.1.1(react@19.2.3)
-      zod: 3.25.76
-    optionalDependencies:
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
-    transitivePeerDependencies:
-      - '@types/react'
-      - '@types/react-dom'
-      - supports-color
-
-  '@yourgpt/llm-sdk@1.5.42(@anthropic-ai/sdk@0.71.2(zod@3.25.76))(@google/generative-ai@0.24.1)(openai@6.16.0(ws@8.18.0)(zod@3.25.76))':
-    dependencies:
-      hono: 4.11.0
-      zod: 3.25.76
-    optionalDependencies:
-      '@anthropic-ai/sdk': 0.71.2(zod@3.25.76)
-      '@google/generative-ai': 0.24.1
-      openai: 6.16.0(ws@8.18.0)(zod@3.25.76)
 
   abort-controller@3.0.0:
     dependencies:
@@ -12874,10 +12783,6 @@ snapshots:
     dependencies:
       react: 18.3.1
 
-  lucide-react@0.561.0(react@19.2.3):
-    dependencies:
-      react: 19.2.3
-
   lucide-react@0.562.0(react@19.2.1):
     dependencies:
       react: 19.2.1
@@ -14682,26 +14587,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  streamdown@2.1.0(react@19.2.3):
-    dependencies:
-      clsx: 2.1.1
-      hast-util-to-jsx-runtime: 2.3.6
-      html-url-attributes: 3.0.1
-      marked: 17.0.1
-      react: 19.2.3
-      rehype-harden: 1.1.7
-      rehype-raw: 7.0.0
-      rehype-sanitize: 6.0.0
-      remark-gfm: 4.0.1
-      remark-parse: 11.0.0
-      remark-rehype: 11.1.2
-      remend: 1.1.0
-      tailwind-merge: 3.4.0
-      unified: 11.0.5
-      unist-util-visit: 5.0.0
-    transitivePeerDependencies:
-      - supports-color
-
   strict-event-emitter@0.5.1: {}
 
   string-argv@0.3.2: {}
@@ -15198,10 +15083,6 @@ snapshots:
   use-stick-to-bottom@1.1.1(react@18.3.1):
     dependencies:
       react: 18.3.1
-
-  use-stick-to-bottom@1.1.1(react@19.2.3):
-    dependencies:
-      react: 19.2.3
 
   use-sync-external-store@1.6.0(react@18.3.1):
     dependencies:

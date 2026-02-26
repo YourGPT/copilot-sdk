@@ -46,15 +46,10 @@ export function CopilotSidebar({
   apiKeys,
   loaderVariant,
 }: CopilotSidebarProps) {
-  // Build runtime URL with provider and optional API key
+  // Build runtime URL with provider and model selection
   const runtimeUrl = useMemo(() => {
     const baseUrl = `/playground/api/${selectedProvider}`;
     const params = new URLSearchParams();
-
-    const apiKey = apiKeys[selectedProvider];
-    if (apiKey) {
-      params.set("key", apiKey);
-    }
 
     // Add model param for OpenRouter
     if (selectedProvider === "openrouter" && selectedOpenRouterModel) {
@@ -64,6 +59,16 @@ export function CopilotSidebar({
     const queryString = params.toString();
     return queryString ? `${baseUrl}?${queryString}` : baseUrl;
   }, [selectedProvider, selectedOpenRouterModel, apiKeys]);
+
+  // Pass API key via headers instead of query params (security best practice)
+  const runtimeHeaders = useMemo(() => {
+    const headers: Record<string, string> = {};
+    const apiKey = apiKeys[selectedProvider];
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
+    }
+    return headers;
+  }, [selectedProvider, apiKeys]);
 
   // Error handler - shows toast and logs to console
   const handleError = useCallback((error: Error) => {
@@ -90,6 +95,7 @@ export function CopilotSidebar({
           debug={true}
           key={`${selectedProvider}-${selectedOpenRouterModel}`} // Force re-mount when provider or model changes
           runtimeUrl={runtimeUrl}
+          headers={runtimeHeaders}
           systemPrompt={systemPrompt}
           maxIterations={5}
           onError={handleError}
