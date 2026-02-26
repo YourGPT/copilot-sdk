@@ -21,6 +21,7 @@
     "---AI---",
     "llm-sdk",
     "providers",
+    "mcp",
     "---API Reference---",
     "api-reference"
   ]
