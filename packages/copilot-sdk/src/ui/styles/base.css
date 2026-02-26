@@ -33,6 +33,7 @@
     --input: hsl(240 5.9% 90%);
     --ring: hsl(240 5.9% 10%);
     --radius: 0.5rem;
+    --csdk-link-color: #2563eb;
   }
 
   .dark {
@@ -55,6 +56,7 @@
     --border: hsl(240 3.7% 15.9%);
     --input: hsl(240 3.7% 15.9%);
     --ring: hsl(240 4.9% 83.9%);
+    --csdk-link-color: #60a5fa;
   }
 }
 
@@ -149,3 +151,39 @@
 .csdk-loader-loading-dots {
   animation: csdk-loading-dots 1.4s infinite;
 }
+
+/* Streamdown link-safety-modal (targets streamdown@^2.1.0 internal structure)
+ * Fixes CSS variable inheritance from parent message context.
+ * Users can override via --csdk-dialog-foreground and --csdk-dialog-muted-foreground at :root level.
+ */
+
+/* Backdrop: cover full viewport, center the dialog */
+[data-streamdown="link-safety-modal"] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Dialog card: reset CSS variables to light defaults, constrain width, apply foreground color */
+[data-streamdown="link-safety-modal"] > div {
+  --foreground: var(--csdk-dialog-foreground, 240 10% 3.9%);
+  --muted-foreground: var(--csdk-dialog-muted-foreground, 240 3.8% 46.1%);
+  max-width: min(500px, 90vw);
+  margin: 0;
+  width: 100%;
+  color: hsl(var(--foreground));
+}
+
+/* Dark mode override */
+.dark [data-streamdown="link-safety-modal"] > div,
+:root.dark [data-streamdown="link-safety-modal"] > div {
+  --foreground: var(--csdk-dialog-foreground, 0 0% 98%);
+  --muted-foreground: var(--csdk-dialog-muted-foreground, 0 0% 62.7%);
+}
+
+[data-streamdown="link-safety-modal"] > div .text-muted-foreground {
+  color: hsl(var(--muted-foreground));
+}
+
