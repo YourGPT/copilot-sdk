@@ -20,6 +20,11 @@
       "import": "./dist/ui/index.js",
       "require": "./dist/ui/index.cjs"
     },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js",
+      "require": "./dist/mcp/index.cjs"
+    },
     "./ui/styles.css": "./dist/styles.css",
     "./ui/themes/vercel.css": "./dist/themes/vercel.css",
     "./ui/themes/posthog.css": "./dist/themes/posthog.css",

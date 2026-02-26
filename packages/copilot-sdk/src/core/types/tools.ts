@@ -220,6 +220,43 @@ export interface ToolResponse<T = unknown> {
    * ```
    */
   _aiContent?: AIContent[];
+
+  /**
+   * MCP-UI resources for rendering interactive UI components.
+   * These are extracted from MCP tool results and rendered as iframes.
+   * Not sent to the AI - purely for UI rendering.
+   *
+   * @example
+   * ```typescript
+   * // MCP tool returning UI
+   * return {
+   *   success: true,
+   *   message: 'Product displayed',
+   *   _uiResources: [{
+   *     uri: 'ui://shop/product/123',
+   *     mimeType: 'text/html',
+   *     content: '<div class="product">...</div>',
+   *     metadata: { height: '300px' }
+   *   }]
+   * };
+   * ```
+   */
+  _uiResources?: Array<{
+    uri: string;
+    mimeType:
+      | "text/html"
+      | "text/uri-list"
+      | "application/vnd.mcp-ui.remote-dom";
+    content?: string;
+    blob?: string;
+    metadata?: {
+      title?: string;
+      width?: string;
+      height?: string;
+      sandbox?: string[];
+      className?: string;
+    };
+  }>;
 }
 
 /**

@@ -6,6 +6,7 @@ export default defineConfig({
     "core/index": "src/core/index.ts",
     "react/index": "src/react/index.ts",
     "ui/index": "src/ui/index.ts",
+    "mcp/index": "src/mcp/index.ts",
   },
   format: ["cjs", "esm"],
   dts: true,

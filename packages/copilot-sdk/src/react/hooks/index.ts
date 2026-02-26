@@ -74,3 +74,25 @@ export {
   type UseThreadManagerConfig,
   type UseThreadManagerReturn,
 } from "./useThreadManager";
+
+// MCP (Model Context Protocol) Hooks
+export {
+  useMCPClient,
+  type UseMCPClientConfig,
+  type UseMCPClientReturn,
+  type MCPClientState,
+} from "./useMCPClient";
+export {
+  useMCPTools,
+  type UseMCPToolsConfig,
+  type UseMCPToolsReturn,
+} from "./useMCPTools";
+
+// MCP-UI Hooks (Interactive UI Intent Handling)
+export {
+  useMCPUIIntents,
+  createMessageIntentHandler,
+  createToolIntentHandler,
+  type UseMCPUIIntentsConfig,
+  type UseMCPUIIntentsReturn,
+} from "./useMCPUIIntents";

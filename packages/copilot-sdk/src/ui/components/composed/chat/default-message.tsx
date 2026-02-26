@@ -11,6 +11,7 @@ import {
 } from "../../ui/permission-confirmation";
 import { FollowUpQuestions, parseFollowUps } from "../../ui/follow-up";
 import { Loader } from "../../ui/loader";
+import { MCPUIFrameList } from "../../ui/mcp-ui-frame";
 import type { ChatMessage, MessageAttachment, ToolRenderers } from "./types";
 import type { ToolDefinition, ToolRenderProps } from "../../../../core";
 import CopilotSDKLogo from "../../icons/copilot-sdk-logo";
@@ -319,6 +320,19 @@ export function DefaultMessage({
                 <ToolSteps steps={toolSteps} />
               </div>
             )}
+
+            {/* MCP-UI Resources - Interactive components from MCP tools */}
+            {message.toolExecutions?.map((exec) => {
+              const uiResources = exec.result?._uiResources;
+              if (!uiResources || uiResources.length === 0) return null;
+              return (
+                <MCPUIFrameList
+                  key={`${exec.id}-ui`}
+                  resources={uiResources}
+                  className="mt-2"
+                />
+              );
+            })}
 
             {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
             {pendingApprovalTools && pendingApprovalTools.length > 0 && (

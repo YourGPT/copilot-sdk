@@ -109,9 +109,19 @@ function buildToolResultContentForAI(
     default:
       if (aiContext) {
         // Include context as prefix, then full data (without the control fields)
-        const { _aiResponseMode, _aiContext, _aiContent, ...dataOnly } =
-          typedResult ?? {};
+        const {
+          _aiResponseMode,
+          _aiContext,
+          _aiContent,
+          _uiResources,
+          ...dataOnly
+        } = typedResult ?? {};
         return `${aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
+      }
+      // Strip UI resources from full result - they're for rendering, not for AI
+      if (typedResult?._uiResources) {
+        const { _uiResources, ...dataOnly } = typedResult;
+        return JSON.stringify(dataOnly);
       }
       return JSON.stringify(result);
   }

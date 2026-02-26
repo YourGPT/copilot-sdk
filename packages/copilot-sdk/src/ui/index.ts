@@ -221,6 +221,17 @@ export {
 } from "./components/icons";
 
 // ============================================
+// MCP-UI Components (Interactive UI from MCP tools)
+// ============================================
+export {
+  MCPUIFrame,
+  MCPUIFrameList,
+  type MCPUIFrameListProps,
+} from "./components/ui/mcp-ui-frame";
+// MCPUIFrameProps is exported from mcp/ui module
+export type { MCPUIFrameProps } from "../mcp/ui/types";
+
+// ============================================
 // Utilities
 // ============================================
 export { cn } from "./lib/utils";
