@@ -12,9 +12,15 @@ import {
 import { FollowUpQuestions, parseFollowUps } from "../../ui/follow-up";
 import { Loader } from "../../ui/loader";
 import { MCPUIFrameList } from "../../ui/mcp-ui-frame";
-import type { ChatMessage, MessageAttachment, ToolRenderers } from "./types";
+import type {
+  ChatMessage,
+  MessageAttachment,
+  ToolRenderers,
+  CitationConfig,
+} from "./types";
 import type { ToolDefinition, ToolRenderProps } from "../../../../core";
 import CopilotSDKLogo from "../../icons/copilot-sdk-logo";
+import { SourceGroup, type SourceItem } from "../../ui/source";
 
 type DefaultMessageProps = {
   message: ChatMessage;
@@ -68,6 +74,8 @@ type DefaultMessageProps = {
   followUpClassName?: string;
   /** Custom class for follow-up buttons */
   followUpButtonClassName?: string;
+  /** Citation/Sources configuration */
+  citations?: CitationConfig;
 };
 
 export function DefaultMessage({
@@ -90,17 +98,28 @@ export function DefaultMessage({
   onFollowUpClick,
   followUpClassName,
   followUpButtonClassName,
+  citations = { enabled: true },
 }: DefaultMessageProps) {
   const isUser = message.role === "user";
   const isStreaming = isLastMessage && isLoading;
 
   // Parse follow-up questions from assistant messages
-  const { cleanContent, followUps } = React.useMemo(() => {
-    if (isUser || !message.content) {
-      return { cleanContent: message.content, followUps: [] };
-    }
-    return parseFollowUps(message.content);
-  }, [message.content, isUser]);
+  const { cleanContent: contentWithoutFollowUps, followUps } =
+    React.useMemo(() => {
+      if (isUser || !message.content) {
+        return { cleanContent: message.content, followUps: [] };
+      }
+      return parseFollowUps(message.content);
+    }, [message.content, isUser]);
+
+  // Strip "Sources:" line from AI response (we show them as chips instead)
+  const cleanContent = React.useMemo(() => {
+    if (!contentWithoutFollowUps) return contentWithoutFollowUps;
+    // Remove lines like "Sources: [link](url), ..." or "**Sources:** ..."
+    return contentWithoutFollowUps
+      .replace(/\n*\*{0,2}Sources:?\*{0,2}\s*(\[.+?\]\(.+?\)[,\s]*)+$/gi, "")
+      .trim();
+  }, [contentWithoutFollowUps]);
 
   // Only show follow-ups on the last assistant message when not loading
   const shouldShowFollowUps =
@@ -110,6 +129,99 @@ export function DefaultMessage({
     !isLoading &&
     followUps.length > 0 &&
     onFollowUpClick;
+
+  // Extract sources from web_search tool results OR native citations
+  const sources = React.useMemo((): SourceItem[] => {
+    if (isUser || !citations.enabled) return [];
+
+    const extractedSources: SourceItem[] = [];
+
+    // Helper to add source without duplicates
+    const addSource = (url: string, title?: string, description?: string) => {
+      if (url && !extractedSources.find((s) => s.href === url)) {
+        extractedSources.push({
+          href: url,
+          title: title || getDomainFromUrl(url),
+          description,
+        });
+      }
+    };
+
+    // 1. Check for native web search citations (from metadata.citations)
+    const nativeCitations = (
+      message.metadata as {
+        citations?: Array<{ url: string; title?: string; citedText?: string }>;
+      }
+    )?.citations;
+    if (nativeCitations && Array.isArray(nativeCitations)) {
+      nativeCitations.forEach((citation) => {
+        addSource(citation.url, citation.title, citation.citedText);
+      });
+    }
+
+    // 2. Check tool executions for web_search results (custom tool fallback)
+    message.toolExecutions?.forEach((exec) => {
+      if (
+        exec.name === "web_search" &&
+        exec.status === "completed" &&
+        exec.result
+      ) {
+        const result = exec.result as Record<string, unknown>;
+
+        // Pattern 1: result.data.results (standard format from our providers)
+        const dataObj = result.data as Record<string, unknown> | undefined;
+        if (dataObj?.results && Array.isArray(dataObj.results)) {
+          (
+            dataObj.results as Array<{
+              url: string;
+              title?: string;
+              content?: string;
+            }>
+          ).forEach((r) => {
+            addSource(r.url, r.title, r.content);
+          });
+        }
+
+        // Pattern 2: result.results directly
+        if (result.results && Array.isArray(result.results)) {
+          (
+            result.results as Array<{
+              url: string;
+              title?: string;
+              content?: string;
+            }>
+          ).forEach((r) => {
+            addSource(r.url, r.title, r.content);
+          });
+        }
+
+        // Pattern 3: result.data is WebSearchResponse (results at data level)
+        if (dataObj && !dataObj.results && dataObj.query) {
+          const response = dataObj as {
+            results?: Array<{ url: string; title?: string; content?: string }>;
+          };
+          if (response.results && Array.isArray(response.results)) {
+            response.results.forEach((r) => {
+              addSource(r.url, r.title, r.content);
+            });
+          }
+        }
+      }
+    });
+
+    return extractedSources;
+  }, [message.metadata, message.toolExecutions, isUser, citations.enabled]);
+
+  // Helper to extract domain from URL
+  function getDomainFromUrl(url: string): string {
+    try {
+      return new URL(url).hostname.replace("www.", "");
+    } catch {
+      return url;
+    }
+  }
+
+  const shouldShowSources = citations.enabled && sources.length > 0;
 
   // User message - right aligned, avatar optional
   if (isUser) {
@@ -183,15 +295,22 @@ export function DefaultMessage({
     (exec) => !hasCustomRender(exec.name),
   );
 
+  // Check for native web search citations (from metadata, not custom tool)
+  const hasNativeCitations = !!(message.metadata as { citations?: unknown[] })
+    ?.citations?.length;
+
   // Convert tools without custom render to ToolStepData format
-  const toolSteps = toolsWithoutCustomRender?.map((exec) => ({
-    id: exec.id,
-    name: exec.name,
-    args: exec.args,
-    status: exec.status,
-    result: exec.result,
-    error: exec.error,
-  }));
+  // Hide web_search tool step when we have native citations (already shown as chips)
+  const toolSteps = toolsWithoutCustomRender
+    ?.filter((exec) => !(exec.name === "web_search" && hasNativeCitations))
+    .map((exec) => ({
+      id: exec.id,
+      name: exec.name,
+      args: exec.args,
+      status: exec.status,
+      result: exec.result,
+      error: exec.error,
+    }));
 
   // Assistant message - left aligned with avatar
   return (
@@ -418,6 +537,18 @@ export function DefaultMessage({
                   <AttachmentPreview key={index} attachment={attachment} />
                 ))}
               </div>
+            )}
+
+            {/* Sources/Citations - Rendered below message content as chips */}
+            {shouldShowSources && (
+              <SourceGroup
+                sources={sources}
+                label={citations.label}
+                showFavicon={citations.showFavicon ?? true}
+                numbered={citations.numbered ?? false}
+                maxVisible={citations.maxVisible ?? 6}
+                className={cn("mt-2", citations.className)}
+              />
             )}
 
             {/* Follow-up Questions */}

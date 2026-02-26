@@ -1,4 +1,9 @@
-import type { LLMConfig, StreamEvent } from "../core/stream-events";
+import type {
+  LLMConfig,
+  StreamEvent,
+  WebSearchConfig,
+  Citation,
+} from "../core/stream-events";
 import { generateMessageId } from "../core/utils";
 import type {
   LLMAdapter,
@@ -32,6 +37,11 @@ export interface AnthropicAdapterConfig {
   thinking?: ThinkingConfig;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Enable native web search for Claude.
+   * When true, Claude can search the web to answer questions.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**
@@ -301,30 +311,73 @@ export class AnthropicAdapter implements LLMAdapter {
     }
 
     // Convert actions to Anthropic tool format
-    const tools = request.actions?.map((action) => ({
-      name: action.name,
-      description: action.description,
-      input_schema: {
-        type: "object" as const,
-        properties: action.parameters
-          ? Object.fromEntries(
-              Object.entries(action.parameters).map(([key, param]) => [
-                key,
-                {
-                  type: param.type,
-                  description: param.description,
-                  enum: param.enum,
-                },
-              ]),
-            )
-          : {},
-        required: action.parameters
-          ? Object.entries(action.parameters)
-              .filter(([, param]) => param.required)
-              .map(([key]) => key)
-          : [],
-      },
-    }));
+    const tools: Array<Record<string, unknown>> =
+      request.actions?.map((action) => ({
+        name: action.name,
+        description: action.description,
+        input_schema: {
+          type: "object" as const,
+          properties: action.parameters
+            ? Object.fromEntries(
+                Object.entries(action.parameters).map(([key, param]) => [
+                  key,
+                  {
+                    type: param.type,
+                    description: param.description,
+                    enum: param.enum,
+                  },
+                ]),
+              )
+            : {},
+          required: action.parameters
+            ? Object.entries(action.parameters)
+                .filter(([, param]) => param.required)
+                .map(([key]) => key)
+            : [],
+        },
+      })) || [];
+
+    // Check for web search configuration (from request or adapter config)
+    const webSearchConfig = request.webSearch ?? this.config.webSearch;
+    let serverToolConfiguration: Record<string, unknown> | undefined;
+
+    if (webSearchConfig) {
+      // Add web_search tool (using latest API version)
+      // allowed_callers: ["direct"] is required for Haiku models
+      tools.push({
+        type: "web_search_20260209",
+        name: "web_search",
+        allowed_callers: ["direct"],
+      });
+
+      // Build server tool configuration
+      const wsConfig =
+        typeof webSearchConfig === "object" ? webSearchConfig : {};
+      const webSearchToolConfig: Record<string, unknown> = {};
+
+      if (wsConfig.maxUses !== undefined) {
+        webSearchToolConfig.max_uses = wsConfig.maxUses;
+      }
+
+      if (wsConfig.allowedDomains && wsConfig.allowedDomains.length > 0) {
+        webSearchToolConfig.allowed_domains = wsConfig.allowedDomains;
+      }
+
+      if (wsConfig.blockedDomains && wsConfig.blockedDomains.length > 0) {
+        webSearchToolConfig.blocked_domains = wsConfig.blockedDomains;
+      }
+
+      if (wsConfig.userLocation) {
+        webSearchToolConfig.user_location = wsConfig.userLocation;
+      }
+
+      // Only add server_tool_configuration if we have any config
+      if (Object.keys(webSearchToolConfig).length > 0) {
+        serverToolConfiguration = {
+          web_search: webSearchToolConfig,
+        };
+      }
+    }
 
     // Build request options
     const options: Record<string, unknown> = {
@@ -332,8 +385,13 @@ export class AnthropicAdapter implements LLMAdapter {
       max_tokens: request.config?.maxTokens || this.config.maxTokens || 4096,
       system: systemMessage,
       messages,
-      tools: tools?.length ? tools : undefined,
+      tools: tools.length ? tools : undefined,
     };
+
+    // Add server tool configuration for web search
+    if (serverToolConfiguration) {
+      options.server_tool_configuration = serverToolConfiguration;
+    }
 
     // Add thinking configuration if enabled
     if (this.config.thinking?.type === "enabled") {
@@ -416,6 +474,10 @@ export class AnthropicAdapter implements LLMAdapter {
 
       let isInThinkingBlock = false;
 
+      // Track citations from web search
+      const collectedCitations: Citation[] = [];
+      let citationIndex = 0;
+
       // Track usage - Anthropic sends input_tokens in message_start and output_tokens in message_delta
       let usage:
         | {
@@ -459,11 +521,47 @@ export class AnthropicAdapter implements LLMAdapter {
                 name: event.content_block.name,
                 input: "",
               };
-              yield {
-                type: "action:start",
-                id: currentToolUse.id,
-                name: currentToolUse.name,
+              // Don't emit action events for native web_search - citations handle the UI
+              if (currentToolUse.name !== "web_search") {
+                yield {
+                  type: "action:start",
+                  id: currentToolUse.id,
+                  name: currentToolUse.name,
+                };
+              }
+            } else if (event.content_block.type === "web_search_tool_result") {
+              // Extract citations from web search results
+              const webSearchResult = event.content_block as {
+                type: "web_search_tool_result";
+                tool_use_id: string;
+                content: Array<{
+                  type: "web_search_result";
+                  title: string;
+                  url: string;
+                  page_age?: string | null;
+                }>;
               };
+              if (
+                webSearchResult.content &&
+                Array.isArray(webSearchResult.content)
+              ) {
+                for (const result of webSearchResult.content) {
+                  if (result.type === "web_search_result" && result.url) {
+                    citationIndex++;
+                    const domain = extractDomain(result.url);
+                    collectedCitations.push({
+                      index: citationIndex,
+                      url: result.url,
+                      title: result.title || domain,
+                      domain,
+                      favicon: domain
+                        ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+                        : undefined,
+                    });
+                  }
+                }
+              }
+              // Don't emit action:end for native web_search - citations handle the UI
             } else if (event.content_block.type === "thinking") {
               // Start of thinking block
               isInThinkingBlock = true;
@@ -474,6 +572,32 @@ export class AnthropicAdapter implements LLMAdapter {
           case "content_block_delta":
             if (event.delta.type === "text_delta") {
               yield { type: "message:delta", content: event.delta.text };
+            } else if (event.delta.type === "citations_delta") {
+              // Handle citations_delta events from web search
+              const citationsDelta = event.delta as {
+                type: "citations_delta";
+                citation: {
+                  type: string;
+                  url?: string;
+                  title?: string;
+                  cited_text?: string;
+                };
+              };
+
+              if (citationsDelta.citation?.url) {
+                citationIndex++;
+                const domain = extractDomain(citationsDelta.citation.url);
+                collectedCitations.push({
+                  index: citationIndex,
+                  url: citationsDelta.citation.url,
+                  title: citationsDelta.citation.title || domain,
+                  citedText: citationsDelta.citation.cited_text,
+                  domain,
+                  favicon: domain
+                    ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+                    : undefined,
+                });
+              }
             } else if (event.delta.type === "thinking_delta") {
               // Thinking content delta
               yield { type: "thinking:delta", content: event.delta.thinking };
@@ -487,11 +611,21 @@ export class AnthropicAdapter implements LLMAdapter {
 
           case "content_block_stop":
             if (currentToolUse) {
-              yield {
-                type: "action:args",
-                id: currentToolUse.id,
-                args: currentToolUse.input,
-              };
+              // Don't emit action events for native web_search - citations handle the UI
+              if (currentToolUse.name !== "web_search") {
+                yield {
+                  type: "action:args",
+                  id: currentToolUse.id,
+                  args: currentToolUse.input,
+                };
+                // For server-side tools, emit action:end immediately
+                // as Anthropic handles execution and results come inline
+                yield {
+                  type: "action:end",
+                  id: currentToolUse.id,
+                  name: currentToolUse.name,
+                };
+              }
               currentToolUse = null;
             }
             if (isInThinkingBlock) {
@@ -505,6 +639,13 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
 
+      // Emit citations if we collected any
+      if (collectedCitations.length > 0) {
+        // Deduplicate citations by URL
+        const uniqueCitations = deduplicateCitations(collectedCitations);
+        yield { type: "citation", citations: uniqueCitations };
+      }
+
       // Emit message end
       yield { type: "message:end" };
       yield { type: "done", usage };
@@ -516,6 +657,33 @@ export class AnthropicAdapter implements LLMAdapter {
       };
     }
   }
+}
+
+/**
+ * Extract domain from URL
+ */
+function extractDomain(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Deduplicate citations by URL
+ */
+function deduplicateCitations(citations: Citation[]): Citation[] {
+  const seen = new Map<string, Citation>();
+  let index = 0;
+  for (const citation of citations) {
+    if (!seen.has(citation.url)) {
+      index++;
+      seen.set(citation.url, { ...citation, index });
+    }
+  }
+  return Array.from(seen.values());
 }
 
 /**

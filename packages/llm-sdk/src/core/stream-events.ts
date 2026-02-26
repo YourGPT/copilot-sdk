@@ -18,6 +18,7 @@ export type StreamEventType =
   | "action:end"
   | "tool_calls"
   | "tool:result"
+  | "citation"
   | "loop:iteration"
   | "loop:complete"
   | "error"
@@ -177,6 +178,32 @@ export interface LoopCompleteEvent extends BaseEvent {
 }
 
 /**
+ * Citation from web search (unified format for all providers)
+ */
+export interface Citation {
+  /** Unique citation index (1-based) */
+  index: number;
+  /** Source URL */
+  url: string;
+  /** Page title */
+  title: string;
+  /** Cited text snippet (optional) */
+  citedText?: string;
+  /** Source domain (extracted from URL) */
+  domain?: string;
+  /** Favicon URL (generated from domain) */
+  favicon?: string;
+}
+
+/**
+ * Citation event - web search returned citations
+ */
+export interface CitationEvent extends BaseEvent {
+  type: "citation";
+  citations: Citation[];
+}
+
+/**
  * Message format for done event (API format with snake_case)
  */
 export interface DoneEventMessage {
@@ -228,6 +255,7 @@ export type StreamEvent =
   | ActionEndEvent
   | ToolCallsEvent
   | ToolResultEvent
+  | CitationEvent
   | LoopIterationEvent
   | LoopCompleteEvent
   | ErrorEvent
@@ -420,6 +448,50 @@ export interface AgentLoopConfig {
   maxIterations?: number;
   debug?: boolean;
   enabled?: boolean;
+}
+
+/**
+ * Web search configuration for native provider search
+ *
+ * Enables native web search for supported providers:
+ * - Anthropic: Uses Claude's built-in web search tool
+ * - OpenAI: Uses GPT's web search preview
+ * - Google: Uses Gemini's Google Search grounding
+ *
+ * @example
+ * ```typescript
+ * const runtime = createRuntime({
+ *   provider: createAnthropic({ apiKey: '...' }),
+ *   model: 'claude-sonnet-4-20250514',
+ *   webSearch: true, // Enable with defaults
+ * });
+ *
+ * // Or with configuration
+ * const runtime = createRuntime({
+ *   provider: createOpenAI({ apiKey: '...' }),
+ *   model: 'gpt-4o',
+ *   webSearch: {
+ *     maxUses: 5,
+ *     allowedDomains: ['docs.anthropic.com', 'openai.com'],
+ *   },
+ * });
+ * ```
+ */
+export interface WebSearchConfig {
+  /** Maximum number of search uses per request (default: unlimited) */
+  maxUses?: number;
+  /** Only search these domains (provider-specific support) */
+  allowedDomains?: string[];
+  /** Exclude these domains from search (provider-specific support) */
+  blockedDomains?: string[];
+  /** User location for localized results (Anthropic only) */
+  userLocation?: {
+    type: "approximate";
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
 }
 
 /**

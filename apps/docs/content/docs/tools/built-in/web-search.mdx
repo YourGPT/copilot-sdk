@@ -1,0 +1,338 @@
+---
+title: Web Search
+description: Real-time web search with multi-provider support
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Add real-time web search capabilities to your AI copilot. Search the web for current information, news, and facts.
+
+---
+
+## Quick Start
+
+<Tabs items={['Tree-Shakeable (Recommended)', 'Legacy']}>
+  <Tab value="Tree-Shakeable (Recommended)">
+Import only the provider you need for optimal bundle size (~3KB per provider):
+
+```ts
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { openaiSearch } from '@yourgpt/copilot-sdk/tools/openai';
+
+// Only OpenAI search code is bundled (~2.5KB)
+const webSearch = openaiSearch({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const runtime = createRuntime({
+  provider: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  model: 'gpt-4o',
+  tools: [webSearch],
+});
+```
+  </Tab>
+  <Tab value="Legacy">
+Uses lazy loading, but bundles all provider code:
+
+```ts
+import { createWebSearchTool } from '@yourgpt/copilot-sdk/core';
+
+const webSearch = createWebSearchTool({
+  provider: 'openai',
+  apiKey: process.env.OPENAI_API_KEY,
+});
+```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+**No extra API key needed!** Native providers use your existing OpenAI or Google API key.
+</Callout>
+
+---
+
+## Bundle Size Comparison
+
+| Import Pattern | Bundle Size |
+|----------------|-------------|
+| `@yourgpt/copilot-sdk/tools/tavily` | ~3KB |
+| `@yourgpt/copilot-sdk/tools/openai` | ~2.5KB |
+| `@yourgpt/copilot-sdk/tools/google` | ~2.5KB |
+| `@yourgpt/copilot-sdk/core` (all providers) | ~50KB+ |
+
+**~85% reduction** when using tree-shakeable imports!
+
+---
+
+## Supported Providers
+
+### Native Providers (Recommended)
+
+No third-party API key required - uses your existing LLM API key.
+
+| Provider | Import | Description |
+|----------|--------|-------------|
+| **OpenAI** | `@yourgpt/copilot-sdk/tools/openai` | OpenAI's built-in web search |
+| **Google** | `@yourgpt/copilot-sdk/tools/google` | Google's grounding with Search |
+
+### Third-Party Providers
+
+| Provider | Import | Get API Key |
+|----------|--------|-------------|
+| **Tavily** | `@yourgpt/copilot-sdk/tools/tavily` | [tavily.com](https://tavily.com) |
+| **Serper** | `@yourgpt/copilot-sdk/tools/serper` | [serper.dev](https://serper.dev) |
+| **Brave** | `@yourgpt/copilot-sdk/tools/brave` | [brave.com/search/api](https://brave.com/search/api) |
+| **Exa** | `@yourgpt/copilot-sdk/tools/exa` | [exa.ai](https://exa.ai) |
+| **SearXNG** | `@yourgpt/copilot-sdk/tools/searxng` | Self-hosted |
+
+---
+
+## Provider Examples
+
+<Tabs items={['OpenAI', 'Google', 'Tavily', 'Serper', 'Brave', 'Exa', 'SearXNG']}>
+  <Tab value="OpenAI">
+```ts
+import { openaiSearch } from '@yourgpt/copilot-sdk/tools/openai';
+
+const webSearch = openaiSearch({
+  apiKey: process.env.OPENAI_API_KEY,
+  maxResults: 5,
+  // Optional: domain filtering
+  includeDomains: ['docs.github.com', 'stackoverflow.com'],
+});
+```
+  </Tab>
+  <Tab value="Google">
+```ts
+import { googleSearch } from '@yourgpt/copilot-sdk/tools/google';
+
+const webSearch = googleSearch({
+  apiKey: process.env.GOOGLE_API_KEY, // or GEMINI_API_KEY
+  maxResults: 5,
+});
+```
+  </Tab>
+  <Tab value="Tavily">
+```ts
+import { tavilySearch } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const webSearch = tavilySearch({
+  apiKey: process.env.TAVILY_API_KEY,
+  includeAnswer: true,  // AI-generated summary
+  maxResults: 5,
+  searchDepth: 'basic', // or 'advanced'
+});
+```
+  </Tab>
+  <Tab value="Serper">
+```ts
+import { serperSearch } from '@yourgpt/copilot-sdk/tools/serper';
+
+const webSearch = serperSearch({
+  apiKey: process.env.SERPER_API_KEY,
+  country: 'us',
+  language: 'en',
+  maxResults: 5,
+});
+```
+  </Tab>
+  <Tab value="Brave">
+```ts
+import { braveSearch } from '@yourgpt/copilot-sdk/tools/brave';
+
+const webSearch = braveSearch({
+  apiKey: process.env.BRAVE_API_KEY,
+  country: 'us',
+  maxResults: 5,
+});
+```
+  </Tab>
+  <Tab value="Exa">
+```ts
+import { exaSearch } from '@yourgpt/copilot-sdk/tools/exa';
+
+const webSearch = exaSearch({
+  apiKey: process.env.EXA_API_KEY,
+  searchDepth: 'advanced', // Uses semantic search
+  maxResults: 5,
+});
+```
+  </Tab>
+  <Tab value="SearXNG">
+```ts
+import { searxngSearch } from '@yourgpt/copilot-sdk/tools/searxng';
+
+// Self-hosted - no API key needed
+const webSearch = searxngSearch({
+  baseUrl: 'https://your-searxng-instance.com',
+  maxResults: 5,
+});
+```
+  </Tab>
+</Tabs>
+
+---
+
+## Configuration Options
+
+Each provider has its own config interface. Here are common options:
+
+```ts
+// Tavily example with all options
+import { tavilySearch, type TavilySearchConfig } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const config: TavilySearchConfig = {
+  apiKey: process.env.TAVILY_API_KEY,
+
+  // Search options
+  searchDepth: 'basic' | 'advanced',
+  maxResults: 5,
+
+  // Domain filtering
+  includeDomains: ['docs.github.com'],
+  excludeDomains: ['pinterest.com'],
+
+  // Result options
+  includeAnswer: true,    // AI summary
+  includeImages: false,
+
+  // Request options
+  timeout: 30000,
+};
+```
+
+---
+
+## Domain Filtering
+
+Restrict search to specific domains:
+
+```ts
+import { tavilySearch } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const webSearch = tavilySearch({
+  apiKey: process.env.TAVILY_API_KEY,
+  includeDomains: ['docs.github.com', 'stackoverflow.com'],
+  excludeDomains: ['pinterest.com', 'quora.com'],
+});
+```
+
+---
+
+## Shared Types and Utilities
+
+Import shared types without bundling any provider:
+
+```ts
+import type {
+  WebSearchConfig,
+  WebSearchResponse,
+  WebSearchResult
+} from '@yourgpt/copilot-sdk/tools/web-search';
+
+import {
+  formatSearchResultsForAI,
+  summarizeSearchResults
+} from '@yourgpt/copilot-sdk/tools/web-search';
+```
+
+---
+
+## Use Cases
+
+- **Current events**: "What's the latest news about AI?"
+- **Real-time data**: "What's the current price of Bitcoin?"
+- **Fact checking**: "Who won the 2024 Super Bowl?"
+- **Research**: "What are the best practices for React Server Components?"
+
+---
+
+## Example Conversation
+
+```
+User: "What are the latest developments in AI?"
+
+AI: [Calls web_search tool]
+
+AI: "Based on recent news:
+
+1. **OpenAI launched GPT-5** - Announced last week with improved reasoning
+2. **Google's Gemini 2.0** - Now available with multimodal capabilities
+3. **Anthropic's Claude 4** - Released with enhanced coding abilities
+
+Sources: TechCrunch, The Verge, Ars Technica"
+```
+
+---
+
+## UI Components
+
+Display search results with built-in components:
+
+```tsx
+import { SearchResults, SearchResultsWithAnswer } from '@yourgpt/copilot-sdk/ui';
+
+// Simple results list
+<SearchResults results={searchResults} variant="cards" />
+
+// With AI-generated answer
+<SearchResultsWithAnswer response={webSearchResponse} showAnswer={true} />
+```
+
+### Variants
+
+- `cards` - Full cards with descriptions (default)
+- `list` - Compact numbered list
+- `compact` - Inline citation badges
+
+---
+
+## Full Example
+
+```ts
+// app/api/chat/route.ts
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { tavilySearch } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const webSearch = tavilySearch({
+  apiKey: process.env.TAVILY_API_KEY,
+  includeAnswer: true,
+  maxResults: 5,
+});
+
+const runtime = createRuntime({
+  provider: openai,
+  model: 'gpt-4o',
+  systemPrompt: `You are a helpful assistant with web search capabilities.
+Use web search for current events, news, and real-time information.
+Always cite your sources.`,
+  tools: [webSearch],
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+---
+
+## Comparison with Alternatives
+
+| Feature | OpenAI | Vercel AI | CopilotKit | **Copilot SDK** |
+|---------|--------|-----------|------------|-----------------|
+| Built-in tool | Yes | No | No | **Yes** |
+| Tree-shakeable imports | No | No | No | **Yes** |
+| Native provider support | 1 | 0 | 0 | **2 (OpenAI + Google)** |
+| Third-party providers | 0 | 3 | 1 | **5** |
+| Self-hosted option | No | No | No | **Yes (SearXNG)** |
+| Domain filtering | Yes | No | No | **Yes** |
+| Citation UI | Yes | No | No | **Yes** |
+| Works with any LLM | No | Yes | Yes | **Yes** |
+| No extra API key needed | Yes | No | No | **Yes (native)** |

@@ -189,6 +189,9 @@ export type {
   DoneEventMessage,
   ToolCallInfo,
   TokenUsageRaw,
+  // Web search types
+  WebSearchConfig,
+  Citation,
 } from "./core/stream-events";
 
 // Re-export utility functions

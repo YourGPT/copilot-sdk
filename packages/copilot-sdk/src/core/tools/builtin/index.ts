@@ -24,6 +24,7 @@ import type { ToolDefinition } from "../../types/tools";
 import { screenshotTool, createScreenshotTool } from "./screenshot";
 import { consoleLogsTool, createConsoleLogsTool } from "./console";
 import { networkRequestsTool, createNetworkRequestsTool } from "./network";
+import { webSearchTool, createWebSearchTool } from "./webSearch";
 
 // Re-export individual tools
 export {
@@ -33,6 +34,9 @@ export {
   createConsoleLogsTool,
   networkRequestsTool,
   createNetworkRequestsTool,
+  // Web Search
+  webSearchTool,
+  createWebSearchTool,
 };
 
 /**
@@ -64,5 +68,9 @@ export const builtinTools: Record<string, ToolDefinition> = {
   get_network_requests: {
     name: "get_network_requests",
     ...networkRequestsTool,
+  } as ToolDefinition,
+  web_search: {
+    name: "web_search",
+    ...webSearchTool,
   } as ToolDefinition,
 };

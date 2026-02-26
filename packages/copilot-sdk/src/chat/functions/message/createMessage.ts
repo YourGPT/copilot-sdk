@@ -116,13 +116,39 @@ export function streamStateToMessage(state: StreamingMessageState): UIMessage {
         }))
       : undefined;
 
+  // Convert tool results to toolExecutions format for UI
+  // This enables server-side tool results to be used by components like SourceGroup
+  const toolExecutions =
+    state.toolResults.size > 0
+      ? Array.from(state.toolResults.values()).map((tr) => ({
+          id: tr.id,
+          name: tr.name,
+          args: tr.args ?? {},
+          status: tr.status,
+          result: tr.result,
+          error: tr.error,
+          timestamp: Date.now(),
+        }))
+      : undefined;
+
+  // Build metadata object
+  const metadata: Record<string, unknown> = {};
+  if (toolExecutions) {
+    metadata.toolExecutions = toolExecutions;
+  }
+  if (state.citations && state.citations.length > 0) {
+    metadata.citations = state.citations;
+  }
+
   return {
     id: state.messageId,
-    role: "assistant",
+    role: "assistant" as const,
     content: state.content,
     thinking: state.thinking || undefined,
     toolCalls,
     createdAt: new Date(),
+    // Store tool executions and citations in metadata for UI components
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
 }
 

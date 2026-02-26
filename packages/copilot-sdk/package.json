@@ -33,7 +33,52 @@
     "./ui/themes/supabase.css": "./dist/themes/supabase.css",
     "./ui/themes/twitter.css": "./dist/themes/twitter.css",
     "./ui/themes/catppuccin.css": "./dist/themes/catppuccin.css",
-    "./ui/themes/modern-minimal.css": "./dist/themes/modern-minimal.css"
+    "./ui/themes/modern-minimal.css": "./dist/themes/modern-minimal.css",
+    "./tools/web-search": {
+      "types": "./dist/tools/web-search/index.d.ts",
+      "import": "./dist/tools/web-search/index.js",
+      "require": "./dist/tools/web-search/index.cjs"
+    },
+    "./tools/tavily": {
+      "types": "./dist/tools/tavily/index.d.ts",
+      "import": "./dist/tools/tavily/index.js",
+      "require": "./dist/tools/tavily/index.cjs"
+    },
+    "./tools/exa": {
+      "types": "./dist/tools/exa/index.d.ts",
+      "import": "./dist/tools/exa/index.js",
+      "require": "./dist/tools/exa/index.cjs"
+    },
+    "./tools/serper": {
+      "types": "./dist/tools/serper/index.d.ts",
+      "import": "./dist/tools/serper/index.js",
+      "require": "./dist/tools/serper/index.cjs"
+    },
+    "./tools/brave": {
+      "types": "./dist/tools/brave/index.d.ts",
+      "import": "./dist/tools/brave/index.js",
+      "require": "./dist/tools/brave/index.cjs"
+    },
+    "./tools/searxng": {
+      "types": "./dist/tools/searxng/index.d.ts",
+      "import": "./dist/tools/searxng/index.js",
+      "require": "./dist/tools/searxng/index.cjs"
+    },
+    "./tools/openai": {
+      "types": "./dist/tools/openai/index.d.ts",
+      "import": "./dist/tools/openai/index.js",
+      "require": "./dist/tools/openai/index.cjs"
+    },
+    "./tools/google": {
+      "types": "./dist/tools/google/index.d.ts",
+      "import": "./dist/tools/google/index.js",
+      "require": "./dist/tools/google/index.cjs"
+    },
+    "./tools/anthropic": {
+      "types": "./dist/tools/anthropic/index.d.ts",
+      "import": "./dist/tools/anthropic/index.js",
+      "require": "./dist/tools/anthropic/index.cjs"
+    }
   },
   "files": [
     "dist",
