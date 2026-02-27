@@ -7,13 +7,6 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     rules: {
-      "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unused-vars": "warn",
-      "jsx-a11y/role-has-required-aria-props": "off",
-      "jsx-a11y/aria-props": "off",
-      "jsx-a11y/aria-proptypes": "off",
-      "jsx-a11y/aria-unsupported-elements": "off",
-      "jsx-a11y/role-supports-aria-props": "off",
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/rules-of-hooks": "off",
       "react-hooks/exhaustive-deps": "off",
@@ -21,18 +14,15 @@ const eslintConfig = defineConfig([
       "react-hooks/purity": "off",
       "react-compiler/react-compiler": "off",
       "react-hooks/preserve-manual-memoization": "off",
-      "react/no-unescaped-entities": "off",
-      "react/jsx-no-comment-textnodes": "off",
-      "@next/next/no-img-element": "off",
     }
   },
+  // Override default ignores of eslint-config-next.
   globalIgnores([
+    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
-    "dist/**",
-    "node_modules/**",
   ]),
 ]);
 
