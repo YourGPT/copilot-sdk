@@ -1058,7 +1058,7 @@ export class Runtime {
     const debug = this.config.debug || this.config.agentLoop?.debug;
     const maxIterations = this.config.agentLoop?.maxIterations || 20;
     // Track accumulated usage across iterations (for onFinish callback)
-    let accumulatedUsage: {
+    const accumulatedUsage: {
       prompt_tokens: number;
       completion_tokens: number;
       total_tokens: number;

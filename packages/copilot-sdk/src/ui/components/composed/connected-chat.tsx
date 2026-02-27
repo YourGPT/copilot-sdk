@@ -324,6 +324,7 @@ function CopilotChatBase(
     approveToolExecution,
     rejectToolExecution,
     registeredTools,
+    showNavigationMessages,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -488,16 +489,16 @@ function CopilotChatBase(
   // Extract chat classNames (without thread picker classes)
   const chatClassNames = classNames
     ? {
-        root: classNames.root,
-        header: classNames.header,
-        container: classNames.container,
-        messageList: classNames.messageList,
-        userMessage: classNames.userMessage,
-        assistantMessage: classNames.assistantMessage,
-        input: classNames.input,
-        suggestions: classNames.suggestions,
-        footer: classNames.footer,
-      }
+      root: classNames.root,
+      header: classNames.header,
+      container: classNames.container,
+      messageList: classNames.messageList,
+      userMessage: classNames.userMessage,
+      assistantMessage: classNames.assistantMessage,
+      input: classNames.input,
+      suggestions: classNames.suggestions,
+      footer: classNames.footer,
+    }
     : undefined;
 
   // Build thread picker element (if enabled)
@@ -572,6 +573,7 @@ function CopilotChatBase(
       currentThreadId={threadManager.currentThreadId}
       onSwitchThread={isPersistenceEnabled ? handleSwitchThread : undefined}
       isThreadBusy={isBusy}
+      showNavigationMessages={showNavigationMessages}
     >
       {children}
     </Chat>

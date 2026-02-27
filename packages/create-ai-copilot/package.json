@@ -11,7 +11,7 @@
     "templates"
   ],
   "scripts": {
-    "build": "tsup && chmod +x dist/index.js",
+    "build": "tsup",
     "dev": "tsup --watch",
     "prepublishOnly": "pnpm build"
   },

@@ -179,7 +179,7 @@ export function ThreadPicker({
   newThreadLabel = "New conversation",
   disabled = false,
   loading = false,
-  size = "md",
+  // size = "md",
   className,
   buttonClassName,
   dropdownClassName,

@@ -108,12 +108,12 @@ export interface ToolRendererProps {
     args: Record<string, unknown>;
     /** Current execution status */
     status:
-      | "pending"
-      | "executing"
-      | "completed"
-      | "error"
-      | "failed"
-      | "rejected";
+    | "pending"
+    | "executing"
+    | "completed"
+    | "error"
+    | "failed"
+    | "rejected";
     /** Tool result (available when status is 'completed') */
     result?: unknown;
     /** Error message (available when status is 'error' or 'failed') */
@@ -279,13 +279,13 @@ export type ChatProps = {
   };
   /** Loader variant for typing indicator */
   loaderVariant?:
-    | "dots"
-    | "typing"
-    | "wave"
-    | "terminal"
-    | "text-blink"
-    | "text-shimmer"
-    | "loading-dots";
+  | "dots"
+  | "typing"
+  | "wave"
+  | "terminal"
+  | "text-blink"
+  | "text-shimmer"
+  | "loading-dots";
   /** Font size for messages: 'sm' (14px), 'base' (16px), 'lg' (18px) */
   fontSize?: "sm" | "base" | "lg";
 
@@ -412,4 +412,6 @@ export type ChatProps = {
   onSwitchThread?: (threadId: string) => void;
   /** Whether a thread operation is in progress (disables controls) */
   isThreadBusy?: boolean;
+  /** Whether to show navigation messages (e.g. "Navigate to page") */
+  showNavigationMessages?: boolean;
 };

@@ -70,6 +70,8 @@ export interface CopilotProviderProps {
   maxIterations?: number;
   /** Custom message when max iterations reached (sent to AI as tool result) */
   maxIterationsMessage?: string;
+  /** Enable/disable navigation messages (default: true) */
+  showNavigationMessages?: boolean;
 }
 
 export interface CopilotContextValue {
@@ -122,6 +124,7 @@ export interface CopilotContextValue {
   threadId?: string;
   runtimeUrl: string;
   toolsConfig?: ToolsConfig;
+  showNavigationMessages: boolean;
 }
 
 // ============================================
@@ -156,6 +159,7 @@ export function CopilotProvider({
   debug = false,
   maxIterations,
   maxIterationsMessage,
+  showNavigationMessages = true,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -482,6 +486,7 @@ export function CopilotProvider({
       threadId,
       runtimeUrl,
       toolsConfig,
+      showNavigationMessages,
     }),
     [
       messages,
@@ -509,6 +514,7 @@ export function CopilotProvider({
       threadId,
       runtimeUrl,
       toolsConfig,
+      showNavigationMessages,
     ],
   );
 

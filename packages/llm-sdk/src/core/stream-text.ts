@@ -80,7 +80,7 @@ export async function streamText(
       // Collect data from this step
       let stepText = "";
       const toolCalls: ToolCall[] = [];
-      let currentToolCall: Partial<ToolCall> | null = null;
+      const currentToolCall: Partial<ToolCall> | null = null;
       let stepFinishReason: FinishReason = "stop";
 
       try {
@@ -233,7 +233,7 @@ export async function streamText(
 
   // Consume stream to get final values
   async function consumeStream(): Promise<void> {
-    for await (const _ of createFullStream()) {
+    for await (const _part of createFullStream()) {
       // Just consume to completion
     }
   }

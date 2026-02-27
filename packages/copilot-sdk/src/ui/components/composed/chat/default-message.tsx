@@ -36,13 +36,13 @@ type DefaultMessageProps = {
   isProcessing?: boolean;
   /** Loader variant for typing indicator */
   loaderVariant?:
-    | "dots"
-    | "typing"
-    | "wave"
-    | "terminal"
-    | "text-blink"
-    | "text-shimmer"
-    | "loading-dots";
+  | "dots"
+  | "typing"
+  | "wave"
+  | "terminal"
+  | "text-blink"
+  | "text-shimmer"
+  | "loading-dots";
   /** Registered tools (for accessing tool's render function) */
   registeredTools?: ToolDefinition[];
   /** Custom renderers for tool results (Generative UI) - higher priority than tool.render */
@@ -67,6 +67,8 @@ type DefaultMessageProps = {
   followUpClassName?: string;
   /** Custom class for follow-up buttons */
   followUpButtonClassName?: string;
+  /** Whether to show navigation messages (default: true) */
+  showNavigationMessages?: boolean;
 };
 
 export function DefaultMessage({
@@ -89,6 +91,7 @@ export function DefaultMessage({
   onFollowUpClick,
   followUpClassName,
   followUpButtonClassName,
+  showNavigationMessages = true,
 }: DefaultMessageProps) {
   const isUser = message.role === "user";
   const isStreaming = isLastMessage && isLoading;
@@ -158,13 +161,21 @@ export function DefaultMessage({
     );
   }
 
+  const isNavigationTool = (name: string): boolean => {
+    const navTerms = ["navigate", "router", "location", "redirect", "history"];
+    const lowerName = name.toLowerCase();
+    return navTerms.some((term) => lowerName.includes(term));
+  };
+
   // Separate tool executions into categories
-  const pendingApprovalTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus === "required",
-  );
-  const completedTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus !== "required",
-  );
+  const pendingApprovalTools = message.toolExecutions?.filter((exec) => {
+    if (!showNavigationMessages && isNavigationTool(exec.name)) return false;
+    return exec.approvalStatus === "required";
+  });
+  const completedTools = message.toolExecutions?.filter((exec) => {
+    if (!showNavigationMessages && isNavigationTool(exec.name)) return false;
+    return exec.approvalStatus !== "required";
+  });
 
   // Helper: check if tool has any custom render (toolRenderers or tool.render)
   const hasCustomRender = (toolName: string): boolean => {
@@ -201,8 +212,8 @@ export function DefaultMessage({
         fallback={assistantAvatar.fallback}
         fallbackIcon={
           !assistantAvatar.src &&
-          !assistantAvatar.fallback &&
-          !assistantAvatar.component ? (
+            !assistantAvatar.fallback &&
+            !assistantAvatar.component ? (
             <CopilotSDKLogo className="size-5" />
           ) : undefined
         }
@@ -227,196 +238,196 @@ export function DefaultMessage({
             <span className="text-sm text-muted-foreground">Continuing...</span>
           </div>
         ) : /* Show streaming loader when loading with no content and no tools */
-        isLastMessage &&
-          isLoading &&
-          !cleanContent?.trim() &&
-          !toolsWithCustomRender?.length &&
-          !toolsWithoutCustomRender?.length &&
-          !pendingApprovalTools?.length ? (
-          <div className="rounded-lg bg-muted px-4 py-2">
-            <Loader variant={loaderVariant} size="sm" />
-          </div>
-        ) : (
-          <>
-            {/* Message Content - show FIRST (AI's words before tool calls) */}
-            {cleanContent?.trim() && (
-              <MessageContent
-                className={cn(
-                  "csdk-message-assistant rounded-lg px-4 py-2 bg-muted",
-                  assistantMessageClassName,
-                )}
-                markdown
-                size={size}
-              >
-                {cleanContent}
-              </MessageContent>
-            )}
+          isLastMessage &&
+            isLoading &&
+            !cleanContent?.trim() &&
+            !toolsWithCustomRender?.length &&
+            !toolsWithoutCustomRender?.length &&
+            !pendingApprovalTools?.length ? (
+            <div className="rounded-lg bg-muted px-4 py-2">
+              <Loader variant={loaderVariant} size="sm" />
+            </div>
+          ) : (
+            <>
+              {/* Message Content - show FIRST (AI's words before tool calls) */}
+              {cleanContent?.trim() && (
+                <MessageContent
+                  className={cn(
+                    "csdk-message-assistant rounded-lg px-4 py-2 bg-muted",
+                    assistantMessageClassName,
+                  )}
+                  markdown
+                  size={size}
+                >
+                  {cleanContent}
+                </MessageContent>
+              )}
 
-            {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
-            {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
-              <div className="mt-2 space-y-2">
-                {toolsWithCustomRender.map((exec) => {
-                  // PRIORITY 1: toolRenderers (app-level override)
-                  const Renderer = toolRenderers?.[exec.name];
-                  if (Renderer) {
-                    return (
-                      <Renderer
-                        key={exec.id}
-                        execution={{
-                          id: exec.id,
-                          name: exec.name,
-                          args: exec.args,
-                          status: exec.status,
-                          result: exec.result,
-                          error: exec.error,
-                          approvalStatus: exec.approvalStatus,
-                        }}
-                      />
+              {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
+              {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {toolsWithCustomRender.map((exec) => {
+                    // PRIORITY 1: toolRenderers (app-level override)
+                    const Renderer = toolRenderers?.[exec.name];
+                    if (Renderer) {
+                      return (
+                        <Renderer
+                          key={exec.id}
+                          execution={{
+                            id: exec.id,
+                            name: exec.name,
+                            args: exec.args,
+                            status: exec.status,
+                            result: exec.result,
+                            error: exec.error,
+                            approvalStatus: exec.approvalStatus,
+                          }}
+                        />
+                      );
+                    }
+
+                    // PRIORITY 2: tool's own render function
+                    const toolDef = registeredTools?.find(
+                      (t) => t.name === exec.name,
                     );
-                  }
+                    if (toolDef?.render) {
+                      // Map execution status to ToolRenderProps status
+                      let status: ToolRenderProps["status"] = "pending";
+                      if (exec.status === "executing") status = "executing";
+                      else if (exec.status === "completed") status = "completed";
+                      else if (
+                        exec.status === "error" ||
+                        exec.status === "failed" ||
+                        exec.status === "rejected"
+                      )
+                        status = "error";
 
-                  // PRIORITY 2: tool's own render function
-                  const toolDef = registeredTools?.find(
-                    (t) => t.name === exec.name,
-                  );
-                  if (toolDef?.render) {
-                    // Map execution status to ToolRenderProps status
-                    let status: ToolRenderProps["status"] = "pending";
-                    if (exec.status === "executing") status = "executing";
-                    else if (exec.status === "completed") status = "completed";
-                    else if (
-                      exec.status === "error" ||
-                      exec.status === "failed" ||
-                      exec.status === "rejected"
-                    )
-                      status = "error";
+                      const renderProps: ToolRenderProps = {
+                        status,
+                        args: exec.args,
+                        result: exec.result,
+                        error: exec.error,
+                        toolCallId: exec.id,
+                        toolName: exec.name,
+                      };
+                      const output = toolDef.render(
+                        renderProps,
+                      ) as React.ReactNode;
+                      return (
+                        <React.Fragment key={exec.id}>{output}</React.Fragment>
+                      );
+                    }
 
-                    const renderProps: ToolRenderProps = {
-                      status,
-                      args: exec.args,
-                      result: exec.result,
-                      error: exec.error,
-                      toolCallId: exec.id,
-                      toolName: exec.name,
+                    // Shouldn't reach here since we filtered, but fallback
+                    return null;
+                  })}
+                </div>
+              )}
+
+              {/* Tool Steps (default display for tools without custom renderers) */}
+              {toolSteps && toolSteps.length > 0 && (
+                <div className="mt-2 rounded-lg bg-muted/50 px-3 py-2">
+                  <ToolSteps steps={toolSteps} />
+                </div>
+              )}
+
+              {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
+              {pendingApprovalTools && pendingApprovalTools.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {pendingApprovalTools.map((tool) => {
+                    // Approval callbacks for custom renders
+                    const approvalCallbacks = {
+                      onApprove: (extraData?: Record<string, unknown>) =>
+                        onApproveToolExecution?.(tool.id, extraData),
+                      onReject: (reason?: string) =>
+                        onRejectToolExecution?.(tool.id, reason),
+                      message: tool.approvalMessage,
                     };
-                    const output = toolDef.render(
-                      renderProps,
-                    ) as React.ReactNode;
-                    return (
-                      <React.Fragment key={exec.id}>{output}</React.Fragment>
+
+                    // PRIORITY 1: toolRenderers (app-level override)
+                    const CustomRenderer = toolRenderers?.[tool.name];
+                    if (CustomRenderer) {
+                      return (
+                        <CustomRenderer
+                          key={tool.id}
+                          execution={tool}
+                          approval={approvalCallbacks}
+                        />
+                      );
+                    }
+
+                    // PRIORITY 2: tool's own render function
+                    const toolDef = registeredTools?.find(
+                      (t) => t.name === tool.name,
                     );
-                  }
+                    if (toolDef?.render) {
+                      const renderProps: ToolRenderProps = {
+                        status: "approval-required",
+                        args: tool.args,
+                        result: tool.result,
+                        error: tool.error,
+                        toolCallId: tool.id,
+                        toolName: tool.name,
+                        approval: approvalCallbacks,
+                      };
+                      const output = toolDef.render(
+                        renderProps,
+                      ) as React.ReactNode;
+                      return (
+                        <React.Fragment key={tool.id}>{output}</React.Fragment>
+                      );
+                    }
 
-                  // Shouldn't reach here since we filtered, but fallback
-                  return null;
-                })}
-              </div>
-            )}
-
-            {/* Tool Steps (default display for tools without custom renderers) */}
-            {toolSteps && toolSteps.length > 0 && (
-              <div className="mt-2 rounded-lg bg-muted/50 px-3 py-2">
-                <ToolSteps steps={toolSteps} />
-              </div>
-            )}
-
-            {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
-            {pendingApprovalTools && pendingApprovalTools.length > 0 && (
-              <div className="mt-2 space-y-2">
-                {pendingApprovalTools.map((tool) => {
-                  // Approval callbacks for custom renders
-                  const approvalCallbacks = {
-                    onApprove: (extraData?: Record<string, unknown>) =>
-                      onApproveToolExecution?.(tool.id, extraData),
-                    onReject: (reason?: string) =>
-                      onRejectToolExecution?.(tool.id, reason),
-                    message: tool.approvalMessage,
-                  };
-
-                  // PRIORITY 1: toolRenderers (app-level override)
-                  const CustomRenderer = toolRenderers?.[tool.name];
-                  if (CustomRenderer) {
+                    // PRIORITY 3: Default PermissionConfirmation
                     return (
-                      <CustomRenderer
+                      <PermissionConfirmation
                         key={tool.id}
-                        execution={tool}
-                        approval={approvalCallbacks}
+                        state="pending"
+                        toolName={tool.name}
+                        message={
+                          tool.approvalMessage ||
+                          `This tool wants to execute. Do you approve?`
+                        }
+                        onApprove={(permissionLevel) =>
+                          onApproveToolExecution?.(
+                            tool.id,
+                            undefined,
+                            permissionLevel,
+                          )
+                        }
+                        onReject={(permissionLevel) =>
+                          onRejectToolExecution?.(
+                            tool.id,
+                            undefined,
+                            permissionLevel,
+                          )
+                        }
                       />
                     );
-                  }
+                  })}
+                </div>
+              )}
 
-                  // PRIORITY 2: tool's own render function
-                  const toolDef = registeredTools?.find(
-                    (t) => t.name === tool.name,
-                  );
-                  if (toolDef?.render) {
-                    const renderProps: ToolRenderProps = {
-                      status: "approval-required",
-                      args: tool.args,
-                      result: tool.result,
-                      error: tool.error,
-                      toolCallId: tool.id,
-                      toolName: tool.name,
-                      approval: approvalCallbacks,
-                    };
-                    const output = toolDef.render(
-                      renderProps,
-                    ) as React.ReactNode;
-                    return (
-                      <React.Fragment key={tool.id}>{output}</React.Fragment>
-                    );
-                  }
+              {/* Image Attachments */}
+              {message.attachments && message.attachments.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {message.attachments.map((attachment, index) => (
+                    <AttachmentPreview key={index} attachment={attachment} />
+                  ))}
+                </div>
+              )}
 
-                  // PRIORITY 3: Default PermissionConfirmation
-                  return (
-                    <PermissionConfirmation
-                      key={tool.id}
-                      state="pending"
-                      toolName={tool.name}
-                      message={
-                        tool.approvalMessage ||
-                        `This tool wants to execute. Do you approve?`
-                      }
-                      onApprove={(permissionLevel) =>
-                        onApproveToolExecution?.(
-                          tool.id,
-                          undefined,
-                          permissionLevel,
-                        )
-                      }
-                      onReject={(permissionLevel) =>
-                        onRejectToolExecution?.(
-                          tool.id,
-                          undefined,
-                          permissionLevel,
-                        )
-                      }
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Image Attachments */}
-            {message.attachments && message.attachments.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {message.attachments.map((attachment, index) => (
-                  <AttachmentPreview key={index} attachment={attachment} />
-                ))}
-              </div>
-            )}
-
-            {/* Follow-up Questions */}
-            {shouldShowFollowUps && (
-              <FollowUpQuestions
-                questions={followUps}
-                onSelect={onFollowUpClick!}
-                className={followUpClassName}
-                buttonClassName={followUpButtonClassName}
-              />
-            )}
-          </>
-        )}
+              {/* Follow-up Questions */}
+              {shouldShowFollowUps && (
+                <FollowUpQuestions
+                  questions={followUps}
+                  onSelect={onFollowUpClick!}
+                  className={followUpClassName}
+                  buttonClassName={followUpButtonClassName}
+                />
+              )}
+            </>
+          )}
       </div>
     </Message>
   );

@@ -72,7 +72,7 @@ export const useCopilotChatContext = () => {
   if (!ctx) {
     throw new Error(
       "useCopilotChatContext must be used within CopilotChat. " +
-        "Make sure you're using CopilotChat.Home, CopilotChat.Input, etc. inside <CopilotChat>",
+      "Make sure you're using CopilotChat.Home, CopilotChat.Input, etc. inside <CopilotChat>",
     );
   }
   return ctx;
@@ -541,6 +541,7 @@ function ChatComponent({
   currentThreadId,
   onSwitchThread,
   isThreadBusy,
+  showNavigationMessages = true,
 }: ChatProps) {
   // Merge avatar props with defaults (so user can pass partial config)
   const userAvatar = { fallback: "U", ...userAvatarProp };
@@ -645,10 +646,10 @@ function ChatComponent({
             prev.map((att) =>
               att.id === id
                 ? {
-                    ...att,
-                    status: "error" as const,
-                    error: "Failed to process file",
-                  }
+                  ...att,
+                  status: "error" as const,
+                  error: "Failed to process file",
+                }
                 : att,
             ),
           );
@@ -982,6 +983,7 @@ function ChatComponent({
                         onFollowUpClick={handleFollowUpClick}
                         followUpClassName={followUpClassName}
                         followUpButtonClassName={followUpButtonClassName}
+                        showNavigationMessages={showNavigationMessages}
                       />
                     );
                   })}
