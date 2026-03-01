@@ -19,6 +19,14 @@ import type {
 } from "../../../thread/adapters";
 import { createServerAdapter } from "../../../thread/adapters";
 
+function isNavigationSystemMessage(message: UIMessage): boolean {
+  return (
+    message.role === "system" &&
+    typeof message.content === "string" &&
+    message.content.toLowerCase().includes("navigate")
+  );
+}
+
 // ============================================
 // Persistence Configuration Types
 // ============================================
@@ -324,6 +332,7 @@ function CopilotChatBase(
     approveToolExecution,
     rejectToolExecution,
     registeredTools,
+    showNavigationMessages,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -350,7 +359,11 @@ function CopilotChatBase(
 
   // Filter out tool messages and merge results into parent assistant messages
   const visibleMessages = messages
-    .filter((m: UIMessage) => m.role !== "tool") // Hide tool messages - results merged into assistant
+    .filter(
+      (m: UIMessage) =>
+        m.role !== "tool" &&
+        (showNavigationMessages || !isNavigationSystemMessage(m)),
+    ) // Hide tool messages - results merged into assistant
     .map((m: UIMessage) => {
       // For assistant messages with tool_calls, merge results
       let messageToolExecutions: ToolExecutionData[] | undefined;
