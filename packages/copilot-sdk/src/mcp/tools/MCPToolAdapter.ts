@@ -12,6 +12,7 @@ import type {
   MCPTextContent,
   MCPImageContent,
   MCPUIContent,
+  MCPResourceContent,
 } from "../types";
 import type { MCPUIResource } from "../ui/types";
 import type {
@@ -234,15 +235,30 @@ export class MCPToolAdapter {
           break;
         }
 
-        case "resource":
+        case "resource": {
           // Handle embedded resource content
-          if ("text" in content.resource && content.resource.text) {
-            textParts.push(content.resource.text);
+          // Check if this is a UI resource (uri starts with ui://)
+          // MCP servers return type: "resource" with ui:// URIs per MCP spec
+          const res = (content as MCPResourceContent).resource;
+          if (res.uri?.startsWith("ui://")) {
+            // This is a UI resource - extract for rendering
+            uiResources.push({
+              uri: res.uri,
+              mimeType:
+                (res.mimeType as MCPUIContent["resource"]["mimeType"]) ||
+                "text/html",
+              content: res.text, // MCP uses "text" field, normalize to "content"
+              blob: res.blob,
+            });
+          } else if (res.text) {
+            // Regular resource with text content
+            textParts.push(res.text);
           }
           break;
+        }
 
         case "ui": {
-          // Handle MCP-UI content
+          // Handle MCP-UI content (non-standard but supported for compatibility)
           const uiContent = content as MCPUIContent;
           uiResources.push({
             uri: uiContent.resource.uri,
