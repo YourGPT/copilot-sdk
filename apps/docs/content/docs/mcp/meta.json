@@ -1,12 +1,5 @@
 {
   "title": "MCP Integration",
   "icon": "Plug",
-  "pages": [
-    "index",
-    "connecting",
-    "react-hooks",
-    "mcp-ui",
-    "ui-components",
-    "advanced"
-  ]
+  "pages": ["usage", "ui"]
 }

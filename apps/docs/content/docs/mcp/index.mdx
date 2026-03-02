@@ -1,26 +1,74 @@
 ---
-title: Overview
+title: MCP Integration
 description: Connect to MCP servers and use their tools in your AI copilot
 ---
 
+import { Cards, Card } from 'fumadocs-ui/components/card';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The YourGPT Copilot SDK provides built-in support for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), enabling your AI copilot to connect to MCP servers and use their tools seamlessly.
+Extend your copilot with external tools using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). MCP tools work alongside your [custom tools](/docs/tools) and integrate seamlessly with `CopilotProvider`.
+
+---
+
+<Cards>
+  <Card title="Usage" href="/docs/mcp/usage">
+    React hooks, transports, multi-server, and error handling.
+  </Card>
+  <Card title="MCP-UI" href="/docs/mcp/ui">
+    Render interactive UIs like forms, charts, and product cards.
+  </Card>
+</Cards>
+
+---
 
 ## What is MCP?
 
 MCP (Model Context Protocol) is an open standard that allows AI assistants to connect to external tools and data sources. With MCP, your copilot can:
 
 - **Access external services** - GitHub, Slack, databases, APIs
-- **Execute local tools** - File systems, code execution, system commands
+- **Execute remote tools** - Search, scraping, e-commerce, SEO tools
 - **Display interactive UIs** - Forms, charts, product cards via MCP-UI
 
 ---
 
-## Quick Start
+## How It Works
 
-The fastest way to get started is with the `useMCPTools` hook, which handles connection management and automatically registers tools with the CopilotProvider.
+MCP tools integrate with `CopilotProvider` just like your custom tools:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  CopilotProvider                                                        │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                                                                   │  │
+│  │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐        │  │
+│  │  │ useMCPTools │────▶│ registerTool│────▶│   AI gets   │        │  │
+│  │  │   (hook)    │     │  (internal) │     │  all tools  │        │  │
+│  │  └─────────────┘     └─────────────┘     └─────────────┘        │  │
+│  │        │                                        │                │  │
+│  │        ▼                                        ▼                │  │
+│  │  ┌─────────────┐                         ┌─────────────┐        │  │
+│  │  │ MCP Server  │◀────── tool call ───────│ CopilotChat │        │  │
+│  │  │  (GitHub)   │─────── result ─────────▶│             │        │  │
+│  │  └─────────────┘                         └─────────────┘        │  │
+│  │                                                                   │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**The flow:**
+1. **Connect** - `useMCPTools` connects to an MCP server and discovers available tools
+2. **Register** - Tools are automatically registered with `CopilotProvider` (via `registerTool`)
+3. **Use** - AI sees MCP tools alongside your custom tools and calls them when relevant
+4. **Execute** - The SDK routes the call to the MCP server and returns the result
+
+<Callout type="info">
+MCP tools work exactly like [custom tools](/docs/tools) — they're just discovered from external servers instead of defined in your code.
+</Callout>
+
+---
+
+## Quick Start
 
 ```tsx
 import { CopilotProvider, useMCPTools } from '@yourgpt/copilot-sdk/react';
@@ -29,52 +77,98 @@ import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
 function App() {
   return (
     <CopilotProvider runtimeUrl="/api/chat">
-      <GitHubMCP />
-      <CopilotChat />
+      <Chat />
     </CopilotProvider>
   );
 }
 
-function GitHubMCP() {
-  const { isConnected, toolDefinitions } = useMCPTools({
-    name: "github",
+function Chat() {
+  // Connects in background and registers tools automatically
+  useMCPTools({
+    name: "mcp360",
     transport: "http",
-    url: "https://mcp.github.com",
-    headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
-    autoConnect: true,
+    url: "https://api.mcp360.ai/mcp",
+    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
   });
 
-  if (!isConnected) return <div>Connecting to GitHub...</div>;
-  return <div>{toolDefinitions.length} GitHub tools available</div>;
+  return <CopilotChat />;
 }
 ```
 
 <Callout type="info">
-  When tools are registered with `useMCPTools`, they automatically become available to the AI assistant in your chat.
+The `useMCPTools` hook must be called inside `CopilotProvider`. It connects in the background — the chat is usable immediately, and tools become available when ready.
 </Callout>
 
 ---
 
-## How It Works
+## Combining with Custom Tools
 
-```
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│                 │      │                  │      │                 │
-│   Your App      │─────▶│  MCP Client      │─────▶│  MCP Server     │
-│   (React)       │      │  (SDK)           │      │  (Remote/Local) │
-│                 │◀─────│                  │◀─────│                 │
-└─────────────────┘      └──────────────────┘      └─────────────────┘
-        │                        │
-        │                        │ Tools are automatically
-        │                        │ registered with CopilotProvider
-        │                        │
-        └────────────────────────┘
+MCP tools work alongside your custom tools:
+
+```tsx
+function App() {
+  return (
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      tools={[
+        {
+          name: "get_user",
+          description: "Get current user info",
+          handler: async () => ({ name: "John", role: "admin" }),
+        },
+      ]}
+    >
+      <Chat />
+    </CopilotProvider>
+  );
+}
+
+function Chat() {
+  useMCPTools({
+    name: "mcp360",
+    transport: "http",
+    url: "https://api.mcp360.ai/mcp",
+    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+  });
+
+  // AI now has: get_user + all mcp360_* tools
+  return <CopilotChat />;
+}
 ```
 
-1. **Connect** - Your app connects to an MCP server using the SDK
-2. **Discover** - The SDK fetches available tools from the server
-3. **Register** - Tools are automatically registered with CopilotProvider
-4. **Use** - The AI assistant can call these tools during conversations
+---
+
+## MCP Server Options
+
+<Tabs items={['MCP360 Gateway', 'Direct Connection']}>
+  <Tab value="MCP360 Gateway">
+    [MCP360](https://mcp360.ai) provides 100+ pre-built MCP tools through a single connection.
+
+    ```tsx
+    useMCPTools({
+      name: "mcp360",
+      transport: "http",
+      url: "https://api.mcp360.ai/mcp",
+      headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+    });
+    ```
+
+    **Includes:** [Web search](https://mcp360.ai/mcps/google-search), [scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and more.
+
+    Best for: Teams wanting multiple integrations through a single API key
+  </Tab>
+  <Tab value="Direct Connection">
+    ```tsx
+    useMCPTools({
+      name: "github",
+      transport: "http",
+      url: "https://mcp.github.com",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    ```
+    Best for: Single-purpose integrations (GitHub, Slack, etc.)
+  </Tab>
+</Tabs>
 
 ---
 
@@ -93,67 +187,8 @@ function GitHubMCP() {
 
 ---
 
-## Transport Types
-
-Choose the transport type based on your MCP server:
-
-<Tabs items={['HTTP (Recommended)', 'SSE', 'Stdio']}>
-  <Tab value="HTTP (Recommended)">
-    ```typescript
-    // For most remote MCP servers
-    const config = {
-      name: "github",
-      transport: "http",
-      url: "https://mcp.github.com",
-      headers: { Authorization: `Bearer ${token}` },
-    };
-    ```
-    Best for: Remote API-based MCP servers
-  </Tab>
-  <Tab value="SSE">
-    ```typescript
-    // For servers that stream responses
-    const config = {
-      name: "analytics",
-      transport: "sse",
-      url: "https://mcp.analytics.com/events",
-    };
-    ```
-    Best for: Real-time data streaming
-  </Tab>
-  <Tab value="Stdio">
-    ```typescript
-    // For local MCP servers (coming soon)
-    const config = {
-      name: "filesystem",
-      transport: "stdio",
-      command: "npx",
-      args: ["-y", "@anthropic/filesystem-mcp-server"],
-    };
-    ```
-    Best for: Local tool execution
-  </Tab>
-</Tabs>
-
----
-
 ## Next Steps
 
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-  <a href="/docs/mcp/connecting" className="block p-4 border rounded-lg hover:border-primary transition-colors">
-    <h3 className="font-semibold mb-1">Connecting to Servers</h3>
-    <p className="text-sm text-muted-foreground">Learn about transport options and connection management</p>
-  </a>
-  <a href="/docs/mcp/react-hooks" className="block p-4 border rounded-lg hover:border-primary transition-colors">
-    <h3 className="font-semibold mb-1">React Hooks</h3>
-    <p className="text-sm text-muted-foreground">useMCPClient, useMCPTools, and useMCPUIIntents</p>
-  </a>
-  <a href="/docs/mcp/mcp-ui" className="block p-4 border rounded-lg hover:border-primary transition-colors">
-    <h3 className="font-semibold mb-1">MCP-UI Components</h3>
-    <p className="text-sm text-muted-foreground">Render interactive UIs from MCP tools</p>
-  </a>
-  <a href="/docs/mcp/advanced" className="block p-4 border rounded-lg hover:border-primary transition-colors">
-    <h3 className="font-semibold mb-1">Advanced Patterns</h3>
-    <p className="text-sm text-muted-foreground">Multi-server, tool chaining, and elicitation</p>
-  </a>
-</div>
+- [Usage](/docs/mcp/usage) - React hooks, transports, and connection management
+- [MCP-UI](/docs/mcp/ui) - Interactive UI components and pre-built React components
+- [Tools](/docs/tools) - Learn about custom tools that work alongside MCP

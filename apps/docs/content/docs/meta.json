@@ -13,6 +13,7 @@
     "chat",
     "smart-ai-context",
     "tools",
+    "mcp",
     "chat-history",
     "server",
     "customizations",
@@ -21,7 +22,6 @@
     "---AI---",
     "llm-sdk",
     "providers",
-    "mcp",
     "---API Reference---",
     "api-reference"
   ]

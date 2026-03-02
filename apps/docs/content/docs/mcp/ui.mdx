@@ -1,0 +1,216 @@
+---
+title: MCP-UI
+description: Render interactive UI components from MCP tools
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[MCP-UI](https://github.com/idosal/mcp-ui) extends MCP to allow tools to return interactive HTML components like product cards, forms, and charts.
+
+## How It Works
+
+```
+User: "Show me the latest product"
+  ↓
+MCP Tool returns HTML UI
+  ↓
+┌─────────────────────────────────────────┐
+│  Wireless Headphones - $99.99           │
+│  [Add to Cart] [View Details]           │
+└─────────────────────────────────────────┘
+  ↓
+User clicks "Add to Cart" → Intent sent to your app
+```
+
+---
+
+## Handling Intents
+
+Use `useMCPUIIntents` to handle user interactions from MCP-UI components:
+
+```tsx
+import { CopilotProvider, useMCPTools, useMCPUIIntents } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+function App() {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      <Chat />
+    </CopilotProvider>
+  );
+}
+
+function Chat() {
+  useMCPTools({
+    name: "shop",
+    transport: "http",
+    url: "/api/mcp",
+  });
+
+  const { handleIntent } = useMCPUIIntents({
+    onIntent: (action, data) => {
+      if (action === "add_to_cart") {
+        addToCart(data.productId, data.quantity);
+      }
+    },
+    onNotify: (message, level) => {
+      toast[level || "info"](message);
+    },
+    onPrompt: (text) => {
+      setChatInput(text);
+    },
+    onLink: (url, newTab) => {
+      if (url.startsWith("app://")) {
+        router.push(url.replace("app://", "/"));
+        return false; // Prevent default navigation
+      }
+    },
+  });
+
+  return <CopilotChat onUIIntent={handleIntent} />;
+}
+```
+
+### Intent Types
+
+| Type | Handler | Description |
+|------|---------|-------------|
+| `tool` | `onToolCall` | Call another MCP tool |
+| `intent` | `onIntent` | Semantic action for your app |
+| `prompt` | `onPrompt` | Add text to chat input |
+| `notify` | `onNotify` | Show notification |
+| `link` | `onLink` | Open a URL |
+
+---
+
+## Pre-built Components
+
+The SDK includes ready-to-use components for displaying MCP connection status.
+
+### MCPPanel
+
+Complete connection management panel:
+
+```tsx
+import { MCPPanel } from '@yourgpt/copilot-sdk/ui';
+
+<MCPPanel
+  state={mcp.state}
+  onConnect={mcp.connect}
+  onDisconnect={mcp.disconnect}
+  isLoading={mcp.isLoading}
+  title="MCP360"
+  collapsible
+/>
+```
+
+### MCPStatus
+
+Simple connection status indicator:
+
+```tsx
+import { MCPStatus } from '@yourgpt/copilot-sdk/ui';
+
+<MCPStatus
+  state={mcp.state.connectionState}
+  serverName={mcp.state.serverInfo?.name}
+  size="md"
+  showLabel={true}
+/>
+```
+
+| State | Color | Label |
+|-------|-------|-------|
+| `disconnected` | Gray | "Disconnected" |
+| `connecting` | Yellow | "Connecting..." |
+| `connected` | Green | "Connected" |
+| `error` | Red | "Error" |
+
+### MCPToolList
+
+Display available tools:
+
+```tsx
+import { MCPToolList } from '@yourgpt/copilot-sdk/ui';
+
+<MCPToolList
+  tools={mcp.state.tools}
+  maxVisible={10}
+  showSchema={true}
+  onToolClick={(tool) => console.log(tool.name)}
+/>
+```
+
+---
+
+## Creating MCP-UI Components
+
+When building MCP servers, return UI content like this:
+
+```typescript
+// MCP tool returning a product card
+return {
+  content: [
+    { type: "text", text: "Here's the product:" },
+    {
+      type: "ui",
+      resource: {
+        uri: "ui://shop/product/123",
+        mimeType: "text/html",
+        content: `
+          <div style="padding: 16px; border: 1px solid #ddd;">
+            <h3>Wireless Headphones</h3>
+            <p>$99.99</p>
+            <button onclick="addToCart()">Add to Cart</button>
+          </div>
+          <script>
+            function addToCart() {
+              window.parent.postMessage({
+                source: "mcp-ui",
+                intent: {
+                  type: "intent",
+                  action: "add_to_cart",
+                  data: { productId: "123", quantity: 1 }
+                }
+              }, "*");
+            }
+          </script>
+        `,
+        metadata: { title: "Product", height: "200px" },
+      },
+    },
+  ],
+};
+```
+
+### Sending Intents from UI
+
+```javascript
+// From within the iframe
+window.parent.postMessage({
+  source: "mcp-ui",
+  intent: {
+    type: "intent",          // or "tool", "prompt", "notify", "link"
+    action: "add_to_cart",
+    data: { productId: "123" }
+  }
+}, "*");
+```
+
+---
+
+## Security
+
+MCP-UI content runs in sandboxed iframes. Default permissions: `allow-scripts allow-forms`.
+
+```typescript
+// Custom sandbox permissions in metadata
+metadata: {
+  sandbox: ["allow-scripts", "allow-forms", "allow-same-origin"],
+}
+```
+
+<Callout type="warning">
+Be careful with `allow-same-origin` - it allows iframe access to parent cookies.
+</Callout>

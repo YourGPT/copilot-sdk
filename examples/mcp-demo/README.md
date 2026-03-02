@@ -162,8 +162,32 @@ MCP-UI tools return content arrays with both text and UI resources:
 }
 ```
 
+## Using MCP360 Gateway
+
+Instead of the local mock MCP server, you can connect to [MCP360](https://mcp360.ai) to access 100+ pre-built MCP tools including web search, scraping, SEO tools, and more.
+
+1. Get your API key at [mcp360.ai](https://mcp360.ai)
+
+2. Update your `.env.local`:
+
+   ```
+   MCP360_API_KEY=your-mcp360-api-key
+   NEXT_PUBLIC_MCP_SERVER_URL=https://api.mcp360.ai/mcp
+   ```
+
+3. The demo will now connect to MCP360 instead of the local server.
+
+**MCP360 Tools Include:**
+
+- Web search and scraping
+- SEO tools (keyword research, SERP tracking)
+- E-commerce data (Amazon, Google Shopping)
+- Domain tools (WHOIS, DNS)
+- And 100+ more integrations
+
 ## Learn More
 
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [MCP-UI GitHub](https://github.com/idosal/mcp-ui)
+- [MCP360 Gateway](https://mcp360.ai)
 - [YourGPT Copilot SDK Documentation](https://copilot-sdk.yourgpt.ai)

@@ -49,10 +49,21 @@ function Toast({
   );
 }
 
+// Preset MCP server options
+const MCP_PRESETS = {
+  local: { name: "Local Mock Server", url: "/api/mcp" },
+  mcp360: { name: "MCP360 Gateway", url: "https://api.mcp360.ai/mcp" },
+};
+
 function MCPStatusPanel() {
   // Read from env or fallback to local
   const [mcpUrl, setMcpUrl] = useState(
     process.env.NEXT_PUBLIC_MCP_SERVER_URL || "/api/mcp",
+  );
+  const [selectedPreset, setSelectedPreset] = useState<string>(
+    process.env.NEXT_PUBLIC_MCP_SERVER_URL?.includes("mcp360")
+      ? "mcp360"
+      : "local",
   );
   const [notifications, setNotifications] = useState<
     Array<{ id: string; message: string; level: string }>
@@ -168,6 +179,42 @@ function MCPStatusPanel() {
       {/* Connection Panel */}
       <div className="p-4 bg-card rounded-lg border border-border space-y-4">
         <h2 className="text-lg font-semibold">MCP Connection</h2>
+
+        <div className="space-y-2">
+          <label className="text-sm text-muted-foreground">Server Preset</label>
+          <div className="flex gap-2">
+            {Object.entries(MCP_PRESETS).map(([key, preset]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setSelectedPreset(key);
+                  setMcpUrl(preset.url);
+                }}
+                disabled={isConnected}
+                className={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                  selectedPreset === key
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-secondary text-secondary-foreground border-border hover:border-primary/50"
+                } disabled:opacity-50`}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+          {selectedPreset === "mcp360" && (
+            <p className="text-xs text-muted-foreground">
+              Get API key at{" "}
+              <a
+                href="https://mcp360.ai"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                mcp360.ai
+              </a>
+            </p>
+          )}
+        </div>
 
         <div className="space-y-2">
           <label className="text-sm text-muted-foreground">
