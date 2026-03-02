@@ -356,6 +356,18 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * ```
    */
   completedTitle?: string | ((args: TParams) => string);
+
+  /**
+   * Whether this tool's execution messages should be hidden in the default chat UI.
+   *
+   * If `true`, the tool still executes normally, but its execution messages are not shown
+   * in the default chat UI.
+   *
+   * This does NOT disable the tool.
+   *
+   * Default behavior is visible (`undefined` or `false`).
+   */
+  hidden?: boolean;
   /** JSON Schema for input parameters */
   inputSchema: ToolInputSchema;
   /** Handler function (optional for client tools registered on server) */
@@ -664,6 +676,9 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   /** Title shown after completion */
   completedTitle?: string | ((args: TParams) => string);
 
+  /** Whether this tool's execution messages should be hidden in the default chat UI */
+  hidden?: boolean;
+
   /** JSON Schema for input parameters */
   inputSchema?: ToolInputSchema;
   /** Handler function */
@@ -718,6 +733,7 @@ export function tool<TParams = Record<string, unknown>>(
     title: config.title,
     executingTitle: config.executingTitle,
     completedTitle: config.completedTitle,
+    hidden: config.hidden,
     // Schema and handlers
     inputSchema: config.inputSchema ?? {
       type: "object",

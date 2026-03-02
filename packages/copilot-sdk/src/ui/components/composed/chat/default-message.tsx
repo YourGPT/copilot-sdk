@@ -158,12 +158,18 @@ export function DefaultMessage({
     );
   }
 
+  // Helper: check whether a tool should be hidden in the default UI
+  const isToolHidden = (toolName: string): boolean => {
+    const toolDef = registeredTools?.find((t) => t.name === toolName);
+    return toolDef?.hidden === true;
+  };
+
   // Separate tool executions into categories
   const pendingApprovalTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus === "required",
+    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec.name),
   );
   const completedTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus !== "required",
+    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec.name),
   );
 
   // Helper: check if tool has any custom render (toolRenderers or tool.render)
