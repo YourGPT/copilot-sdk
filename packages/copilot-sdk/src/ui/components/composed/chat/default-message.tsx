@@ -271,12 +271,18 @@ export function DefaultMessage({
     );
   }
 
-  // Separate tool executions into categories
+  // Helper: check if a tool is hidden (shouldn't appear in UI)
+  const isToolHidden = (toolName: string): boolean => {
+    const toolDef = registeredTools?.find((t) => t.name === toolName);
+    return toolDef?.hidden === true;
+  };
+
+  // Separate tool executions into categories (excluding hidden tools)
   const pendingApprovalTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus === "required",
+    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec.name),
   );
   const completedTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus !== "required",
+    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec.name),
   );
 
   // Helper: check if tool has any custom render (toolRenderers or tool.render)
@@ -440,18 +446,20 @@ export function DefaultMessage({
               </div>
             )}
 
-            {/* MCP-UI Resources - Interactive components from MCP tools */}
-            {message.toolExecutions?.map((exec) => {
-              const uiResources = exec.result?._uiResources;
-              if (!uiResources || uiResources.length === 0) return null;
-              return (
-                <MCPUIFrameList
-                  key={`${exec.id}-ui`}
-                  resources={uiResources}
-                  className="mt-2"
-                />
-              );
-            })}
+            {/* MCP-UI Resources - Interactive components from MCP tools (excluding hidden) */}
+            {message.toolExecutions
+              ?.filter((exec) => !isToolHidden(exec.name))
+              .map((exec) => {
+                const uiResources = exec.result?._uiResources;
+                if (!uiResources || uiResources.length === 0) return null;
+                return (
+                  <MCPUIFrameList
+                    key={`${exec.id}-ui`}
+                    resources={uiResources}
+                    className="mt-2"
+                  />
+                );
+              })}
 
             {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
             {pendingApprovalTools && pendingApprovalTools.length > 0 && (

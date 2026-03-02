@@ -368,6 +368,45 @@ function CartTool({
 }
 
 // ===========================================
+// Hidden Tool Example
+// ===========================================
+
+/**
+ * Example of a hidden tool that executes but doesn't show in the UI.
+ * Useful for navigation, analytics, or background operations.
+ */
+function NavigationTool() {
+  useTool({
+    name: "navigate",
+    description:
+      "Navigate to a page section on the dashboard. Use this to help users find features.",
+    hidden: true, // This tool won't show in the chat UI
+    inputSchema: {
+      type: "object",
+      properties: {
+        section: {
+          type: "string",
+          enum: ["counter", "cart", "settings", "tools"],
+          description: "The dashboard section to navigate to",
+        },
+      },
+      required: ["section"],
+    },
+    handler: async ({ section }: { section: string }) => {
+      // In a real app, this would scroll to or highlight the section
+      console.log(`[Hidden Tool] Navigating to: ${section}`);
+      return {
+        success: true,
+        section,
+        message: `Navigated to ${section} section`,
+      };
+    },
+  });
+
+  return null;
+}
+
+// ===========================================
 // Built-in Tools Components
 // ===========================================
 
@@ -535,6 +574,9 @@ export function DashboardTools({
       {toolsEnabled.updateCart && (
         <CartTool dashboardState={dashboardState} actions={actions} />
       )}
+
+      {/* Hidden tool example - always enabled but invisible in UI */}
+      <NavigationTool />
 
       {/* Built-in tools - screenshot and console logs */}
       {toolsEnabled.captureScreenshot && <ScreenshotTool />}

@@ -37,6 +37,14 @@ export interface ToolConfig<TParams extends z.ZodType, TResult = unknown> {
 
   /** Function to execute when the tool is called */
   execute: (params: z.infer<TParams>, context: ToolContext) => Promise<TResult>;
+
+  /**
+   * Hide this tool's execution from the chat UI.
+   * When true, tool calls and results won't be displayed to the user,
+   * but the tool will still execute normally.
+   * @default false
+   */
+  hidden?: boolean;
 }
 
 /**
@@ -72,6 +80,7 @@ export function tool<TParams extends z.ZodType, TResult = unknown>(
     description: config.description,
     parameters: config.parameters,
     execute: config.execute,
+    hidden: config.hidden,
   };
 }
 
