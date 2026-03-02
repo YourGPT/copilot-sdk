@@ -148,6 +148,13 @@ export interface Tool<TParams = unknown, TResult = unknown> {
   parameters: z.ZodType<TParams>;
   /** Execute function */
   execute: (params: TParams, context: ToolContext) => Promise<TResult>;
+  /**
+   * Hide this tool's execution from the chat UI.
+   * When true, tool calls and results won't be displayed to the user,
+   * but the tool will still execute normally.
+   * @default false
+   */
+  hidden?: boolean;
 }
 
 /**

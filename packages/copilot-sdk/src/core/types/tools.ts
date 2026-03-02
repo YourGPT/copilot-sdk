@@ -406,6 +406,14 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   available?: boolean;
 
   /**
+   * Hide this tool's execution from the chat UI.
+   * When true, tool calls and results won't be displayed to the user,
+   * but the tool will still execute normally.
+   * @default false
+   */
+  hidden?: boolean;
+
+  /**
    * Require user approval before execution.
    * Can be:
    * - `true`: Always require approval
@@ -712,6 +720,8 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   render?: (props: ToolRenderProps<TParams>) => unknown;
   /** Whether the tool is available */
   available?: boolean;
+  /** Hide this tool from chat UI display */
+  hidden?: boolean;
   /** Require user approval before execution */
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
   /** Custom message shown in the approval UI */
@@ -764,6 +774,7 @@ export function tool<TParams = Record<string, unknown>>(
     handler: config.handler,
     render: config.render,
     available: config.available,
+    hidden: config.hidden,
     needsApproval: config.needsApproval,
     approvalMessage: config.approvalMessage,
     aiResponseMode: config.aiResponseMode,
