@@ -48,6 +48,34 @@ export interface ChatResponse {
 }
 
 /**
+ * Tool result from server
+ */
+export interface ToolResultData {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+  _aiContext?: string;
+}
+
+/**
+ * Citation from web search (unified format for all providers)
+ */
+export interface Citation {
+  /** Unique citation index (1-based) */
+  index: number;
+  /** Source URL */
+  url: string;
+  /** Page title */
+  title: string;
+  /** Cited text snippet (optional) */
+  citedText?: string;
+  /** Source domain (extracted from URL) */
+  domain?: string;
+  /** Favicon URL (generated from domain) */
+  favicon?: string;
+}
+
+/**
  * Stream chunk types
  */
 export type StreamChunk =
@@ -58,7 +86,28 @@ export type StreamChunk =
   | { type: "tool_calls"; toolCalls: unknown[]; assistantMessage: unknown }
   | { type: "source:add"; source: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; messages?: unknown[]; requiresAction?: boolean };
+  | { type: "done"; messages?: unknown[]; requiresAction?: boolean }
+  // Tool action events (from llm-sdk agent-loop)
+  | { type: "action:start"; id: string; name: string }
+  | { type: "action:args"; id: string; args: string }
+  | {
+      type: "action:end";
+      id: string;
+      name: string;
+      result?: ToolResultData;
+      error?: string;
+    }
+  | { type: "tool:result"; id: string; name: string; result: ToolResultData }
+  // Loop events
+  | { type: "loop:iteration"; iteration: number; maxIterations: number }
+  | {
+      type: "loop:complete";
+      iterations: number;
+      maxIterationsReached?: boolean;
+      aborted?: boolean;
+    }
+  // Citation event (from native web search)
+  | { type: "citation"; citations: Citation[] };
 
 /**
  * ChatTransport interface

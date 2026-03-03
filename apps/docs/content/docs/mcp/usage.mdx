@@ -1,0 +1,337 @@
+---
+title: Usage
+description: Connect to MCP servers and use tools in your React application
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Provider-Level Config
+
+The simplest way to add MCP servers — configure them directly on `CopilotProvider`:
+
+```tsx
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+function App() {
+  return (
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      mcpServers={[
+        {
+          name: "mcp360",
+          transport: "http",
+          url: "https://api.mcp360.ai/mcp",
+          headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+        },
+        {
+          name: "github",
+          transport: "http",
+          url: "https://mcp.github.com",
+          headers: { Authorization: `Bearer ${githubToken}` },
+        },
+      ]}
+    >
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+All servers connect automatically and tools are registered with the AI.
+
+### MCPServerConfig Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | Required | Unique identifier for this server |
+| `transport` | `"http" \| "sse"` | Required | Transport type |
+| `url` | `string` | Required | Server URL |
+| `headers` | `Record<string, string>` | `{}` | Custom HTTP headers |
+| `timeout` | `number` | `30000` | Request timeout in ms |
+| `prefixToolNames` | `boolean` | `true` | Prefix tools with server name |
+
+---
+
+## useMCPTools Hook
+
+For more control, use the hook directly. Connects to an MCP server and registers tools with `CopilotProvider`.
+
+```tsx
+import { CopilotProvider, useMCPTools } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+function App() {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      <Chat />
+    </CopilotProvider>
+  );
+}
+
+function Chat() {
+  useMCPTools({
+    name: "mcp360",
+    transport: "http",
+    url: "https://api.mcp360.ai/mcp",
+    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+  });
+
+  return <CopilotChat />;
+}
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | Required | Unique identifier for this connection |
+| `transport` | `"http" \| "sse"` | Required | Transport type |
+| `url` | `string` | Required | Server URL |
+| `headers` | `Record<string, string>` | `{}` | Custom HTTP headers |
+| `autoConnect` | `boolean` | `true` | Connect on mount |
+| `prefixToolNames` | `boolean` | `true` | Prefix tools with client name |
+| `timeout` | `number` | `30000` | Request timeout in ms |
+
+### Return Values
+
+The hook returns values you can use for connection status, manual control, or custom UI:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isConnected` | `boolean` | Whether connected to the server |
+| `isLoading` | `boolean` | Whether connection is in progress |
+| `toolDefinitions` | `ToolDefinition[]` | Available tools (same format as custom tools) |
+| `state` | `MCPClientState` | Full connection state including errors |
+| `connect` | `() => Promise` | Manually connect to server |
+| `disconnect` | `() => Promise` | Disconnect from server |
+| `callTool` | `(name, args) => Promise` | Call a tool directly |
+
+```tsx
+// Example: using return values for custom UI
+const { isConnected, isLoading, toolDefinitions } = useMCPTools({...});
+```
+
+---
+
+## Transport Types
+
+<Tabs items={['HTTP (Recommended)', 'SSE']}>
+  <Tab value="HTTP (Recommended)">
+```tsx
+useMCPTools({
+  name: "mcp360",
+  transport: "http",
+  url: "https://api.mcp360.ai/mcp",
+  headers: { Authorization: `Bearer ${token}` },
+  timeout: 30000,
+});
+```
+Best for most remote MCP servers.
+  </Tab>
+  <Tab value="SSE">
+```tsx
+useMCPTools({
+  name: "realtime",
+  transport: "sse",
+  url: "https://mcp.example.com/events",
+});
+```
+Best for real-time streaming connections.
+  </Tab>
+</Tabs>
+
+---
+
+## Multiple MCP Servers
+
+Call the hook multiple times for multiple servers. All tools are registered with the same `CopilotProvider`:
+
+```tsx
+function Chat() {
+  useMCPTools({
+    name: "github",
+    transport: "http",
+    url: "https://mcp.github.com",
+    headers: { Authorization: `Bearer ${githubToken}` },
+  });
+
+  useMCPTools({
+    name: "slack",
+    transport: "http",
+    url: "https://mcp.slack.com",
+    headers: { Authorization: `Bearer ${slackToken}` },
+  });
+
+  // AI has access to: github_create_issue, slack_send_message, etc.
+  return <CopilotChat />;
+}
+```
+
+<Callout type="info">
+With `prefixToolNames: true` (default), tools are namespaced to avoid conflicts: `github_create_issue`, `slack_send_message`.
+</Callout>
+
+---
+
+## Error Handling
+
+Use `onError` callback or check `state.connectionState`:
+
+```tsx
+const { state } = useMCPTools({
+  name: "server",
+  transport: "http",
+  url: "https://mcp.example.com",
+  onError: (error) => {
+    console.error(`MCP Error: ${error.message}`);
+  },
+});
+
+// state.connectionState: "disconnected" | "connecting" | "connected" | "error"
+// state.error: string | undefined
+```
+
+### Common Error Codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| `-32700` | Parse Error | Invalid JSON |
+| `-32600` | Invalid Request | Request is not valid |
+| `-32601` | Method Not Found | Tool doesn't exist |
+| `-32602` | Invalid Params | Invalid arguments |
+
+---
+
+## Elicitation (Approval Flows)
+
+MCP servers can request user approval for sensitive operations:
+
+```tsx
+function Chat() {
+  const [pending, setPending] = useState(null);
+
+  useMCPTools({
+    name: "secure",
+    transport: "http",
+    url: "https://mcp.secure.com",
+    onElicitationRequest: async (request) => {
+      return new Promise((resolve) => {
+        setPending({ request, resolve });
+      });
+    },
+  });
+
+  return (
+    <>
+      <CopilotChat />
+      {pending && (
+        <ApprovalDialog
+          message={pending.request.message}
+          onApprove={() => {
+            pending.resolve({ requestId: pending.request.requestId, accepted: true });
+            setPending(null);
+          }}
+          onReject={() => {
+            pending.resolve({ requestId: pending.request.requestId, accepted: false });
+            setPending(null);
+          }}
+        />
+      )}
+    </>
+  );
+}
+```
+
+---
+
+## Direct Client Usage
+
+For non-React environments or manual control.
+
+### Single Server
+
+```typescript
+import { createMCPClient } from '@yourgpt/copilot-sdk/mcp';
+
+const client = createMCPClient({
+  name: "github",
+  transport: "http",
+  url: "https://mcp.github.com",
+  headers: { Authorization: `Bearer ${token}` },
+});
+
+await client.connect();
+const tools = client.toToolDefinitions();
+const result = await client.callTool("create_issue", { title: "Bug" });
+await client.disconnect();
+```
+
+### Multiple Servers (MCPClientManager)
+
+Manage multiple MCP connections with unified state:
+
+```typescript
+import { createMCPClientManager } from '@yourgpt/copilot-sdk/mcp';
+
+const manager = createMCPClientManager([
+  { name: "github", transport: "http", url: "https://mcp.github.com" },
+  { name: "slack", transport: "http", url: "https://mcp.slack.com" },
+  { name: "mcp360", transport: "http", url: "https://api.mcp360.ai/mcp" },
+]);
+
+// Connect all servers at once
+await manager.connectAll();
+
+// Get aggregated state
+const state = manager.getState();
+// { allConnected: true, totalToolCount: 47, anyError: false }
+
+// Get all tools from all servers
+const tools = manager.getAllToolDefinitions();
+
+// Call a tool on a specific server
+const result = await manager.callTool("github", "create_issue", { title: "Bug" });
+
+// Disconnect all
+await manager.disconnectAll();
+```
+
+### MCPClientManager Methods
+
+| Method | Description |
+|--------|-------------|
+| `connectAll()` | Connect all enabled servers |
+| `disconnectAll()` | Disconnect all servers |
+| `getState()` | Get aggregated state (`allConnected`, `totalToolCount`, etc.) |
+| `getAllToolDefinitions()` | Get tools from all connected servers |
+| `callTool(server, name, args)` | Call a tool on a specific server |
+| `getClient(name)` | Get a specific client instance |
+
+<Callout type="info">
+When using direct clients, you'll need to manually pass tools to your runtime.
+</Callout>
+
+---
+
+## MCP360 Gateway
+
+Access 100+ tools through a single connection with [MCP360](https://mcp360.ai):
+
+```tsx
+function Chat() {
+  useMCPTools({
+    name: "mcp360",
+    transport: "http",
+    url: "https://api.mcp360.ai/mcp",
+    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+  });
+
+  return <CopilotChat />;
+}
+```
+
+<Callout type="info">
+**More than just search** — MCP360 includes [web search](https://mcp360.ai/mcps/google-search), [scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and more. [Explore all tools →](https://mcp360.ai)
+</Callout>

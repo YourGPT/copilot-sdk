@@ -1,0 +1,36 @@
+{
+  "name": "mcp-demo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "mcp:filesystem": "npx -y @anthropic-ai/mcp-filesystem-server /tmp/mcp-test"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "@yourgpt/copilot-sdk": "workspace:*",
+    "@yourgpt/llm-sdk": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.563.0",
+    "next": "16.1.5",
+    "next-themes": "^0.4.6",
+    "openai": "^6.16.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.5",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

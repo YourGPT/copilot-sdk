@@ -140,6 +140,26 @@ export {
   initialAgentLoopState,
 } from "../chat";
 
+// MCP (Model Context Protocol) Hooks
+export {
+  useMCPClient,
+  useMCPTools,
+  type UseMCPClientConfig,
+  type UseMCPClientReturn,
+  type UseMCPToolsConfig,
+  type UseMCPToolsReturn,
+  type MCPClientState,
+} from "./hooks";
+
+// MCP-UI Hooks (Interactive UI Intent Handling)
+export {
+  useMCPUIIntents,
+  createMessageIntentHandler,
+  createToolIntentHandler,
+  type UseMCPUIIntentsConfig,
+  type UseMCPUIIntentsReturn,
+} from "./hooks";
+
 // Re-export core types for convenience
 export type {
   Message,

@@ -54,6 +54,7 @@ function MyTools() {
 | `parameters` | Yes | Zod schema for inputs |
 | `handler` | Yes | Async function that runs |
 | `requiresApproval` | No | Ask user before running |
+| `hidden` | No | Hide tool from chat UI (still executes) |
 
 ---
 
@@ -112,6 +113,43 @@ useTools({
 
 <Callout type="warning">
 Use `requiresApproval: true` for destructive or sensitive actions.
+</Callout>
+
+---
+
+## Hidden Tools
+
+Hide tool execution from the chat UI while still executing normally:
+
+```tsx
+useTools({
+  navigate: {
+    description: 'Navigate to a page in the app',
+    parameters: z.object({ path: z.string() }),
+    hidden: true, // Won't show in chat UI
+    handler: async ({ path }) => {
+      router.push(path);
+      return { navigated: path };
+    },
+  },
+
+  track_event: {
+    description: 'Track analytics event',
+    parameters: z.object({
+      event: z.string(),
+      properties: z.record(z.any()).optional(),
+    }),
+    hidden: true, // Silent background operation
+    handler: async ({ event, properties }) => {
+      analytics.track(event, properties);
+      return { tracked: true };
+    },
+  },
+});
+```
+
+<Callout type="info">
+Hidden tools are useful for navigation, analytics, or background operations that shouldn't clutter the chat UI.
 </Callout>
 
 ---

@@ -81,10 +81,43 @@ export {
   screenshotTool,
   consoleLogsTool,
   networkRequestsTool,
+  webSearchTool,
   // Factory functions for custom configs
   createScreenshotTool,
   createConsoleLogsTool,
   createNetworkRequestsTool,
+  createWebSearchTool,
   // All tools as a ToolSet
   builtinTools,
 } from "./builtin";
+
+// Web Search module (multi-provider search)
+export {
+  executeWebSearch,
+  getProvider,
+  getAvailableProviders,
+  formatSearchResultsForAI,
+  summarizeSearchResults,
+  // Native providers (no third-party API needed)
+  openaiProvider,
+  googleProvider,
+  anthropicProvider,
+  // Third-party providers
+  tavilyProvider,
+  serperProvider,
+  braveProvider,
+  searxngProvider,
+  exaProvider,
+} from "./webSearch";
+
+export type {
+  // Web Search types
+  WebSearchProvider,
+  WebSearchConfig,
+  WebSearchConfigExtended,
+  WebSearchParams,
+  WebSearchResult,
+  WebSearchImage,
+  WebSearchResponse,
+  WebSearchProviderInterface,
+} from "./webSearch";

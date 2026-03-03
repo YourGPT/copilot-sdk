@@ -46,7 +46,8 @@ export interface ToolStepData {
  * @example "get_order_details" -> "Get order details"
  * @example "fetchUserData" -> "Fetch user data"
  */
-function toolNameToTitle(name: string): string {
+function toolNameToTitle(name: string | undefined): string {
+  if (!name) return "Tool";
   // Handle snake_case
   let result = name.replace(/_/g, " ");
   // Handle camelCase

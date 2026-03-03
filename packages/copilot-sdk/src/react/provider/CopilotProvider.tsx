@@ -27,6 +27,8 @@ import type {
   PermissionLevel,
 } from "../../core";
 
+import type { MCPServerConfig } from "../../mcp/types";
+
 import type { UIMessage, ToolExecution } from "../../chat";
 
 import {
@@ -39,6 +41,24 @@ import {
   printTree,
   type ContextTreeNode,
 } from "../utils/context-tree";
+import { useMCPTools } from "../hooks/useMCPTools";
+
+// ============================================
+// Internal MCP Connection Component
+// ============================================
+
+function MCPConnection({ config }: { config: MCPServerConfig }) {
+  useMCPTools({
+    name: config.name,
+    transport: config.transport,
+    url: config.url,
+    headers: config.headers,
+    autoConnect: true,
+    prefixToolNames: config.prefixToolNames ?? true,
+    timeout: config.timeout,
+  });
+  return null;
+}
 
 // ============================================
 // Types
@@ -70,6 +90,8 @@ export interface CopilotProviderProps {
   maxIterations?: number;
   /** Custom message when max iterations reached (sent to AI as tool result) */
   maxIterationsMessage?: string;
+  /** MCP servers to connect to automatically */
+  mcpServers?: MCPServerConfig[];
 }
 
 export interface CopilotContextValue {
@@ -156,6 +178,7 @@ export function CopilotProvider({
   debug = false,
   maxIterations,
   maxIterationsMessage,
+  mcpServers,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -514,6 +537,9 @@ export function CopilotProvider({
 
   return (
     <CopilotContext.Provider value={contextValue}>
+      {mcpServers?.map((config) => (
+        <MCPConnection key={config.name} config={config} />
+      ))}
       {children}
     </CopilotContext.Provider>
   );

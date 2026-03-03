@@ -4,6 +4,7 @@ import type {
   ActionDefinition,
   StreamEvent,
   LLMConfig,
+  WebSearchConfig,
 } from "../core/stream-events";
 import type { TokenUsage } from "../core/types";
 
@@ -36,6 +37,11 @@ export interface ChatCompletionRequest {
   config?: RequestLLMConfig;
   /** Abort signal for cancellation */
   signal?: AbortSignal;
+  /**
+   * Enable native web search for the provider.
+   * When true or configured, the provider's native search is enabled.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**

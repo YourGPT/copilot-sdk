@@ -11,6 +11,7 @@ import type {
   AIResponseMode,
   AIContent,
   ToolContext,
+  WebSearchConfig,
 } from "../core/stream-events";
 import type { AIProvider } from "../providers/types";
 import { createMessage } from "../core/stream-events";
@@ -242,6 +243,7 @@ export class Runtime {
       systemPrompt: request.systemPrompt || this.config.systemPrompt,
       config: request.config,
       signal,
+      webSearch: this.getWebSearchConfig(),
     };
 
     // Stream response from adapter
@@ -633,6 +635,16 @@ export class Runtime {
   }
 
   /**
+   * Get web search configuration from runtime config
+   */
+  private getWebSearchConfig(): boolean | WebSearchConfig | undefined {
+    if ("webSearch" in this.config) {
+      return this.config.webSearch;
+    }
+    return undefined;
+  }
+
+  /**
    * Process a chat request with tool support (Vercel AI SDK pattern)
    *
    * This method:
@@ -739,6 +751,7 @@ export class Runtime {
       systemPrompt: systemPrompt,
       config: request.config,
       signal,
+      webSearch: this.getWebSearchConfig(),
     };
 
     // Stream from adapter
@@ -795,6 +808,11 @@ export class Runtime {
             currentToolCall = null;
           }
           yield event; // Forward to client
+          break;
+
+        case "citation":
+          // Forward web search citations to client
+          yield event;
           break;
 
         case "error":
@@ -1135,6 +1153,7 @@ export class Runtime {
         systemPrompt: systemPrompt,
         config: request.config,
         signal,
+        webSearch: this.getWebSearchConfig(),
       };
 
       try {

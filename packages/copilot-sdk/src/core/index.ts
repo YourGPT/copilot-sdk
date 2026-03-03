@@ -40,10 +40,28 @@ export {
   screenshotTool,
   consoleLogsTool,
   networkRequestsTool,
+  webSearchTool,
   createScreenshotTool,
   createConsoleLogsTool,
   createNetworkRequestsTool,
+  createWebSearchTool,
   builtinTools,
+  // Web Search module
+  executeWebSearch,
+  getProvider,
+  getAvailableProviders,
+  formatSearchResultsForAI,
+  summarizeSearchResults,
+  // Native providers (no third-party API needed)
+  openaiProvider,
+  googleProvider,
+  anthropicProvider,
+  // Third-party providers
+  tavilyProvider,
+  serperProvider,
+  braveProvider,
+  searxngProvider,
+  exaProvider,
 } from "./tools";
 
 export type {
@@ -69,6 +87,14 @@ export type {
   ToolConsentResponse,
   CapturedContext,
   CustomKeywords,
+  // Web Search types
+  WebSearchProvider,
+  WebSearchConfig,
+  WebSearchParams,
+  WebSearchResult,
+  WebSearchImage,
+  WebSearchResponse,
+  WebSearchProviderInterface,
 } from "./tools";
 
 // ============================================

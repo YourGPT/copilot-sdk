@@ -1,0 +1,223 @@
+---
+title: Web Search
+description: Real-time web search capabilities for your AI copilot
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+Add real-time web search capabilities to your AI copilot. Search the web for current information, news, and facts.
+
+---
+
+## Enable Web Search
+
+Web search is a built-in tool that works with native providers (OpenAI, Google, Anthropic) using your existing API key.
+
+```tsx
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+import { openaiSearch } from '@yourgpt/copilot-sdk/tools/openai';
+
+const webSearch = openaiSearch({
+  apiKey: process.env.OPENAI_API_KEY,
+  maxResults: 5,
+});
+
+function App() {
+  return (
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      tools={[webSearch]}
+    >
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+<Callout type="info">
+**No extra API key needed!** Native providers use your existing OpenAI, Google, or Anthropic API key.
+</Callout>
+
+---
+
+## Native Providers
+
+No third-party API key required - uses your existing LLM API key.
+
+<Tabs items={['OpenAI', 'Google', 'Anthropic']}>
+  <Tab value="OpenAI">
+```ts
+import { openaiSearch } from '@yourgpt/copilot-sdk/tools/openai';
+
+const webSearch = openaiSearch({
+  apiKey: process.env.OPENAI_API_KEY,
+  maxResults: 5,
+  includeDomains: ['docs.github.com', 'stackoverflow.com'],
+});
+```
+  </Tab>
+  <Tab value="Google">
+```ts
+import { googleSearch } from '@yourgpt/copilot-sdk/tools/google';
+
+const webSearch = googleSearch({
+  apiKey: process.env.GOOGLE_API_KEY,
+  maxResults: 5,
+});
+```
+  </Tab>
+  <Tab value="Anthropic">
+```ts
+import { anthropicSearch } from '@yourgpt/copilot-sdk/tools/anthropic';
+
+const webSearch = anthropicSearch({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  maxResults: 5,
+});
+```
+  </Tab>
+</Tabs>
+
+---
+
+## Third-Party Providers
+
+### MCP360 Gateway
+
+[MCP360](https://mcp360.ai) provides web search through MCP along with 100+ other tools:
+
+```tsx
+function Chat() {
+  useMCPTools({
+    name: "mcp360",
+    transport: "http",
+    url: "https://api.mcp360.ai/mcp",
+    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+  });
+
+  return <CopilotChat />;
+}
+```
+
+<Callout type="info">
+**More than just search** — MCP360 includes [Google Search](https://mcp360.ai/mcps/google-search), [Web Scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and 100+ other tools through a single connection. [Explore all tools →](https://mcp360.ai)
+</Callout>
+
+### Other Providers
+
+<Accordions>
+  <Accordion title="Tavily">
+```ts
+import { tavilySearch } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const webSearch = tavilySearch({
+  apiKey: process.env.TAVILY_API_KEY,
+  includeAnswer: true,
+  maxResults: 5,
+  searchDepth: 'basic',
+});
+```
+Get API key: [tavily.com](https://tavily.com)
+  </Accordion>
+  <Accordion title="Serper">
+```ts
+import { serperSearch } from '@yourgpt/copilot-sdk/tools/serper';
+
+const webSearch = serperSearch({
+  apiKey: process.env.SERPER_API_KEY,
+  country: 'us',
+  language: 'en',
+  maxResults: 5,
+});
+```
+Get API key: [serper.dev](https://serper.dev)
+  </Accordion>
+  <Accordion title="Brave">
+```ts
+import { braveSearch } from '@yourgpt/copilot-sdk/tools/brave';
+
+const webSearch = braveSearch({
+  apiKey: process.env.BRAVE_API_KEY,
+  country: 'us',
+  maxResults: 5,
+});
+```
+Get API key: [brave.com/search/api](https://brave.com/search/api)
+  </Accordion>
+  <Accordion title="Exa">
+```ts
+import { exaSearch } from '@yourgpt/copilot-sdk/tools/exa';
+
+const webSearch = exaSearch({
+  apiKey: process.env.EXA_API_KEY,
+  searchDepth: 'advanced',
+  maxResults: 5,
+});
+```
+Get API key: [exa.ai](https://exa.ai)
+  </Accordion>
+  <Accordion title="SearXNG (Self-hosted)">
+```ts
+import { searxngSearch } from '@yourgpt/copilot-sdk/tools/searxng';
+
+const webSearch = searxngSearch({
+  baseUrl: 'https://your-searxng-instance.com',
+  maxResults: 5,
+});
+```
+No API key needed - self-hosted solution.
+  </Accordion>
+</Accordions>
+
+---
+
+## Configuration Options
+
+```ts
+import { tavilySearch, type TavilySearchConfig } from '@yourgpt/copilot-sdk/tools/tavily';
+
+const config: TavilySearchConfig = {
+  apiKey: process.env.TAVILY_API_KEY,
+  searchDepth: 'basic' | 'advanced',
+  maxResults: 5,
+  includeDomains: ['docs.github.com'],
+  excludeDomains: ['pinterest.com'],
+  includeAnswer: true,
+  includeImages: false,
+  timeout: 30000,
+};
+```
+
+---
+
+## UI Components
+
+Display search results with built-in components:
+
+```tsx
+import { SearchResults, SearchResultsWithAnswer } from '@yourgpt/copilot-sdk/ui';
+
+// Simple results list
+<SearchResults results={searchResults} variant="cards" />
+
+// With AI-generated answer
+<SearchResultsWithAnswer response={webSearchResponse} showAnswer={true} />
+```
+
+### Variants
+
+- `cards` - Full cards with descriptions (default)
+- `list` - Compact numbered list
+- `compact` - Inline citation badges
+
+---
+
+## Use Cases
+
+- **Current events**: "What's the latest news about AI?"
+- **Real-time data**: "What's the current price of Bitcoin?"
+- **Fact checking**: "Who won the 2024 Super Bowl?"
+- **Research**: "What are the best practices for React Server Components?"

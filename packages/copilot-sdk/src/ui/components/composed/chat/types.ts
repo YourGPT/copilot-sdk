@@ -4,6 +4,29 @@ import type { PermissionLevel } from "../../ui/permission-confirmation";
 import type { ToolDefinition } from "../../../../core";
 import type { Thread } from "../../../../core/types/thread";
 
+// ============================================
+// Citation Configuration
+// ============================================
+
+/**
+ * Configuration for displaying citations/sources from web search tools.
+ * Sources are automatically extracted from web_search tool results.
+ */
+export type CitationConfig = {
+  /** Enable citation display (default: true) */
+  enabled?: boolean;
+  /** Show favicon for each source (default: true) */
+  showFavicon?: boolean;
+  /** Use numbered labels (1, 2, 3...) instead of domain (default: true) */
+  numbered?: boolean;
+  /** Maximum sources to show before "+N more" (default: 5) */
+  maxVisible?: number;
+  /** Label text (default: "Sources") */
+  label?: string;
+  /** Custom className for source group */
+  className?: string;
+};
+
 /**
  * Message attachment (images, files, etc.)
  *
@@ -45,6 +68,8 @@ export type ChatMessage = {
       arguments: string;
     };
   }>;
+  /** Additional metadata (citations, etc.) */
+  metadata?: Record<string, unknown>;
 };
 
 export type { ToolApprovalStatus, PermissionLevel };
@@ -400,6 +425,14 @@ export type ChatProps = {
     suggestions?: string;
     footer?: string;
   };
+
+  // === Citations/Sources (Web Search) ===
+  /**
+   * Configuration for displaying citations from web search results.
+   * Set to `false` to disable, or pass config object to customize.
+   * @default { enabled: true }
+   */
+  citations?: CitationConfig | false;
 
   // === Thread Management (for compound components) ===
   /** Called when starting a new chat (clears messages, returns to home) */

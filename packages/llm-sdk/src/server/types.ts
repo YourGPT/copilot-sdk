@@ -3,6 +3,7 @@ import type {
   KnowledgeBaseConfig,
   ToolDefinition,
   AgentLoopConfig,
+  WebSearchConfig,
 } from "../core/stream-events";
 import type { LLMAdapter } from "../adapters";
 import type { AIProvider } from "../providers/types";
@@ -27,6 +28,11 @@ export interface RuntimeConfigWithAdapter {
   debug?: boolean;
   /** Custom context data passed to all tool handlers */
   toolContext?: Record<string, unknown>;
+  /**
+   * Enable native web search for the provider.
+   * Set to true for defaults, or pass WebSearchConfig for customization.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**
@@ -62,6 +68,11 @@ export interface RuntimeConfigWithProvider {
   debug?: boolean;
   /** Custom context data passed to all tool handlers */
   toolContext?: Record<string, unknown>;
+  /**
+   * Enable native web search for the provider.
+   * Set to true for defaults, or pass WebSearchConfig for customization.
+   */
+  webSearch?: boolean | WebSearchConfig;
 }
 
 /**

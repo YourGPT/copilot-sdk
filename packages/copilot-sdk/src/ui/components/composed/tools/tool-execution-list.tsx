@@ -37,6 +37,26 @@ export interface ToolExecutionData {
     message?: string;
     error?: string;
     data?: unknown;
+    /**
+     * MCP-UI resources for rendering interactive UI components.
+     * These are extracted from MCP tool results and rendered as iframes.
+     */
+    _uiResources?: Array<{
+      uri: string;
+      mimeType:
+        | "text/html"
+        | "text/uri-list"
+        | "application/vnd.mcp-ui.remote-dom";
+      content?: string;
+      blob?: string;
+      metadata?: {
+        title?: string;
+        width?: string;
+        height?: string;
+        sandbox?: string[];
+        className?: string;
+      };
+    }>;
   };
   error?: string;
   timestamp: number;

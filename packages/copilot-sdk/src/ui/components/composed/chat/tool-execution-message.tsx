@@ -8,6 +8,8 @@ import {
   PermissionConfirmation,
   type PermissionLevel,
 } from "../../ui/permission-confirmation";
+import { MCPUIFrameList } from "../../ui/mcp-ui-frame";
+import type { MCPUIIntent } from "../../../../mcp/ui/types";
 import type { ToolExecutionData } from "../tools/tool-execution-list";
 
 interface ToolExecutionMessageProps {
@@ -36,6 +38,14 @@ interface ToolExecutionMessageProps {
       };
     }>
   >;
+  /**
+   * Callback when an MCP-UI intent is received from an interactive UI component.
+   * Use this with useMCPUIIntents hook to handle tool calls, actions, etc.
+   */
+  onUIIntent?: (
+    intent: MCPUIIntent,
+    context: { toolName: string; toolCallId: string },
+  ) => void;
   className?: string;
 }
 
@@ -49,6 +59,7 @@ export function ToolExecutionMessage({
   onApprove,
   onReject,
   toolRenderers,
+  onUIIntent,
   className,
 }: ToolExecutionMessageProps) {
   if (!executions || executions.length === 0) return null;
@@ -186,6 +197,26 @@ export function ToolExecutionMessage({
             <ToolSteps steps={toolSteps} />
           </div>
         )}
+
+        {/* MCP-UI Resources - render interactive UI components from tool results */}
+        {otherExecutions.map((exec) => {
+          const uiResources = exec.result?._uiResources;
+          if (!uiResources || uiResources.length === 0) return null;
+
+          return (
+            <MCPUIFrameList
+              key={`${exec.id}-ui`}
+              resources={uiResources}
+              onIntent={(intent) =>
+                onUIIntent?.(intent, {
+                  toolName: exec.name,
+                  toolCallId: exec.id,
+                })
+              }
+              className="mt-2"
+            />
+          );
+        })}
       </div>
     </Message>
   );

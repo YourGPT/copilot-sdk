@@ -113,7 +113,9 @@ export function useInternalThreadManager(
       created_at: m.createdAt,
       tool_calls: m.toolCalls,
       tool_call_id: m.toolCallId,
+      // Preserve full metadata including citations, toolExecutions, etc.
       metadata: {
+        ...m.metadata,
         attachments: m.attachments,
         thinking: m.thinking,
       },
@@ -177,6 +179,11 @@ export function useInternalThreadManager(
 
   // Auto-restore: load messages when thread is restored from storage
   useEffect(() => {
+    // Skip if no adapter (persistence not enabled)
+    if (!adapter) {
+      return;
+    }
+
     // Skip if already initialized or no thread restored yet
     if (hasInitializedRef.current || !currentThread) {
       return;
@@ -196,6 +203,9 @@ export function useInternalThreadManager(
         toolCalls: m.tool_calls,
         toolCallId: m.tool_call_id,
         attachments: m.metadata?.attachments,
+        thinking: m.metadata?.thinking as string | undefined,
+        // Preserve full metadata including citations, toolExecutions, etc.
+        metadata: m.metadata,
       }));
       lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
       savingToThreadRef.current = currentThread.id;
@@ -211,10 +221,15 @@ export function useInternalThreadManager(
     requestAnimationFrame(() => {
       isLoadingMessagesRef.current = false;
     });
-  }, [currentThread, setMessages, getMessageSnapshot, onThreadChange]);
+  }, [adapter, currentThread, setMessages, getMessageSnapshot, onThreadChange]);
 
   // Sync messages to storage when streaming completes
   useEffect(() => {
+    // Skip if no adapter (persistence not enabled) - don't sync/create threads
+    if (!adapter) {
+      return;
+    }
+
     // Skip if we're loading messages from a thread switch
     if (isLoadingMessagesRef.current) {
       return;
@@ -262,6 +277,7 @@ export function useInternalThreadManager(
     updateCurrentThread({ messages: coreMessages });
     lastSavedSnapshotRef.current = currentSnapshot;
   }, [
+    adapter,
     messages,
     currentThreadId,
     status,

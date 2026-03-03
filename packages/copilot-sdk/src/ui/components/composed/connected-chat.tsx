@@ -443,6 +443,8 @@ function CopilotChatBase(
         tool_calls: m.toolCalls,
         // Attach matched tool executions to assistant messages
         toolExecutions: messageToolExecutions,
+        // Include metadata (citations from native web search, etc.)
+        metadata: m.metadata,
       };
     });
 

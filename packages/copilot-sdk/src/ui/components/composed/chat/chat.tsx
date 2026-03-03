@@ -528,6 +528,8 @@ function ChatComponent({
   showFollowUps = true,
   followUpClassName,
   followUpButtonClassName,
+  // Citations/Sources
+  citations,
   // Custom rendering
   renderMessage,
   renderInput,
@@ -982,6 +984,9 @@ function ChatComponent({
                         onFollowUpClick={handleFollowUpClick}
                         followUpClassName={followUpClassName}
                         followUpButtonClassName={followUpButtonClassName}
+                        citations={
+                          citations === false ? { enabled: false } : citations
+                        }
                       />
                     );
                   })}
