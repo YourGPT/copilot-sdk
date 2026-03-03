@@ -539,6 +539,24 @@ export interface UseMCPToolsConfig extends UseMCPClientConfig {
 }
 
 /**
+ * MCP server configuration for CopilotProvider
+ */
+export interface MCPServerConfig {
+  /** Unique name for this server connection */
+  name: string;
+  /** Transport type */
+  transport: MCPTransportType;
+  /** Server URL (for http/sse transports) */
+  url: string;
+  /** Custom headers (for http/sse transports) */
+  headers?: Record<string, string>;
+  /** Request timeout in milliseconds (default: 30000) */
+  timeout?: number;
+  /** Prefix tool names with server name (default: true) */
+  prefixToolNames?: boolean;
+}
+
+/**
  * Return type for useMCPClient hook
  */
 export interface UseMCPClientReturn {

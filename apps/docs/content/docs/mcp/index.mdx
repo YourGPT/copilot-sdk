@@ -74,33 +74,33 @@ MCP tools work exactly like [custom tools](/docs/tools) — they're just discove
 
 ## Quick Start
 
+Configure MCP servers directly on `CopilotProvider`:
+
 ```tsx
-import { CopilotProvider, useMCPTools } from '@yourgpt/copilot-sdk/react';
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
 import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
 
 function App() {
   return (
-    <CopilotProvider runtimeUrl="/api/chat">
-      <Chat />
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      mcpServers={[
+        {
+          name: "mcp360",
+          transport: "http",
+          url: "https://api.mcp360.ai/mcp",
+          headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+        },
+      ]}
+    >
+      <CopilotChat />
     </CopilotProvider>
   );
-}
-
-function Chat() {
-  // Connects in background and registers tools automatically
-  useMCPTools({
-    name: "mcp360",
-    transport: "http",
-    url: "https://api.mcp360.ai/mcp",
-    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
-  });
-
-  return <CopilotChat />;
 }
 ```
 
 <Callout type="info">
-The `useMCPTools` hook must be called inside `CopilotProvider`. It connects in the background — the chat is usable immediately, and tools become available when ready.
+Servers connect in the background — the chat is usable immediately, and tools become available when ready.
 </Callout>
 
 ---
@@ -121,22 +121,19 @@ function App() {
           handler: async () => ({ name: "John", role: "admin" }),
         },
       ]}
+      mcpServers={[
+        {
+          name: "mcp360",
+          transport: "http",
+          url: "https://api.mcp360.ai/mcp",
+          headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+        },
+      ]}
     >
-      <Chat />
+      {/* AI has: get_user + all mcp360_* tools */}
+      <CopilotChat />
     </CopilotProvider>
   );
-}
-
-function Chat() {
-  useMCPTools({
-    name: "mcp360",
-    transport: "http",
-    url: "https://api.mcp360.ai/mcp",
-    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
-  });
-
-  // AI now has: get_user + all mcp360_* tools
-  return <CopilotChat />;
 }
 ```
 
@@ -149,12 +146,14 @@ function Chat() {
     [MCP360](https://mcp360.ai) provides 100+ pre-built MCP tools through a single connection.
 
     ```tsx
-    useMCPTools({
-      name: "mcp360",
-      transport: "http",
-      url: "https://api.mcp360.ai/mcp",
-      headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
-    });
+    mcpServers={[
+      {
+        name: "mcp360",
+        transport: "http",
+        url: "https://api.mcp360.ai/mcp",
+        headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+      },
+    ]}
     ```
 
     **Includes:** [Web search](https://mcp360.ai/mcps/google-search), [scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and more.
@@ -163,12 +162,14 @@ function Chat() {
   </Tab>
   <Tab value="Direct Connection">
     ```tsx
-    useMCPTools({
-      name: "github",
-      transport: "http",
-      url: "https://mcp.github.com",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    mcpServers={[
+      {
+        name: "github",
+        transport: "http",
+        url: "https://mcp.github.com",
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    ]}
     ```
     Best for: Single-purpose integrations (GitHub, Slack, etc.)
   </Tab>

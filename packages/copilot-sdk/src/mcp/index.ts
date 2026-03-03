@@ -97,6 +97,8 @@ export type {
   UseMCPClientReturn,
   UseMCPToolsConfig,
   UseMCPToolsReturn,
+  // Provider types
+  MCPServerConfig,
 } from "./types";
 
 export { MCPError, MCP_PROTOCOL_VERSION, JSON_RPC_ERROR_CODES } from "./types";

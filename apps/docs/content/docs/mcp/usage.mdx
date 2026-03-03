@@ -6,9 +6,57 @@ description: Connect to MCP servers and use tools in your React application
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
+## Provider-Level Config
+
+The simplest way to add MCP servers — configure them directly on `CopilotProvider`:
+
+```tsx
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+function App() {
+  return (
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      mcpServers={[
+        {
+          name: "mcp360",
+          transport: "http",
+          url: "https://api.mcp360.ai/mcp",
+          headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+        },
+        {
+          name: "github",
+          transport: "http",
+          url: "https://mcp.github.com",
+          headers: { Authorization: `Bearer ${githubToken}` },
+        },
+      ]}
+    >
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+All servers connect automatically and tools are registered with the AI.
+
+### MCPServerConfig Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | Required | Unique identifier for this server |
+| `transport` | `"http" \| "sse"` | Required | Transport type |
+| `url` | `string` | Required | Server URL |
+| `headers` | `Record<string, string>` | `{}` | Custom HTTP headers |
+| `timeout` | `number` | `30000` | Request timeout in ms |
+| `prefixToolNames` | `boolean` | `true` | Prefix tools with server name |
+
+---
+
 ## useMCPTools Hook
 
-Connects to an MCP server and automatically registers tools with `CopilotProvider`.
+For more control, use the hook directly. Connects to an MCP server and registers tools with `CopilotProvider`.
 
 ```tsx
 import { CopilotProvider, useMCPTools } from '@yourgpt/copilot-sdk/react';
@@ -200,7 +248,9 @@ function Chat() {
 
 ## Direct Client Usage
 
-For non-React environments or manual control:
+For non-React environments or manual control.
+
+### Single Server
 
 ```typescript
 import { createMCPClient } from '@yourgpt/copilot-sdk/mcp';
@@ -213,18 +263,54 @@ const client = createMCPClient({
 });
 
 await client.connect();
-
 const tools = client.toToolDefinitions();
-const result = await client.callTool("create_issue", {
-  title: "Bug report",
-  body: "Found an issue...",
-});
-
+const result = await client.callTool("create_issue", { title: "Bug" });
 await client.disconnect();
 ```
 
+### Multiple Servers (MCPClientManager)
+
+Manage multiple MCP connections with unified state:
+
+```typescript
+import { createMCPClientManager } from '@yourgpt/copilot-sdk/mcp';
+
+const manager = createMCPClientManager([
+  { name: "github", transport: "http", url: "https://mcp.github.com" },
+  { name: "slack", transport: "http", url: "https://mcp.slack.com" },
+  { name: "mcp360", transport: "http", url: "https://api.mcp360.ai/mcp" },
+]);
+
+// Connect all servers at once
+await manager.connectAll();
+
+// Get aggregated state
+const state = manager.getState();
+// { allConnected: true, totalToolCount: 47, anyError: false }
+
+// Get all tools from all servers
+const tools = manager.getAllToolDefinitions();
+
+// Call a tool on a specific server
+const result = await manager.callTool("github", "create_issue", { title: "Bug" });
+
+// Disconnect all
+await manager.disconnectAll();
+```
+
+### MCPClientManager Methods
+
+| Method | Description |
+|--------|-------------|
+| `connectAll()` | Connect all enabled servers |
+| `disconnectAll()` | Disconnect all servers |
+| `getState()` | Get aggregated state (`allConnected`, `totalToolCount`, etc.) |
+| `getAllToolDefinitions()` | Get tools from all connected servers |
+| `callTool(server, name, args)` | Call a tool on a specific server |
+| `getClient(name)` | Get a specific client instance |
+
 <Callout type="info">
-When using `createMCPClient` directly, you'll need to manually pass tools to your runtime or register them with `CopilotProvider`.
+When using direct clients, you'll need to manually pass tools to your runtime.
 </Callout>
 
 ---
