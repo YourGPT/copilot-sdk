@@ -22,8 +22,7 @@ function App() {
         {
           name: "mcp360",
           transport: "http",
-          url: "https://api.mcp360.ai/mcp",
-          headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+          url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
         },
         {
           name: "github",
@@ -74,8 +73,7 @@ function Chat() {
   useMCPTools({
     name: "mcp360",
     transport: "http",
-    url: "https://api.mcp360.ai/mcp",
-    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+    url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
   });
 
   return <CopilotChat />;
@@ -123,7 +121,7 @@ const { isConnected, isLoading, toolDefinitions } = useMCPTools({...});
 useMCPTools({
   name: "mcp360",
   transport: "http",
-  url: "https://api.mcp360.ai/mcp",
+  url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
   headers: { Authorization: `Bearer ${token}` },
   timeout: 30000,
 });
@@ -278,7 +276,7 @@ import { createMCPClientManager } from '@yourgpt/copilot-sdk/mcp';
 const manager = createMCPClientManager([
   { name: "github", transport: "http", url: "https://mcp.github.com" },
   { name: "slack", transport: "http", url: "https://mcp.slack.com" },
-  { name: "mcp360", transport: "http", url: "https://api.mcp360.ai/mcp" },
+  { name: "mcp360", transport: "http", url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN" },
 ]);
 
 // Connect all servers at once
@@ -317,15 +315,14 @@ When using direct clients, you'll need to manually pass tools to your runtime.
 
 ## MCP360 Gateway
 
-Access 100+ tools through a single connection with [MCP360](https://mcp360.ai):
+Access 50+ tools through a single connection with [MCP360](https://mcp360.ai):
 
 ```tsx
 function Chat() {
   useMCPTools({
     name: "mcp360",
     transport: "http",
-    url: "https://api.mcp360.ai/mcp",
-    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+    url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
   });
 
   return <CopilotChat />;

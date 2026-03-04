@@ -87,15 +87,14 @@ const webSearch = anthropicSearch({
 
 ### MCP360 Gateway
 
-[MCP360](https://mcp360.ai) provides web search through MCP along with 100+ other tools:
+[MCP360](https://mcp360.ai) provides web search through MCP along with 50+ other tools:
 
 ```tsx
 function Chat() {
   useMCPTools({
     name: "mcp360",
     transport: "http",
-    url: "https://api.mcp360.ai/mcp",
-    headers: { Authorization: `Bearer ${process.env.MCP360_API_KEY}` },
+    url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
   });
 
   return <CopilotChat />;
@@ -103,7 +102,7 @@ function Chat() {
 ```
 
 <Callout type="info">
-**More than just search** — MCP360 includes [Google Search](https://mcp360.ai/mcps/google-search), [Web Scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and 100+ other tools through a single connection. [Explore all tools →](https://mcp360.ai)
+**More than just search** — MCP360 includes [Google Search](https://mcp360.ai/mcps/google-search), [Web Scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and 50+ other tools through a single connection. [Explore all tools →](https://mcp360.ai)
 </Callout>
 
 ### Other Providers

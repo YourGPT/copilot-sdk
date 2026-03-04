@@ -162,28 +162,78 @@ MCP-UI tools return content arrays with both text and UI resources:
 }
 ```
 
+## Connecting to Remote MCP Servers
+
+The SDK supports various MCP server authentication methods:
+
+### Method 1: Token in URL (MCP360, Composio, etc.)
+
+```tsx
+<CopilotProvider
+  runtimeUrl="/api/chat"
+  mcpServers={[
+    {
+      name: "mcp360",
+      transport: "http",
+      url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
+    },
+  ]}
+>
+```
+
+### Method 2: Bearer Token Header (OAuth 2.1)
+
+```tsx
+<CopilotProvider
+  runtimeUrl="/api/chat"
+  mcpServers={[
+    {
+      name: "figma",
+      transport: "http",
+      url: "https://mcp.figma.com/mcp",
+      headers: { Authorization: "Bearer YOUR_OAUTH_TOKEN" },
+    },
+  ]}
+>
+```
+
+### Method 3: Custom Headers
+
+```tsx
+<CopilotProvider
+  runtimeUrl="/api/chat"
+  mcpServers={[
+    {
+      name: "custom",
+      transport: "http",
+      url: "https://your-mcp-server.com/mcp",
+      headers: { "X-API-Key": "YOUR_API_KEY" },
+    },
+  ]}
+>
+```
+
 ## Using MCP360 Gateway
 
-Instead of the local mock MCP server, you can connect to [MCP360](https://mcp360.ai) to access 100+ pre-built MCP tools including web search, scraping, SEO tools, and more.
+Connect to [MCP360](https://mcp360.ai) to access 50+ pre-built MCP tools:
 
-1. Get your API key at [mcp360.ai](https://mcp360.ai)
+1. Get your token at [mcp360.ai](https://mcp360.ai)
 
 2. Update your `.env.local`:
 
    ```
-   MCP360_API_KEY=your-mcp360-api-key
-   NEXT_PUBLIC_MCP_SERVER_URL=https://api.mcp360.ai/mcp
+   NEXT_PUBLIC_MCP360_URL=https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN
    ```
 
-3. The demo will now connect to MCP360 instead of the local server.
+3. The demo sidebar will show "MCP360 Gateway" - click **Connect** to use 50+ tools.
 
 **MCP360 Tools Include:**
 
-- Web search and scraping
-- SEO tools (keyword research, SERP tracking)
-- E-commerce data (Amazon, Google Shopping)
-- Domain tools (WHOIS, DNS)
-- And 100+ more integrations
+- Web search (Google, YouTube, News)
+- Web scraping and data extraction
+- SEO tools (keyword research, trends)
+- Maps and Places lookup
+- And many more integrations
 
 ## Learn More
 
