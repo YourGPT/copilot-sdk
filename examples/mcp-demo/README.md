@@ -1,4 +1,4 @@
-# MCP Demo with MCP-UI Support
+# MCP Example
 
 This example demonstrates the MCP (Model Context Protocol) integration with YourGPT Copilot SDK, including **MCP-UI** for interactive components.
 
