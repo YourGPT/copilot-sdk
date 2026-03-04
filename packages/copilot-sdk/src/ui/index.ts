@@ -9,6 +9,7 @@
 // ============================================
 export { Loader } from "./components/ui/loader";
 export { Markdown } from "./components/ui/markdown";
+export type { LinkSafetyConfig } from "./components/ui/markdown";
 export { CodeBlock } from "./components/ui/code-block";
 export { Button } from "./components/ui/button";
 export { FeedbackBar } from "./components/ui/feedback-bar";

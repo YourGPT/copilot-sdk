@@ -25,6 +25,11 @@ export type ToolApprovalStatus =
   | "rejected"; // User rejected
 
 /**
+ * Tool execution source - where the tool came from
+ */
+export type ToolExecutionSource = "mcp" | "native" | "custom";
+
+/**
  * Tool execution data
  */
 export interface ToolExecutionData {
@@ -32,6 +37,13 @@ export interface ToolExecutionData {
   name: string;
   args: Record<string, unknown>;
   status: ToolExecutionStatus;
+  /**
+   * Source of the tool - helps distinguish MCP tools from native tools
+   * - "mcp": Tool from an MCP server
+   * - "native": Built-in SDK tool
+   * - "custom": User-defined tool
+   */
+  source?: ToolExecutionSource;
   result?: {
     success: boolean;
     message?: string;

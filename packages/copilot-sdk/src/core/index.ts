@@ -159,6 +159,7 @@ export type {
   // Tool types (Agentic Loop)
   AIProvider,
   ToolLocation,
+  ToolSource,
   JSONSchemaProperty,
   ToolInputSchema,
   ToolContext,

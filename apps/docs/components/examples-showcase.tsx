@@ -18,6 +18,28 @@ const VIDEO_BASE_URL = "https://assets.yourgpt.ai/web/copilot-sdk";
 
 const examples: Example[] = [
   {
+    id: "mcp-demo",
+    title: "MCP Integration",
+    description:
+      "Connect to MCP servers and access 50+ tools including web search, scraping, SEO, and more. Features MCP-UI for interactive components like product cards, polls, and charts.",
+    preview: "/images/mcp-demo.png",
+    tags: ["MCP", "Tools", "MCP-UI", "Interactive"],
+    github:
+      "https://github.com/YourGPT/copilot-sdk/tree/main/examples/mcp-demo",
+    video: `${VIDEO_BASE_URL}/mcp-copilot-sdk.mp4`,
+  },
+  {
+    id: "web-search-demo",
+    title: "Web Search Assistant",
+    description:
+      "Real-time market research assistant with native web search. Click on stocks or news to instantly research using AI-powered search from OpenAI, Google, or Anthropic.",
+    preview: "/images/web-search-demo.png",
+    tags: ["Web Search", "Research", "Real-time", "Finance"],
+    github:
+      "https://github.com/YourGPT/copilot-sdk/tree/main/examples/web-search-demo",
+    video: `${VIDEO_BASE_URL}/web-search-copilot-sdk.mp4`,
+  },
+  {
     id: "support-system",
     title: "Support Ticket System",
     description:

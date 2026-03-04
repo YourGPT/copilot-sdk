@@ -25,6 +25,14 @@ export type AIProvider =
  */
 export type ToolLocation = "server" | "client";
 
+/**
+ * Source/origin of the tool
+ * - "mcp": Tool from an MCP (Model Context Protocol) server
+ * - "native": Built-in SDK tool
+ * - "custom": User-defined tool
+ */
+export type ToolSource = "mcp" | "native" | "custom";
+
 // ============================================
 // Tool Definition Types
 // ============================================
@@ -354,6 +362,12 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   description: string;
   /** Where the tool executes (server or client) */
   location: ToolLocation;
+  /**
+   * Source/origin of the tool.
+   * Used to distinguish MCP tools from native/custom tools for UI rendering.
+   * @default "custom"
+   */
+  source?: ToolSource;
 
   // ============================================
   // Display Configuration

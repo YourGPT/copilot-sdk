@@ -16,6 +16,7 @@ import type {
   ChatMessage,
   MessageAttachment,
   ToolRenderers,
+  ToolRendererProps,
   CitationConfig,
 } from "./types";
 import type { ToolDefinition, ToolRenderProps } from "../../../../core";
@@ -54,6 +55,8 @@ type DefaultMessageProps = {
   registeredTools?: ToolDefinition[];
   /** Custom renderers for tool results (Generative UI) - higher priority than tool.render */
   toolRenderers?: ToolRenderers;
+  /** Catch-all renderer for MCP tools (tools with source: "mcp") */
+  mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
   /** Called when user approves a tool execution */
   onApproveToolExecution?: (
     executionId: string,
@@ -92,6 +95,7 @@ export function DefaultMessage({
   loaderVariant = "typing",
   registeredTools,
   toolRenderers,
+  mcpToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   showFollowUps = true,
@@ -285,20 +289,23 @@ export function DefaultMessage({
     (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec.name),
   );
 
-  // Helper: check if tool has any custom render (toolRenderers or tool.render)
-  const hasCustomRender = (toolName: string): boolean => {
+  // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, or tool.render)
+  const hasCustomRender = (toolName: string, execSource?: string): boolean => {
     if (toolRenderers?.[toolName]) return true;
     const toolDef = registeredTools?.find((t) => t.name === toolName);
+    // Check if mcpToolRenderer applies (MCP tool with catch-all renderer)
+    if (mcpToolRenderer && (execSource === "mcp" || toolDef?.source === "mcp"))
+      return true;
     if (toolDef?.render) return true;
     return false;
   };
 
   // Split completed tools: those with custom render vs default ToolSteps
   const toolsWithCustomRender = completedTools?.filter((exec) =>
-    hasCustomRender(exec.name),
+    hasCustomRender(exec.name, exec.source),
   );
   const toolsWithoutCustomRender = completedTools?.filter(
-    (exec) => !hasCustomRender(exec.name),
+    (exec) => !hasCustomRender(exec.name, exec.source),
   );
 
   // Check for native web search citations (from metadata, not custom tool)
@@ -380,9 +387,9 @@ export function DefaultMessage({
 
             {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
             {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
-              <div className="mt-2 space-y-2">
+              <div className={cn("space-y-2", cleanContent?.trim() && "mt-2")}>
                 {toolsWithCustomRender.map((exec) => {
-                  // PRIORITY 1: toolRenderers (app-level override)
+                  // PRIORITY 1: toolRenderers (app-level override for specific tool)
                   const Renderer = toolRenderers?.[exec.name];
                   if (Renderer) {
                     return (
@@ -396,16 +403,43 @@ export function DefaultMessage({
                           result: exec.result,
                           error: exec.error,
                           approvalStatus: exec.approvalStatus,
+                          source: exec.source,
                         }}
                       />
                     );
                   }
 
-                  // PRIORITY 2: tool's own render function
+                  // PRIORITY 2: mcpToolRenderer (catch-all for MCP tools)
                   const toolDef = registeredTools?.find(
                     (t) => t.name === exec.name,
                   );
-                  if (toolDef?.render) {
+                  if (
+                    mcpToolRenderer &&
+                    (exec.source === "mcp" || toolDef?.source === "mcp")
+                  ) {
+                    const MCPRenderer = mcpToolRenderer;
+                    return (
+                      <MCPRenderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
+                          source: exec.source || toolDef?.source,
+                        }}
+                      />
+                    );
+                  }
+
+                  // PRIORITY 3: tool's own render function
+                  // toolDef already defined above for MCP check
+                  const toolDefForRender =
+                    toolDef ??
+                    registeredTools?.find((t) => t.name === exec.name);
+                  if (toolDefForRender?.render) {
                     // Map execution status to ToolRenderProps status
                     let status: ToolRenderProps["status"] = "pending";
                     if (exec.status === "executing") status = "executing";
@@ -425,7 +459,7 @@ export function DefaultMessage({
                       toolCallId: exec.id,
                       toolName: exec.name,
                     };
-                    const output = toolDef.render(
+                    const output = toolDefForRender.render(
                       renderProps,
                     ) as React.ReactNode;
                     return (
@@ -441,7 +475,12 @@ export function DefaultMessage({
 
             {/* Tool Steps (default display for tools without custom renderers) */}
             {toolSteps && toolSteps.length > 0 && (
-              <div className="mt-2 rounded-lg bg-muted/50 px-3 py-2">
+              <div
+                className={cn(
+                  "rounded-lg bg-muted/50 px-3 py-2",
+                  cleanContent?.trim() && "mt-2",
+                )}
+              >
                 <ToolSteps steps={toolSteps} />
               </div>
             )}

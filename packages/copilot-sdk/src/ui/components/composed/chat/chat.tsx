@@ -522,6 +522,7 @@ function ChatComponent({
   isProcessing = false,
   registeredTools,
   toolRenderers,
+  mcpToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   // Follow-up Questions
@@ -978,6 +979,7 @@ function ChatComponent({
                         loaderVariant={loaderVariant}
                         registeredTools={registeredTools}
                         toolRenderers={toolRenderers}
+                        mcpToolRenderer={mcpToolRenderer}
                         onApproveToolExecution={onApproveToolExecution}
                         onRejectToolExecution={onRejectToolExecution}
                         showFollowUps={showFollowUps}

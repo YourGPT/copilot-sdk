@@ -380,7 +380,7 @@ function NavigationTool() {
     name: "navigate",
     description:
       "Navigate to a page section on the dashboard. Use this to help users find features.",
-    hidden: true, // This tool won't show in the chat UI
+    // hidden: true, // This tool won't show in the chat UI
     inputSchema: {
       type: "object",
       properties: {

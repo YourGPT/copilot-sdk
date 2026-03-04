@@ -4,7 +4,7 @@
  * Types for tool execution and agent loop.
  */
 
-import type { ToolDefinition, PermissionLevel } from "../../core";
+import type { ToolDefinition, PermissionLevel, ToolSource } from "../../core";
 
 /**
  * Tool call from LLM
@@ -52,6 +52,11 @@ export interface ToolExecution {
   args: Record<string, unknown>;
   status: ToolExecutionStatus;
   approvalStatus: ToolApprovalStatus;
+  /**
+   * Source/origin of the tool.
+   * Used to distinguish MCP tools from native/custom tools for UI rendering.
+   */
+  source?: ToolSource;
   result?: unknown;
   error?: string;
   startedAt?: Date;

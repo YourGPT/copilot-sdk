@@ -37,6 +37,12 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
   needsApproval?: boolean;
   /** Custom approval message (can be string or function that receives params) */
   approvalMessage?: string | ((params: TParams) => string);
+  /**
+   * Hide this tool from the chat UI.
+   * Tool will still execute, but won't show in tool execution display.
+   * @default false
+   */
+  hidden?: boolean;
 }
 
 /**
@@ -89,6 +95,7 @@ export function useTool<TParams = Record<string, unknown>>(
       needsApproval: config.needsApproval,
       approvalMessage:
         config.approvalMessage as ToolDefinition["approvalMessage"],
+      hidden: config.hidden,
     };
 
     // Register tool

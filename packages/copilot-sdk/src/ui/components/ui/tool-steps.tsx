@@ -254,11 +254,9 @@ export function ToolStep({
       )}
 
       {/* Step row */}
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         {/* Status indicator - only show for non-executing states */}
-        {!isExecuting && (
-          <StatusIndicator status={step.status} className="mt-0.5" />
-        )}
+        {!isExecuting && <StatusIndicator status={step.status} />}
 
         <div className="flex-1 min-w-0">
           {/* Clickable trigger */}
