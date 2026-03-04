@@ -37,6 +37,16 @@ export interface MCPToolAdapterOptions {
     name: string,
     args?: Record<string, unknown>,
   ) => Promise<MCPToolCallResult>;
+  /**
+   * Hide all tools from this MCP server in the chat UI.
+   * @default false
+   */
+  hidden?: boolean;
+  /**
+   * Source label for tools from this MCP server.
+   * @default "mcp"
+   */
+  source?: "mcp" | "native" | "custom";
 }
 
 /**
@@ -58,7 +68,13 @@ export class MCPToolAdapter {
     mcpTool: MCPToolDefinition,
     options: MCPToolAdapterOptions,
   ): ToolDefinition {
-    const { prefix = true, asServerTool = true, callTool } = options;
+    const {
+      prefix = true,
+      asServerTool = true,
+      callTool,
+      hidden = false,
+      source = "mcp",
+    } = options;
 
     const toolName = prefix
       ? `${this.clientName}_${mcpTool.name}`
@@ -71,6 +87,8 @@ export class MCPToolAdapter {
       name: toolName,
       description: mcpTool.description ?? `MCP tool: ${mcpTool.name}`,
       location: asServerTool ? "server" : "client",
+      source, // Mark tool source for UI differentiation
+      hidden, // Hide from chat UI if specified
       inputSchema: this.convertInputSchema(mcpTool.inputSchema),
       handler: async (
         params: Record<string, unknown>,

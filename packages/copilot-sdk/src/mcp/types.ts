@@ -536,6 +536,18 @@ export interface UseMCPToolsConfig extends UseMCPClientConfig {
   prefixToolNames?: boolean;
   /** Auto-register tools with CopilotProvider (default: true) */
   autoRegister?: boolean;
+  /**
+   * Hide all tools from this MCP server in the chat UI.
+   * Tools will still execute, but won't show in the tool execution display.
+   * @default false
+   */
+  hidden?: boolean;
+  /**
+   * Source label for tools from this MCP server.
+   * Used to identify MCP tools in the UI for custom rendering.
+   * @default "mcp"
+   */
+  source?: "mcp" | "native" | "custom";
 }
 
 /**
@@ -554,6 +566,18 @@ export interface MCPServerConfig {
   timeout?: number;
   /** Prefix tool names with server name (default: true) */
   prefixToolNames?: boolean;
+  /**
+   * Hide all tools from this MCP server in the chat UI.
+   * Tools will still execute, but won't show in the tool execution display.
+   * @default false
+   */
+  hidden?: boolean;
+  /**
+   * Source label for tools from this MCP server.
+   * Used to identify MCP tools in the UI for custom rendering.
+   * @default "mcp"
+   */
+  source?: "mcp" | "native" | "custom";
 }
 
 /**

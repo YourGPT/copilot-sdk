@@ -56,6 +56,8 @@ export function useMCPTools(config: UseMCPToolsConfig): UseMCPToolsReturn {
   const {
     prefixToolNames = true,
     autoRegister = true,
+    hidden = false,
+    source = "mcp",
     ...clientConfig
   } = config;
 
@@ -85,6 +87,8 @@ export function useMCPTools(config: UseMCPToolsConfig): UseMCPToolsReturn {
         prefix: prefixToolNames,
         asServerTool: true, // MCP tools execute remotely
         callTool: mcpClient.callTool,
+        hidden, // Hide from chat UI
+        source, // Tool source for UI differentiation
       }),
     );
   }, [
@@ -93,6 +97,8 @@ export function useMCPTools(config: UseMCPToolsConfig): UseMCPToolsReturn {
     mcpClient.callTool,
     toolAdapter,
     prefixToolNames,
+    hidden,
+    source,
   ]);
 
   // Auto-register/unregister tools with CopilotProvider

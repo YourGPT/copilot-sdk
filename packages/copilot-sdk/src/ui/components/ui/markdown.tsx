@@ -1,5 +1,5 @@
 import { memo, ComponentProps } from "react";
-import { Streamdown } from "streamdown";
+import { Streamdown, LinkSafetyConfig } from "streamdown";
 import { code } from "@streamdown/code";
 
 export type MarkdownProps = {
@@ -7,6 +7,8 @@ export type MarkdownProps = {
   id?: string;
   className?: string;
   isStreaming?: boolean;
+  /** Link safety modal configuration. Disabled by default. */
+  linkSafety?: LinkSafetyConfig;
 };
 
 // Normalized heading component for chat UI (same size, just bold)
@@ -38,6 +40,7 @@ function MarkdownComponent({
   children,
   className,
   isStreaming = false,
+  linkSafety = { enabled: false },
 }: MarkdownProps) {
   return (
     <div className={className}>
@@ -45,6 +48,7 @@ function MarkdownComponent({
         plugins={{ code }}
         isAnimating={isStreaming}
         components={headingComponents}
+        linkSafety={linkSafety}
       >
         {children}
       </Streamdown>
@@ -56,3 +60,4 @@ const Markdown = memo(MarkdownComponent);
 Markdown.displayName = "Markdown";
 
 export { Markdown };
+export type { LinkSafetyConfig } from "streamdown";

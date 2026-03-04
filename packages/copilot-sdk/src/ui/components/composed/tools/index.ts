@@ -4,6 +4,7 @@ export {
   type ToolExecutionData,
   type ToolExecutionStatus,
   type ToolApprovalStatus,
+  type ToolExecutionSource,
 } from "./tool-execution-list";
 
 export {

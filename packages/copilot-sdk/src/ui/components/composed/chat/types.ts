@@ -147,6 +147,8 @@ export interface ToolRendererProps {
     approvalStatus?: ToolApprovalStatus;
     /** Data passed from user's approval action */
     approvalData?: Record<string, unknown>;
+    /** Tool source (mcp, native, custom) - useful for MCP tool identification */
+    source?: "mcp" | "native" | "custom";
   };
   /**
    * Approval callbacks - only provided when approvalStatus is 'required'.
@@ -382,6 +384,24 @@ export type ChatProps = {
    * ```
    */
   toolRenderers?: ToolRenderers;
+
+  /**
+   * Catch-all renderer for MCP tools (tools with source: "mcp").
+   * Applied to all MCP tools that don't have a specific renderer in `toolRenderers`.
+   *
+   * Priority: toolRenderers[name] > mcpToolRenderer > tool.render > default
+   *
+   * @example
+   * ```tsx
+   * <Chat
+   *   mcpToolRenderer={MCPToolCard}  // Applies to all MCP tools
+   *   toolRenderers={{
+   *     "mcp360_special_tool": SpecialCard,  // Override for specific tool
+   *   }}
+   * />
+   * ```
+   */
+  mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
 
   // === Tool Approval (Human-in-the-loop) ===
   /**

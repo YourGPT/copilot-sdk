@@ -179,11 +179,6 @@ export function useInternalThreadManager(
 
   // Auto-restore: load messages when thread is restored from storage
   useEffect(() => {
-    // Skip if no adapter (persistence not enabled)
-    if (!adapter) {
-      return;
-    }
-
     // Skip if already initialized or no thread restored yet
     if (hasInitializedRef.current || !currentThread) {
       return;
@@ -225,11 +220,6 @@ export function useInternalThreadManager(
 
   // Sync messages to storage when streaming completes
   useEffect(() => {
-    // Skip if no adapter (persistence not enabled) - don't sync/create threads
-    if (!adapter) {
-      return;
-    }
-
     // Skip if we're loading messages from a thread switch
     if (isLoadingMessagesRef.current) {
       return;
