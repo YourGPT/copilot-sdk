@@ -215,7 +215,7 @@ The SDK supports various MCP server authentication methods:
 
 ## Using MCP360 Gateway
 
-Connect to [MCP360](https://mcp360.ai) to access 50+ pre-built MCP tools:
+Connect to [MCP360](https://mcp360.ai) to access 100+ pre-built MCP tools:
 
 1. Get your token at [mcp360.ai](https://mcp360.ai)
 
@@ -225,7 +225,7 @@ Connect to [MCP360](https://mcp360.ai) to access 50+ pre-built MCP tools:
    NEXT_PUBLIC_MCP360_URL=https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN
    ```
 
-3. The demo sidebar will show "MCP360 Gateway" - click **Connect** to use 50+ tools.
+3. The demo sidebar will show "MCP360 Gateway" - click **Connect** to use 100+ tools.
 
 **MCP360 Tools Include:**
 

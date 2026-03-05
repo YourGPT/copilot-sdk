@@ -43,7 +43,7 @@ const DEFAULT_SERVERS: MCPServerConfig[] = [
   {
     id: "mcp360",
     name: "MCP360 Gateway",
-    description: "50+ tools for search, scraping & data",
+    description: "100+ tools for search, scraping & data",
     url: process.env.NEXT_PUBLIC_MCP360_URL || "",
     icon: <Sparkles className="w-4 h-4" />,
     enabled: false,
@@ -225,7 +225,7 @@ function MCPServerCard({
           <div className="pt-3 flex items-start justify-between gap-4">
             <div className="flex-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-2">
-                50+ Tools Available
+                100+ Tools Available
               </p>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Web Scraping · Keyword Research · IP Info · Google Search ·

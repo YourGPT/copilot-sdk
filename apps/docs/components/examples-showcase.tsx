@@ -21,7 +21,7 @@ const examples: Example[] = [
     id: "mcp-demo",
     title: "MCP Integration",
     description:
-      "Connect to MCP servers and access 50+ tools including web search, scraping, SEO, and more. Features MCP-UI for interactive components like product cards, polls, and charts.",
+      "Connect to MCP servers and access 100+ tools including web search, scraping, SEO, and more. Features MCP-UI for interactive components like product cards, polls, and charts.",
     preview: "/images/mcp-demo.png",
     tags: ["MCP", "Tools", "MCP-UI", "Interactive"],
     github:
