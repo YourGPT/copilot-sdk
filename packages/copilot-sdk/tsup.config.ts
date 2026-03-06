@@ -8,6 +8,7 @@ export default defineConfig({
     "react/index": "src/react/index.ts",
     "ui/index": "src/ui/index.ts",
     "mcp/index": "src/mcp/index.ts",
+    "knowledge/index": "src/knowledge/index.ts",
 
     // Tool subpath exports (tree-shakeable)
     "tools/web-search/index": "src/tools/web-search/index.ts",

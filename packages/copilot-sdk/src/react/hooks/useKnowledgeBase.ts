@@ -1,54 +1,62 @@
 "use client";
 
+/**
+ * Knowledge Base Hook
+ *
+ * Registers a hidden knowledge base search tool that the AI can use
+ * to search your project's trained knowledge base.
+ *
+ * @see https://docs.yourgpt.ai/chatbot/developer-guide/api-reference/chatbot/searchIndexDocument
+ */
+
 import { useEffect, useRef, useCallback } from "react";
 import { useCopilot } from "../provider/CopilotProvider";
 import {
   searchKnowledgeBase,
   formatKnowledgeResultsForAI,
-  type KnowledgeBaseConfig,
-  type KnowledgeBaseResult,
-  type KnowledgeBaseSearchResponse,
 } from "../utils/knowledge-base";
+import type {
+  KnowledgeBaseConfig,
+  KnowledgeBaseResult,
+  KnowledgeBaseSearchResponse,
+} from "../../core";
 
 /**
- * Hook configuration for knowledge base
+ * Default tool name for knowledge base search
  */
-export interface UseKnowledgeBaseConfig {
-  /** Project UID for the knowledge base */
-  projectUid: string;
-  /** Auth token for API calls */
-  token: string;
-  /** App ID (default: "1") */
-  appId?: string;
-  /** Results limit (default: 5) */
-  limit?: number;
-  /** Whether to enable the tool (default: true) */
-  enabled?: boolean;
-}
+const DEFAULT_TOOL_NAME = "search_knowledge";
 
 /**
- * Hook to integrate knowledge base search as a tool
+ * Default tool description
+ */
+const DEFAULT_TOOL_DESCRIPTION =
+  "Search the knowledge base for relevant information about the product, documentation, or company. Use this to answer questions about features, pricing, policies, guides, or any factual information.";
+
+/**
+ * Hook to integrate knowledge base search as a hidden internal tool
  *
  * Registers a `search_knowledge` tool that the AI can use to search
- * the knowledge base for relevant information.
+ * the knowledge base. The tool is hidden from the UI but still executes.
+ *
+ * @param config - Knowledge base configuration
  *
  * @example
  * ```tsx
  * function MyComponent() {
  *   useKnowledgeBase({
- *     projectUid: "your-project-uid",
- *     token: "your-auth-token",
+ *     apiKey: "your-yourgpt-api-key",
+ *     limit: 10,
  *   });
  *
  *   return <CopilotChat />;
  * }
  * ```
  */
-export function useKnowledgeBase(config: UseKnowledgeBaseConfig): void {
+export function useKnowledgeBase(config: KnowledgeBaseConfig): void {
   const { registerTool, unregisterTool } = useCopilot();
   const configRef = useRef(config);
 
-  // Update config ref
+  // Update config ref on changes
   configRef.current = config;
 
   // Search handler
@@ -70,17 +78,9 @@ export function useKnowledgeBase(config: UseKnowledgeBaseConfig): void {
       }
 
       const currentConfig = configRef.current;
-
-      const kbConfig: KnowledgeBaseConfig = {
-        projectUid: currentConfig.projectUid,
-        token: currentConfig.token,
-        appId: currentConfig.appId,
-        limit: currentConfig.limit || 5,
-      };
-
       const response: KnowledgeBaseSearchResponse = await searchKnowledgeBase(
         query,
-        kbConfig,
+        currentConfig,
       );
 
       if (!response.success) {
@@ -110,11 +110,14 @@ export function useKnowledgeBase(config: UseKnowledgeBaseConfig): void {
       return;
     }
 
+    const toolName = config.toolName || DEFAULT_TOOL_NAME;
+
     registerTool({
-      name: "search_knowledge",
-      description:
-        "Search the knowledge base for relevant information about the product, documentation, or company. Use this to answer questions about features, pricing, policies, guides, or any factual information.",
+      name: toolName,
+      description: config.toolDescription || DEFAULT_TOOL_DESCRIPTION,
       location: "client",
+      // Hidden internal tool - executes but doesn't show in UI
+      hidden: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -130,12 +133,13 @@ export function useKnowledgeBase(config: UseKnowledgeBaseConfig): void {
     });
 
     return () => {
-      unregisterTool("search_knowledge");
+      unregisterTool(toolName);
     };
   }, [
     config.enabled,
-    config.projectUid,
-    config.token,
+    config.apiKey,
+    config.toolName,
+    config.toolDescription,
     registerTool,
     unregisterTool,
     handleSearch,

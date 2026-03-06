@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/copilot-sdk",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Copilot SDK for building Production-ready AI Copilots for any product. Connect any LLM, deploy on your infrastructure, own your data.",
   "type": "module",
   "types": "./dist/core/index.d.ts",
@@ -24,6 +24,11 @@
       "types": "./dist/mcp/index.d.ts",
       "import": "./dist/mcp/index.js",
       "require": "./dist/mcp/index.cjs"
+    },
+    "./knowledge": {
+      "types": "./dist/knowledge/index.d.ts",
+      "import": "./dist/knowledge/index.js",
+      "require": "./dist/knowledge/index.cjs"
     },
     "./ui/styles.css": "./dist/styles.css",
     "./ui/themes/vercel.css": "./dist/themes/vercel.css",

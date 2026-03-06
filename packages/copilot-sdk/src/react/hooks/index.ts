@@ -51,10 +51,7 @@ export {
 } from "./useAgent";
 
 // Knowledge Base
-export {
-  useKnowledgeBase,
-  type UseKnowledgeBaseConfig,
-} from "./useKnowledgeBase";
+export { useKnowledgeBase } from "./useKnowledgeBase";
 
 // Capabilities Hooks (for multi-provider support)
 export {

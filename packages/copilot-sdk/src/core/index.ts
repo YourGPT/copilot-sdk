@@ -141,13 +141,12 @@ export type {
   ErrorEvent,
   DoneEvent,
   DoneEventMessage,
-  // Knowledge Base types
-  KnowledgeBaseProvider,
+  // Knowledge Base types (YourGPT searchIndexDocument API)
   KnowledgeBaseConfig,
   KnowledgeBaseResult,
-  KnowledgeBaseSearchRequest,
   KnowledgeBaseSearchResponse,
-  // Internal Knowledge Base types (for managed cloud)
+  KnowledgeBaseAPIResponse,
+  // Legacy Knowledge Base types (deprecated)
   InternalKnowledgeBaseConfig,
   InternalKnowledgeBaseResult,
   InternalKnowledgeBaseSearchResponse,

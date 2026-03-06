@@ -85,8 +85,8 @@ const webSearch = anthropicSearch({
 
 ## Third-Party Providers
 
-### MCP360 Gateway
-
+<Accordions type="multiple" defaultValue={["mcp360"]}>
+  <Accordion title="MCP360 Gateway" id="mcp360">
 [MCP360](https://mcp360.ai) provides web search through MCP along with 100+ other tools:
 
 ```tsx
@@ -101,13 +101,8 @@ function Chat() {
 }
 ```
 
-<Callout type="info">
 **More than just search** — MCP360 includes [Google Search](https://mcp360.ai/mcps/google-search), [Web Scraping](https://mcp360.ai/mcps/web-scraping), SEO tools, e-commerce data, and 100+ other tools through a single connection. [Explore all tools →](https://mcp360.ai)
-</Callout>
-
-### Other Providers
-
-<Accordions>
+  </Accordion>
   <Accordion title="Tavily">
 ```ts
 import { tavilySearch } from '@yourgpt/copilot-sdk/tools/tavily';

@@ -1,33 +1,39 @@
 /**
  * Knowledge Base Search Utility
  *
- * Integrates with managed cloud knowledge base API to search indexed documents.
+ * Integrates with YourGPT's searchIndexDocument API for semantic search
+ * across your project's trained knowledge base.
+ *
+ * @see https://docs.yourgpt.ai/chatbot/developer-guide/api-reference/chatbot/searchIndexDocument
  */
 
 import type {
-  InternalKnowledgeBaseConfig,
-  InternalKnowledgeBaseResult,
-  InternalKnowledgeBaseSearchResponse,
+  KnowledgeBaseConfig,
+  KnowledgeBaseResult,
+  KnowledgeBaseSearchResponse,
+  KnowledgeBaseAPIResponse,
 } from "../../core";
 
+/**
+ * YourGPT Knowledge Base API endpoint
+ */
 const KNOWLEDGE_BASE_API =
   "https://api.yourgpt.ai/chatbot/v1/searchIndexDocument";
 
-// Re-export types for convenience
-export type KnowledgeBaseResult = InternalKnowledgeBaseResult;
-export type KnowledgeBaseConfig = InternalKnowledgeBaseConfig;
-
-// Extended response with page info (client-side specific)
-export interface KnowledgeBaseSearchResponse extends InternalKnowledgeBaseSearchResponse {
-  page?: number;
-}
-
 /**
- * Search the knowledge base
+ * Search the knowledge base using YourGPT's searchIndexDocument API
  *
  * @param query - Search query string
  * @param config - Knowledge base configuration
  * @returns Search results
+ *
+ * @example
+ * ```ts
+ * const results = await searchKnowledgeBase("How do I reset my password?", {
+ *   apiKey: "your-api-key",
+ *   limit: 5,
+ * });
+ * ```
  */
 export async function searchKnowledgeBase(
   query: string,
@@ -37,61 +43,94 @@ export async function searchKnowledgeBase(
     const response = await fetch(KNOWLEDGE_BASE_API, {
       method: "POST",
       headers: {
-        accept: "*/*",
-        "content-type": "application/json",
-        authorization: `Bearer ${config.token}`,
+        "Content-Type": "application/json",
+        "api-key": config.apiKey,
       },
       body: JSON.stringify({
-        project_uid: config.projectUid,
-        query: query,
-        page: 1,
-        limit: String(config.limit || 10),
-        app_id: config.appId || "1",
+        query,
+        limit: config.limit ?? 10,
       }),
     });
 
     if (!response.ok) {
+      // Handle specific error codes
+      if (response.status === 401) {
+        return {
+          success: false,
+          results: [],
+          total: 0,
+          error: "Authentication failed. Check your API key.",
+        };
+      }
+      if (response.status === 403) {
+        return {
+          success: false,
+          results: [],
+          total: 0,
+          error:
+            "Knowledge Base API not available on your plan. Upgrade to Professional or above.",
+        };
+      }
+      if (response.status === 429) {
+        return {
+          success: false,
+          results: [],
+          total: 0,
+          error: "Rate limit exceeded. Try again later.",
+        };
+      }
+
       return {
         success: false,
         results: [],
+        total: 0,
         error: `API error: ${response.status} ${response.statusText}`,
       };
     }
 
-    const data = await response.json();
+    const data: KnowledgeBaseAPIResponse = await response.json();
 
-    // Transform API response to our format
-    // Adjust based on actual API response structure
-    const results: KnowledgeBaseResult[] = (
-      data.data ||
-      data.results ||
-      []
-    ).map((item: Record<string, unknown>) => ({
-      id: item.id || item._id || String(Math.random()),
-      title: item.title || item.name || undefined,
-      content: item.content || item.text || item.snippet || "",
-      score: item.score || item.relevance || undefined,
-      url: item.url || item.source_url || undefined,
-      metadata: item.metadata || {},
+    // Check for API-level errors
+    if (data.type !== "RXSUCCESS") {
+      return {
+        success: false,
+        results: [],
+        total: 0,
+        error: data.message || "Knowledge base search failed",
+      };
+    }
+
+    // Transform API response to normalized format
+    const results: KnowledgeBaseResult[] = (data.data || []).map((item) => ({
+      pointId: item.point_id,
+      docId: item.doc_id,
+      score: item.score,
+      content: item.content,
     }));
 
     return {
       success: true,
       results,
-      total: data.total || results.length,
-      page: data.page || 1,
+      total: results.length,
     };
   } catch (error) {
     return {
       success: false,
       results: [],
-      error: error instanceof Error ? error.message : "Unknown error",
+      total: 0,
+      error: error instanceof Error ? error.message : "Network error",
     };
   }
 }
 
 /**
  * Format knowledge base results for AI context
+ *
+ * Converts search results into a markdown-formatted string
+ * that provides context to the AI model.
+ *
+ * @param results - Search results to format
+ * @returns Formatted string for AI context
  */
 export function formatKnowledgeResultsForAI(
   results: KnowledgeBaseResult[],
@@ -102,26 +141,32 @@ export function formatKnowledgeResultsForAI(
 
   return results
     .map((result, index) => {
-      const parts = [`[${index + 1}]`];
-      if (result.title) parts.push(`**${result.title}**`);
-      parts.push(result.content);
-      if (result.url) parts.push(`Source: ${result.url}`);
-      return parts.join("\n");
+      const score = Math.round(result.score * 100);
+      return `[${index + 1}] (${score}% match)\n${result.content}`;
     })
     .join("\n\n---\n\n");
 }
 
 /**
  * System instruction for knowledge base usage
+ *
+ * Provides guidance to the AI on how to use the knowledge base tool.
  */
 export const KNOWLEDGE_BASE_SYSTEM_INSTRUCTION = `
-You have access to a knowledge base tool called "search_knowledge". Use this tool to:
+You have access to a knowledge base search tool. Use this tool to:
 - Answer questions about the product, documentation, or company information
-- Find specific information when the user asks about features, pricing, policies, etc.
+- Find specific information when asked about features, pricing, policies, etc.
 - Retrieve relevant context before answering factual questions
 
 When using knowledge base results:
-- Cite the information source when relevant
+- Cite the information when relevant
 - If no results are found, acknowledge this and provide general guidance
 - Combine knowledge base information with your general knowledge when helpful
 `.trim();
+
+// Re-export types for convenience
+export type {
+  KnowledgeBaseConfig,
+  KnowledgeBaseResult,
+  KnowledgeBaseSearchResponse,
+};

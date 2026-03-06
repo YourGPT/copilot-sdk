@@ -60,7 +60,6 @@ export {
   useKnowledgeBase,
   searchKnowledgeBase,
   formatKnowledgeResultsForAI,
-  type UseKnowledgeBaseConfig,
   type KnowledgeBaseConfig,
   type KnowledgeBaseResult,
   type KnowledgeBaseSearchResponse,

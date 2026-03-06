@@ -28,6 +28,8 @@ import type {
 } from "../../core";
 
 import type { MCPServerConfig } from "../../mcp/types";
+import type { KnowledgeBaseConfig } from "../../core";
+import type { Resolvable } from "../../core/utils/resolvable";
 
 import type { UIMessage, ToolExecution } from "../../chat";
 
@@ -42,6 +44,7 @@ import {
   type ContextTreeNode,
 } from "../utils/context-tree";
 import { useMCPTools } from "../hooks/useMCPTools";
+import { KnowledgeBaseConnection } from "../internal/KnowledgeBaseConnection";
 
 // ============================================
 // Internal MCP Connection Component
@@ -66,8 +69,22 @@ function MCPConnection({ config }: { config: MCPServerConfig }) {
 
 export interface CopilotProviderProps {
   children: React.ReactNode;
-  /** Runtime API endpoint URL */
-  runtimeUrl: string;
+  /**
+   * Runtime API endpoint URL
+   *
+   * Can be static string or getter function for dynamic resolution.
+   * Getter functions are resolved at request time.
+   *
+   * @example
+   * ```tsx
+   * // Static
+   * <CopilotProvider runtimeUrl="/api/copilot" />
+   *
+   * // Dynamic
+   * <CopilotProvider runtimeUrl={() => `${getBaseUrl()}/copilot`} />
+   * ```
+   */
+  runtimeUrl: Resolvable<string>;
   /** System prompt sent with each request */
   systemPrompt?: string;
   /** @deprecated Use useTools() hook instead */
@@ -82,8 +99,34 @@ export interface CopilotProviderProps {
   onError?: (error: Error) => void;
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
-  /** Custom headers to send with each request */
-  headers?: Record<string, string>;
+  /**
+   * Custom headers to send with each request
+   *
+   * Can be static object or getter function for dynamic resolution.
+   * **Getter functions are recommended** for values that change at runtime
+   * as they ensure fresh values on every request.
+   *
+   * @example
+   * ```tsx
+   * // Static
+   * <CopilotProvider headers={{ "x-api-key": "static-key" }} />
+   *
+   * // Dynamic (resolved fresh on each request)
+   * <CopilotProvider
+   *   headers={() => ({
+   *     Authorization: `Bearer ${getToken()}`,
+   *     ...getCustomHeaders(),
+   *   })}
+   * />
+   * ```
+   */
+  headers?: Resolvable<Record<string, string>>;
+  /**
+   * Additional body properties to include in each request
+   *
+   * Can be static object or getter function for dynamic resolution.
+   */
+  body?: Resolvable<Record<string, unknown>>;
   /** Enable debug logging */
   debug?: boolean;
   /** Max tool execution iterations (default: 20) */
@@ -92,6 +135,28 @@ export interface CopilotProviderProps {
   maxIterationsMessage?: string;
   /** MCP servers to connect to automatically */
   mcpServers?: MCPServerConfig[];
+  /**
+   * Knowledge Base configuration for automatic RAG integration.
+   *
+   * When provided, registers a hidden `search_knowledge` tool that the AI
+   * can use to search your project's trained knowledge base.
+   *
+   * @see https://docs.yourgpt.ai/chatbot/developer-guide/api-reference/chatbot/searchIndexDocument
+   *
+   * @example
+   * ```tsx
+   * <CopilotProvider
+   *   runtimeUrl="/api/copilot"
+   *   knowledgeBase={{
+   *     apiKey: "your-yourgpt-api-key",
+   *     limit: 10,
+   *   }}
+   * >
+   *   {children}
+   * </CopilotProvider>
+   * ```
+   */
+  knowledgeBase?: KnowledgeBaseConfig;
 }
 
 export interface CopilotContextValue {
@@ -142,7 +207,12 @@ export interface CopilotContextValue {
 
   // Config
   threadId?: string;
-  runtimeUrl: string;
+  /**
+   * Runtime URL configuration.
+   * Can be a static string or getter function (matches what was passed to provider).
+   * If you need the resolved string value, check typeof first.
+   */
+  runtimeUrl: Resolvable<string>;
   toolsConfig?: ToolsConfig;
 }
 
@@ -175,10 +245,12 @@ export function CopilotProvider({
   onError,
   streaming,
   headers,
+  body,
   debug = false,
   maxIterations,
   maxIterationsMessage,
   mcpServers,
+  knowledgeBase,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -240,6 +312,7 @@ export function CopilotProvider({
         initialMessages: uiInitialMessages,
         streaming,
         headers,
+        body,
         debug,
         maxIterations,
         maxIterationsMessage,
@@ -270,6 +343,36 @@ export function CopilotProvider({
       debugLog("System prompt updated from prop");
     }
   }, [systemPrompt, debugLog]);
+
+  // ============================================
+  // Headers & Body Reactivity
+  // ============================================
+
+  // Watch for headers prop changes and update chat
+  // Note: If using getter functions, values are resolved at request time automatically.
+  // This useEffect handles cases where the prop reference itself changes.
+  useEffect(() => {
+    if (chatRef.current && headers !== undefined) {
+      chatRef.current.setHeaders(headers);
+      debugLog("Headers config updated from prop");
+    }
+  }, [headers, debugLog]);
+
+  // Watch for body prop changes
+  useEffect(() => {
+    if (chatRef.current && body !== undefined) {
+      chatRef.current.setBody(body);
+      debugLog("Body config updated from prop");
+    }
+  }, [body, debugLog]);
+
+  // Watch for runtimeUrl prop changes
+  useEffect(() => {
+    if (chatRef.current && runtimeUrl !== undefined) {
+      chatRef.current.setUrl(runtimeUrl);
+      debugLog("URL config updated from prop");
+    }
+  }, [runtimeUrl, debugLog]);
 
   // Subscribe to chat state with useSyncExternalStore
   const messages = useSyncExternalStore(
@@ -540,6 +643,9 @@ export function CopilotProvider({
       {mcpServers?.map((config) => (
         <MCPConnection key={config.name} config={config} />
       ))}
+      {knowledgeBase && knowledgeBase.enabled !== false && (
+        <KnowledgeBaseConnection config={knowledgeBase} />
+      )}
       {children}
     </CopilotContext.Provider>
   );

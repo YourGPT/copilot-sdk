@@ -2,6 +2,7 @@
 node_modules
 .pnpm-store
 
+
 # Build outputs
 dist
 .next
@@ -55,3 +56,5 @@ skills/
 
 # Private projects (not part of SDK)
 examples/yourgpt-chatbot/
+
+tmp

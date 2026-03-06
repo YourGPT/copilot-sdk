@@ -1,165 +1,181 @@
 /**
  * Knowledge Base Types
  *
- * Configuration and types for Knowledge Base (RAG) integration.
- * Currently a placeholder - full implementation coming soon.
+ * Configuration and types for Knowledge Base (RAG) integration
+ * with YourGPT's searchIndexDocument API.
+ *
+ * @see https://docs.yourgpt.ai/chatbot/developer-guide/api-reference/chatbot/searchIndexDocument
  */
 
-/**
- * Supported vector database providers
- */
-export type KnowledgeBaseProvider =
-  | "pinecone"
-  | "qdrant"
-  | "chroma"
-  | "supabase"
-  | "weaviate"
-  | "custom";
+// ============================================
+// Knowledge Base Configuration
+// ============================================
 
 /**
- * Knowledge Base configuration
+ * Knowledge Base configuration for CopilotProvider
+ *
+ * Uses YourGPT's searchIndexDocument API for semantic search
+ * across your project's trained knowledge base.
+ *
+ * @example
+ * ```tsx
+ * <CopilotProvider
+ *   runtimeUrl="/api/copilot"
+ *   knowledgeBase={{
+ *     apiKey: "your-yourgpt-api-key",
+ *     limit: 10,
+ *   }}
+ * >
+ *   {children}
+ * </CopilotProvider>
+ * ```
  */
 export interface KnowledgeBaseConfig {
-  /** Unique identifier for this knowledge base */
-  id: string;
+  /**
+   * API key for authentication.
+   * Generate from Integration settings in your YourGPT dashboard.
+   */
+  apiKey: string;
 
-  /** Display name */
-  name?: string;
-
-  /** Vector database provider */
-  provider: KnowledgeBaseProvider;
-
-  /** API key for the vector database */
-  apiKey?: string;
-
-  /** Index/collection name */
-  index?: string;
-
-  /** Namespace within the index */
-  namespace?: string;
-
-  /** Custom endpoint URL (for self-hosted or custom providers) */
-  endpoint?: string;
-
-  /** Number of results to return (default: 5) */
-  topK?: number;
-
-  /** Minimum similarity score threshold (0-1) */
-  scoreThreshold?: number;
-
-  /** Whether to include source metadata in results */
-  includeMetadata?: boolean;
-}
-
-/**
- * Knowledge Base search result
- */
-export interface KnowledgeBaseResult {
-  /** Result content/text */
-  content: string;
-
-  /** Similarity score (0-1) */
-  score: number;
-
-  /** Source metadata */
-  metadata?: {
-    /** Source document/URL */
-    source?: string;
-    /** Document title */
-    title?: string;
-    /** Page number (for PDFs) */
-    page?: number;
-    /** Chunk index */
-    chunk?: number;
-    /** Any additional metadata */
-    [key: string]: unknown;
-  };
-}
-
-/**
- * Knowledge Base search request
- */
-export interface KnowledgeBaseSearchRequest {
-  /** Search query */
-  query: string;
-
-  /** Knowledge base ID to search */
-  knowledgeBaseId: string;
-
-  /** Number of results (overrides config) */
+  /**
+   * Maximum results to return (default: 10, max: 100)
+   */
   limit?: number;
 
-  /** Filter by metadata */
-  filter?: Record<string, unknown>;
+  /**
+   * Whether KB search is enabled (default: true)
+   */
+  enabled?: boolean;
+
+  /**
+   * Custom tool name (default: "search_knowledge")
+   */
+  toolName?: string;
+
+  /**
+   * Custom tool description for the AI
+   */
+  toolDescription?: string;
+
+  /**
+   * Hide the tool card from the chat UI (default: false)
+   * When true, the tool executes but no card is shown
+   */
+  hidden?: boolean;
 }
 
 /**
- * Knowledge Base search response
+ * Props passed to the knowledge base render function
  */
-export interface KnowledgeBaseSearchResponse {
-  /** Search results */
+export interface KnowledgeBaseRenderProps {
+  /** The search query that was used */
+  query: string;
+
+  /** Whether the search is currently loading */
+  isLoading: boolean;
+
+  /** Search results (empty array while loading or if no results) */
   results: KnowledgeBaseResult[];
 
-  /** Knowledge base ID */
-  knowledgeBaseId: string;
+  /** Error message if the search failed */
+  error?: string;
 
-  /** Query that was searched */
-  query: string;
-
-  /** Search duration in ms */
-  durationMs?: number;
+  /** Total number of results */
+  total: number;
 }
 
 // ============================================
-// Internal Knowledge Base Types
-// (For managed cloud KB API)
+// Search Result Types
 // ============================================
 
 /**
- * Internal Knowledge Base configuration
- * Used for managed cloud searchIndexDocument API
+ * Individual search result from the knowledge base
+ *
+ * Maps to the API response structure from searchIndexDocument
+ */
+export interface KnowledgeBaseResult {
+  /** Unique point ID in the vector store */
+  pointId: string;
+
+  /** Document ID */
+  docId: string;
+
+  /** Relevance score (higher = more relevant) */
+  score: number;
+
+  /** Matched content chunk */
+  content: string;
+}
+
+/**
+ * API response from searchIndexDocument
+ */
+export interface KnowledgeBaseAPIResponse {
+  /** Response type */
+  type: "RXSUCCESS" | "RXERROR";
+
+  /** Response message */
+  message: string;
+
+  /** Search results */
+  data: Array<{
+    point_id: string;
+    doc_id: string;
+    score: number;
+    content: string;
+  }>;
+}
+
+/**
+ * Internal search response format
+ */
+export interface KnowledgeBaseSearchResponse {
+  /** Whether the search was successful */
+  success: boolean;
+
+  /** Normalized search results */
+  results: KnowledgeBaseResult[];
+
+  /** Total number of results */
+  total: number;
+
+  /** Error message if failed */
+  error?: string;
+}
+
+// ============================================
+// Legacy Types (Deprecated)
+// ============================================
+
+/**
+ * @deprecated Use KnowledgeBaseConfig instead
  */
 export interface InternalKnowledgeBaseConfig {
-  /** Project UID for the knowledge base */
   projectUid: string;
-  /** Auth token for API calls */
   token: string;
-  /** App ID (default: "1") */
   appId?: string;
-  /** Results limit (default: 5) */
   limit?: number;
-  /** Whether KB is enabled (default: true) */
   enabled?: boolean;
 }
 
 /**
- * Internal Knowledge Base search result
+ * @deprecated Use KnowledgeBaseResult instead
  */
 export interface InternalKnowledgeBaseResult {
-  /** Document ID */
   id: string;
-  /** Document title */
   title?: string;
-  /** Matched content snippet */
   content: string;
-  /** Relevance score */
   score?: number;
-  /** Source URL if available */
   url?: string;
-  /** Additional metadata */
   metadata?: Record<string, unknown>;
 }
 
 /**
- * Internal Knowledge Base search response
+ * @deprecated Use KnowledgeBaseSearchResponse instead
  */
 export interface InternalKnowledgeBaseSearchResponse {
-  /** Whether the search was successful */
   success: boolean;
-  /** Search results */
   results: InternalKnowledgeBaseResult[];
-  /** Total number of results */
   total?: number;
-  /** Error message if failed */
   error?: string;
 }
