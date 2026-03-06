@@ -28,6 +28,7 @@ import type {
 } from "../../core";
 
 import type { MCPServerConfig } from "../../mcp/types";
+import type { Resolvable } from "../../core/utils/resolvable";
 
 import type { UIMessage, ToolExecution } from "../../chat";
 
@@ -66,8 +67,11 @@ function MCPConnection({ config }: { config: MCPServerConfig }) {
 
 export interface CopilotProviderProps {
   children: React.ReactNode;
-  /** Runtime API endpoint URL */
-  runtimeUrl: string;
+  /**
+   * Runtime API endpoint URL
+   * Can be static string or getter function for dynamic resolution.
+   */
+  runtimeUrl: Resolvable<string>;
   /** System prompt sent with each request */
   systemPrompt?: string;
   /** @deprecated Use useTools() hook instead */
@@ -82,8 +86,16 @@ export interface CopilotProviderProps {
   onError?: (error: Error) => void;
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
-  /** Custom headers to send with each request */
-  headers?: Record<string, string>;
+  /**
+   * Custom headers to send with each request
+   * Can be static object or getter function for dynamic resolution.
+   */
+  headers?: Resolvable<Record<string, string>>;
+  /**
+   * Additional body properties to include in each request
+   * Can be static object or getter function for dynamic resolution.
+   */
+  body?: Resolvable<Record<string, unknown>>;
   /** Enable debug logging */
   debug?: boolean;
   /** Max tool execution iterations (default: 20) */
@@ -142,7 +154,11 @@ export interface CopilotContextValue {
 
   // Config
   threadId?: string;
-  runtimeUrl: string;
+  /**
+   * Runtime URL configuration.
+   * Can be a static string or getter function (matches what was passed to provider).
+   */
+  runtimeUrl: Resolvable<string>;
   toolsConfig?: ToolsConfig;
 }
 
@@ -175,6 +191,7 @@ export function CopilotProvider({
   onError,
   streaming,
   headers,
+  body,
   debug = false,
   maxIterations,
   maxIterationsMessage,
@@ -240,6 +257,7 @@ export function CopilotProvider({
         initialMessages: uiInitialMessages,
         streaming,
         headers,
+        body,
         debug,
         maxIterations,
         maxIterationsMessage,
@@ -270,6 +288,34 @@ export function CopilotProvider({
       debugLog("System prompt updated from prop");
     }
   }, [systemPrompt, debugLog]);
+
+  // ============================================
+  // Headers & Body Reactivity
+  // ============================================
+
+  // Watch for headers prop changes and update chat
+  useEffect(() => {
+    if (chatRef.current && headers !== undefined) {
+      chatRef.current.setHeaders(headers);
+      debugLog("Headers config updated from prop");
+    }
+  }, [headers, debugLog]);
+
+  // Watch for body prop changes
+  useEffect(() => {
+    if (chatRef.current && body !== undefined) {
+      chatRef.current.setBody(body);
+      debugLog("Body config updated from prop");
+    }
+  }, [body, debugLog]);
+
+  // Watch for runtimeUrl prop changes
+  useEffect(() => {
+    if (chatRef.current && runtimeUrl !== undefined) {
+      chatRef.current.setUrl(runtimeUrl);
+      debugLog("URL config updated from prop");
+    }
+  }, [runtimeUrl, debugLog]);
 
   // Subscribe to chat state with useSyncExternalStore
   const messages = useSyncExternalStore(

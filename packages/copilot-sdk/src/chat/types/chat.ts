@@ -5,6 +5,7 @@
  */
 
 import type { LLMConfig, MessageAttachment, ToolDefinition } from "../../core";
+import type { Resolvable } from "../../core/utils/resolvable";
 import type { UIMessage } from "./message";
 
 /**
@@ -14,18 +15,37 @@ export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
 
 /**
  * Chat configuration
+ *
+ * Supports both static values and getter functions for dynamic configuration.
+ * Using getter functions ensures fresh values on every request.
+ *
+ * @example
+ * ```typescript
+ * const config: ChatConfig = {
+ *   // Static URL
+ *   runtimeUrl: "/api/chat",
+ *
+ *   // Dynamic headers - resolved fresh on every request
+ *   headers: () => ({
+ *     Authorization: `Bearer ${getToken()}`,
+ *     ...getCustomHeaders(),
+ *   }),
+ * };
+ * ```
  */
 export interface ChatConfig {
-  /** Runtime API endpoint */
-  runtimeUrl: string;
+  /** Runtime API endpoint - can be static or getter function */
+  runtimeUrl: Resolvable<string>;
   /** LLM configuration */
   llm?: Partial<LLMConfig>;
   /** System prompt */
   systemPrompt?: string;
   /** Enable streaming (default: true) */
   streaming?: boolean;
-  /** Request headers */
-  headers?: Record<string, string>;
+  /** Request headers - can be static or getter function */
+  headers?: Resolvable<Record<string, string>>;
+  /** Additional body properties - can be static or getter function */
+  body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
   /** Debug mode */

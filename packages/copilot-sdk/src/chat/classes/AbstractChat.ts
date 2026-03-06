@@ -182,6 +182,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       systemPrompt: init.systemPrompt,
       streaming: init.streaming ?? true,
       headers: init.headers,
+      body: init.body,
       threadId: init.threadId,
       debug: init.debug,
     };
@@ -192,11 +193,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       (new SimpleChatState<T>() as ChatState<T>);
 
     // Use provided transport or create default
+    // Pass Resolvable values - they are resolved at request time
     this.transport =
       init.transport ??
       new HttpTransport({
         url: init.runtimeUrl,
         headers: init.headers,
+        body: init.body,
         streaming: init.streaming ?? true,
       });
 
@@ -574,6 +577,42 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   setSystemPrompt(prompt: string): void {
     this.config.systemPrompt = prompt;
     this.debug("System prompt updated", { length: prompt.length });
+  }
+
+  /**
+   * Set headers configuration
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders(headers: ChatConfig["headers"]): void {
+    this.config.headers = headers;
+    if (this.transport.setHeaders && headers !== undefined) {
+      this.transport.setHeaders(headers);
+    }
+    this.debug("Headers config updated");
+  }
+
+  /**
+   * Set URL configuration
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl(url: ChatConfig["runtimeUrl"]): void {
+    this.config.runtimeUrl = url;
+    if (this.transport.setUrl) {
+      this.transport.setUrl(url);
+    }
+    this.debug("URL config updated");
+  }
+
+  /**
+   * Set body configuration
+   * Additional properties merged into every request body
+   */
+  setBody(body: ChatConfig["body"]): void {
+    this.config.body = body;
+    if (this.transport.setBody && body !== undefined) {
+      this.transport.setBody(body);
+    }
+    this.debug("Body config updated");
   }
 
   /**

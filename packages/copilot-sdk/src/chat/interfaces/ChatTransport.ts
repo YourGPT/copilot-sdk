@@ -6,6 +6,7 @@
  */
 
 import type { UIMessage } from "../types";
+import type { Resolvable } from "../../core/utils/resolvable";
 
 /**
  * Chat request to send
@@ -150,16 +151,57 @@ export interface ChatTransport {
    * Check if currently streaming
    */
   isStreaming(): boolean;
+
+  /**
+   * Update headers configuration (optional)
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders?(headers: Resolvable<Record<string, string>>): void;
+
+  /**
+   * Update URL configuration (optional)
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl?(url: Resolvable<string>): void;
+
+  /**
+   * Update body configuration (optional)
+   * Additional properties merged into every request body
+   */
+  setBody?(body: Resolvable<Record<string, unknown>>): void;
 }
 
 /**
  * Transport configuration
+ *
+ * Supports both static values and getter functions for dynamic configuration.
+ * Getter functions are resolved at request time, ensuring fresh values.
+ *
+ * @example
+ * ```typescript
+ * // Static config
+ * const config: TransportConfig = {
+ *   url: "/api/chat",
+ *   headers: { "x-api-key": "static-key" },
+ * };
+ *
+ * // Dynamic config (resolved fresh on each request)
+ * const config: TransportConfig = {
+ *   url: () => getApiUrl(),
+ *   headers: () => ({
+ *     Authorization: `Bearer ${getToken()}`,
+ *     ...getCustomHeaders(),
+ *   }),
+ * };
+ * ```
  */
 export interface TransportConfig {
-  /** API endpoint URL */
-  url: string;
-  /** Request headers */
-  headers?: Record<string, string>;
+  /** API endpoint URL - can be static or getter function */
+  url: Resolvable<string>;
+  /** Request headers - can be static or getter function */
+  headers?: Resolvable<Record<string, string>>;
+  /** Additional body properties - can be static or getter function */
+  body?: Resolvable<Record<string, unknown>>;
   /** Enable streaming (default: true) */
   streaming?: boolean;
   /** Request timeout in ms */

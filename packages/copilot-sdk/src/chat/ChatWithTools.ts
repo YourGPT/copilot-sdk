@@ -16,6 +16,7 @@ import type {
   MessageAttachment,
   PermissionLevel,
 } from "../core";
+import type { Resolvable } from "../core/utils/resolvable";
 import { AbstractChat } from "./classes/AbstractChat";
 import { AbstractAgentLoop } from "./AbstractAgentLoop";
 import type { ChatConfig, ChatCallbacks } from "./types";
@@ -26,18 +27,23 @@ import type { ChatTransport } from "./interfaces/ChatTransport";
 
 /**
  * Configuration for ChatWithTools
+ *
+ * Supports both static values and getter functions for dynamic configuration.
+ * Getter functions are resolved at request time, ensuring fresh values.
  */
 export interface ChatWithToolsConfig {
-  /** Runtime API endpoint */
-  runtimeUrl: string;
+  /** Runtime API endpoint - can be static or getter function */
+  runtimeUrl: Resolvable<string>;
   /** LLM configuration */
   llm?: ChatConfig["llm"];
   /** System prompt */
   systemPrompt?: string;
   /** Enable streaming (default: true) */
   streaming?: boolean;
-  /** Request headers */
-  headers?: Record<string, string>;
+  /** Request headers - can be static or getter function */
+  headers?: Resolvable<Record<string, string>>;
+  /** Additional body properties - can be static or getter function */
+  body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
   /** Debug mode */
@@ -125,6 +131,7 @@ export class ChatWithTools {
       systemPrompt: config.systemPrompt,
       streaming: config.streaming,
       headers: config.headers,
+      body: config.body,
       threadId: config.threadId,
       debug: config.debug,
       initialMessages: config.initialMessages,
@@ -370,6 +377,30 @@ export class ChatWithTools {
    */
   setSystemPrompt(prompt: string): void {
     this.chat.setSystemPrompt(prompt);
+  }
+
+  /**
+   * Set headers configuration
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders(headers: ChatWithToolsConfig["headers"]): void {
+    this.chat.setHeaders(headers);
+  }
+
+  /**
+   * Set URL configuration
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl(url: ChatWithToolsConfig["runtimeUrl"]): void {
+    this.chat.setUrl(url);
+  }
+
+  /**
+   * Set body configuration
+   * Additional properties merged into every request body
+   */
+  setBody(body: ChatWithToolsConfig["body"]): void {
+    this.chat.setBody(body);
   }
 
   // ============================================
