@@ -43,9 +43,18 @@ export interface ChatResponse {
     role: string;
     content: string | null;
     tool_calls?: unknown[];
+    /** Tool call ID for tool result messages */
+    tool_call_id?: string;
   }>;
   /** Whether client needs to execute tools */
   requiresAction?: boolean;
+  /** Tool calls with metadata (includes hidden flag for server-side tools) */
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    hidden?: boolean;
+  }>;
 }
 
 /**
@@ -87,9 +96,18 @@ export type StreamChunk =
   | { type: "tool_calls"; toolCalls: unknown[]; assistantMessage: unknown }
   | { type: "source:add"; source: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; messages?: unknown[]; requiresAction?: boolean }
+  | {
+      type: "done";
+      messages?: Array<{
+        role: string;
+        content: string | null;
+        tool_calls?: unknown[];
+        tool_call_id?: string;
+      }>;
+      requiresAction?: boolean;
+    }
   // Tool action events (from llm-sdk agent-loop)
-  | { type: "action:start"; id: string; name: string }
+  | { type: "action:start"; id: string; name: string; hidden?: boolean }
   | { type: "action:args"; id: string; args: string }
   | {
       type: "action:end";

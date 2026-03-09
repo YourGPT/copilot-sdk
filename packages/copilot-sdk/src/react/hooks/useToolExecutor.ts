@@ -101,6 +101,7 @@ export function useToolExecutor(): UseToolExecutorReturn {
         status: "executing",
         timestamp: Date.now(),
         approvalStatus: "none",
+        hidden: tool.hidden,
       };
 
       // Add to execution list

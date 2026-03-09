@@ -65,6 +65,11 @@ export interface ToolExecution {
   approvalMessage?: string;
   /** Data passed from user's approval action (e.g., selected supervisor) */
   approvalData?: Record<string, unknown>;
+  /**
+   * Whether this tool execution should be hidden from the UI.
+   * When true, the tool won't appear in the chat, but still executes normally.
+   */
+  hidden?: boolean;
 }
 
 /**

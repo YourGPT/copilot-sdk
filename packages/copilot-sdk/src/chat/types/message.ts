@@ -52,6 +52,8 @@ export interface StreamToolResult {
   args?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**

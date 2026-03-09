@@ -651,6 +651,12 @@ export interface ToolExecution {
   approvalMessage?: string;
   /** Timestamp when user responded to approval request */
   approvalTimestamp?: number;
+
+  /**
+   * Whether this tool execution should be hidden from the UI.
+   * Server-side tools can set this to hide internal operations from users.
+   */
+  hidden?: boolean;
 }
 
 // ============================================
@@ -690,17 +696,35 @@ export interface AgentLoopState {
 // ============================================
 
 /**
+ * A tool definition without the name (name is derived from the key in ToolSet)
+ */
+export type ToolSetEntry<TParams = Record<string, unknown>> = Omit<
+  ToolDefinition<TParams>,
+  "name"
+>;
+
+/**
  * A set of tools, keyed by tool name
+ *
+ * The key becomes the tool name, so tool definitions don't need a name property.
+ * Use with the `tool()` helper for clean syntax.
  *
  * @example
  * ```typescript
  * const myTools: ToolSet = {
- *   capture_screenshot: screenshotTool,
- *   get_weather: weatherTool,
+ *   capture_screenshot: tool({
+ *     description: 'Capture screenshot',
+ *     handler: async () => ({ success: true }),
+ *   }),
+ *   get_weather: tool({
+ *     description: 'Get weather',
+ *     inputSchema: { type: 'object', properties: { city: { type: 'string' } } },
+ *     handler: async ({ city }) => ({ success: true, data: { temp: 72 } }),
+ *   }),
  * };
  * ```
  */
-export type ToolSet = Record<string, ToolDefinition>;
+export type ToolSet = Record<string, ToolSetEntry>;
 
 // ============================================
 // Tool Helper Function (Vercel AI SDK pattern)

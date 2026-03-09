@@ -72,19 +72,11 @@ export class HttpTransport implements ChatTransport {
       // Resolve dynamic values at request time (not constructor time)
       // This ensures fresh values on every request
       // Optimized: skips async overhead if all values are static
-      console.log(
-        "[HttpTransport] Config headers type:",
-        typeof this.config.headers,
-      );
-      console.log("[HttpTransport] Config headers:", this.config.headers);
-
       const resolved = await resolveValues({
         url: this.config.url,
         headers: this.config.headers ?? {},
         configBody: this.config.body ?? {},
       });
-
-      console.log("[HttpTransport] Resolved headers:", resolved.headers);
 
       const response = await fetch(resolved.url as string, {
         method: "POST",

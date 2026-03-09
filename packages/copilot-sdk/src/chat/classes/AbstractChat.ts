@@ -754,8 +754,93 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         return;
       }
 
+      // Handle message:end mid-stream (server-side agent loop turn completed)
+      // This creates separate messages for each turn instead of combining them
+      if (chunk.type === "message:end" && this.streamState?.content) {
+        this.debug("message:end mid-stream - finalizing current turn");
+
+        // Finalize current message with its content and tool calls
+        const turnMessage = streamStateToMessage(this.streamState) as T;
+
+        // Add toolCallsHidden metadata if applicable
+        const toolCallsHidden: Record<string, boolean> = {};
+        for (const [id, result] of this.streamState.toolResults) {
+          if (result.hidden !== undefined) {
+            toolCallsHidden[id] = result.hidden;
+          }
+        }
+        if (
+          turnMessage.toolCalls?.length &&
+          Object.keys(toolCallsHidden).length > 0
+        ) {
+          (turnMessage as T & { metadata?: Record<string, unknown> }).metadata =
+            {
+              ...(turnMessage as T & { metadata?: Record<string, unknown> })
+                .metadata,
+              toolCallsHidden,
+            };
+        }
+
+        this.state.updateMessageById(
+          this.streamState.messageId,
+          () => turnMessage,
+        );
+        this.callbacks.onMessageFinish?.(turnMessage);
+
+        // Reset stream state for next turn - will be initialized on next message:start
+        this.streamState = null;
+        continue;
+      }
+
+      // Handle message:start after a mid-stream finalization
+      if (chunk.type === "message:start" && this.streamState === null) {
+        this.debug("message:start after mid-stream end - creating new message");
+        const newMessage = createEmptyAssistantMessage() as T;
+        this.state.pushMessage(newMessage);
+        this.streamState = createStreamState(newMessage.id);
+        this.callbacks.onMessageStart?.(newMessage.id);
+        continue;
+      }
+
       // Update stream state (pure function)
+      // Skip if streamState is null (shouldn't happen but be safe)
+      if (!this.streamState) {
+        this.debug("warning", "streamState is null, skipping chunk");
+        continue;
+      }
       this.streamState = processStreamChunk(chunk, this.streamState);
+
+      // Emit server tool callbacks for action events
+      if (chunk.type === "action:start") {
+        this.callbacks.onServerToolStart?.({
+          id: chunk.id,
+          name: chunk.name,
+          hidden: chunk.hidden,
+        });
+      } else if (chunk.type === "action:args") {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(chunk.args);
+        } catch {
+          // Keep empty args
+        }
+        // Get name from toolResults (set by action:start)
+        const existingResult = this.streamState?.toolResults.get(chunk.id);
+        if (existingResult) {
+          this.callbacks.onServerToolArgs?.({
+            id: chunk.id,
+            name: existingResult.name,
+            args,
+          });
+        }
+      } else if (chunk.type === "action:end") {
+        this.callbacks.onServerToolEnd?.({
+          id: chunk.id,
+          name: chunk.name,
+          result: chunk.result,
+          error: chunk.error,
+        });
+      }
 
       // Update message in state BY ID (not last position)
       // This is critical: when tool calls trigger nested streams,
@@ -781,28 +866,105 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", { chunk });
+
+        // CRITICAL: Process messages from done event (server-side tool results)
+        // Without this, tool_call_id is lost and causes Anthropic API errors
+        if (chunk.type === "done" && chunk.messages?.length) {
+          this.debug("processDoneMessages", {
+            count: chunk.messages.length,
+          });
+
+          // Build hidden map from stream state's toolResults
+          const toolCallsHidden: Record<string, boolean> = {};
+          if (this.streamState?.toolResults) {
+            for (const [id, result] of this.streamState.toolResults) {
+              if (result.hidden !== undefined) {
+                toolCallsHidden[id] = result.hidden;
+              }
+            }
+          }
+
+          for (const msg of chunk.messages) {
+            // Skip ALL assistant messages - they're handled via streaming
+            // (message:end/message:start events create separate messages for each turn)
+            if (msg.role === "assistant") {
+              continue;
+            }
+
+            // For assistant messages with tool_calls, add hidden metadata
+            let metadata: Record<string, unknown> | undefined;
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              Object.keys(toolCallsHidden).length > 0
+            ) {
+              metadata = { toolCallsHidden };
+            }
+
+            const message = {
+              id: generateMessageId(),
+              role: msg.role as T["role"],
+              content: msg.content ?? "",
+              toolCalls: msg.tool_calls as T["toolCalls"],
+              toolCallId: msg.tool_call_id,
+              createdAt: new Date(),
+              metadata,
+            } as T;
+
+            this.state.pushMessage(message);
+          }
+        }
+
         break;
       }
     }
 
     this.debug("handleStreamResponse", `Processed ${chunkCount} chunks`);
 
-    // Finalize - update by ID to ensure we update the correct message
-    const finalMessage = streamStateToMessage(this.streamState) as T;
-    this.state.updateMessageById(
-      this.streamState.messageId,
-      () => finalMessage,
-    );
+    // If streamState was already finalized (via message:end mid-stream), skip finalization
+    if (!this.streamState) {
+      this.debug("streamState already finalized via message:end");
+    } else {
+      // Build hidden map from stream state's toolResults for final message metadata
+      const toolCallsHidden: Record<string, boolean> = {};
+      if (this.streamState.toolResults) {
+        for (const [id, result] of this.streamState.toolResults) {
+          if (result.hidden !== undefined) {
+            toolCallsHidden[id] = result.hidden;
+          }
+        }
+      }
 
-    // Check if we got any content
-    if (
-      !finalMessage.content &&
-      (!finalMessage.toolCalls || finalMessage.toolCalls.length === 0)
-    ) {
-      this.debug("warning", "Empty response - no content and no tool calls");
+      // Finalize - update by ID to ensure we update the correct message
+      const finalMessage = streamStateToMessage(this.streamState) as T;
+
+      // Add toolCallsHidden metadata if we have tool calls with hidden flags
+      if (
+        finalMessage.toolCalls?.length &&
+        Object.keys(toolCallsHidden).length > 0
+      ) {
+        (finalMessage as T & { metadata?: Record<string, unknown> }).metadata =
+          {
+            ...(finalMessage as T & { metadata?: Record<string, unknown> })
+              .metadata,
+            toolCallsHidden,
+          };
+      }
+
+      this.state.updateMessageById(
+        this.streamState.messageId,
+        () => finalMessage,
+      );
+
+      // Check if we got any content
+      if (
+        !finalMessage.content &&
+        (!finalMessage.toolCalls || finalMessage.toolCalls.length === 0)
+      ) {
+        this.debug("warning", "Empty response - no content and no tool calls");
+      }
     }
 
-    this.callbacks.onMessageFinish?.(finalMessage);
     this.callbacks.onMessagesChange?.(this.state.messages);
 
     // Only set status to "ready" if NO tool calls were emitted
@@ -822,14 +984,46 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    * Handle JSON (non-streaming) response
    */
   protected handleJsonResponse(response: ChatResponse): void {
+    // Build a map of tool call hidden flags from response.toolCalls
+    const toolCallHiddenMap = new Map<string, boolean>();
+    if (response.toolCalls) {
+      for (const tc of response.toolCalls) {
+        if (tc.hidden !== undefined) {
+          toolCallHiddenMap.set(tc.id, tc.hidden);
+        }
+      }
+    }
+
     // Add response messages
     for (const msg of response.messages ?? []) {
+      // For assistant messages with tool_calls, add hidden info to metadata
+      let metadata: Record<string, unknown> | undefined;
+      if (
+        msg.role === "assistant" &&
+        msg.tool_calls &&
+        toolCallHiddenMap.size > 0
+      ) {
+        const toolCallsHidden: Record<string, boolean> = {};
+        for (const tc of msg.tool_calls as Array<{ id: string }>) {
+          const hidden = toolCallHiddenMap.get(tc.id);
+          if (hidden !== undefined) {
+            toolCallsHidden[tc.id] = hidden;
+          }
+        }
+        if (Object.keys(toolCallsHidden).length > 0) {
+          metadata = { toolCallsHidden };
+        }
+      }
+
       const message = {
         id: generateMessageId(),
         role: msg.role as T["role"],
         content: msg.content ?? "",
         toolCalls: msg.tool_calls as T["toolCalls"],
+        // CRITICAL: Preserve toolCallId for tool messages (fixes Anthropic API errors)
+        toolCallId: msg.tool_call_id,
         createdAt: new Date(),
+        metadata,
       } as T;
 
       this.state.pushMessage(message);

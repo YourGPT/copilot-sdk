@@ -90,6 +90,10 @@ export class AnthropicAdapter implements LLMAdapter {
     const pendingToolResults: Array<{ tool_use_id: string; content: string }> =
       [];
 
+    // Track tool_use ids from assistant messages for inference
+    let lastToolCallIds: string[] = [];
+    let toolResultIndex = 0;
+
     for (const msg of rawMessages) {
       // Skip system messages (handled separately)
       if (msg.role === "system") continue;
@@ -110,6 +114,10 @@ export class AnthropicAdapter implements LLMAdapter {
             })),
           });
           pendingToolResults.length = 0;
+          // Clear tracking - tool results have been flushed, any subsequent
+          // tool results without a new tool_use are orphaned
+          lastToolCallIds = [];
+          toolResultIndex = 0;
         }
 
         // Convert assistant message with potential tool_calls
@@ -134,6 +142,10 @@ export class AnthropicAdapter implements LLMAdapter {
           | undefined;
 
         if (toolCalls && toolCalls.length > 0) {
+          // Track tool call IDs for inferring missing tool_call_id in tool messages
+          lastToolCallIds = toolCalls.map((tc) => tc.id);
+          toolResultIndex = 0;
+
           for (const tc of toolCalls) {
             let input = {};
             try {
@@ -156,8 +168,44 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       } else if (msg.role === "tool") {
         // Collect tool results to be bundled into a user message
+        let toolCallId = msg.tool_call_id as string | undefined;
+
+        // If tool_call_id is missing, try to infer from preceding assistant's tool_calls
+        if (!toolCallId && lastToolCallIds.length > 0) {
+          toolCallId = lastToolCallIds[toolResultIndex];
+          toolResultIndex++;
+          console.warn(
+            `[llm-sdk] Tool message missing tool_call_id, inferred: ${toolCallId}`,
+          );
+        }
+
+        if (!toolCallId) {
+          console.warn(
+            "[llm-sdk] Skipping tool message with missing tool_call_id (no inference possible):",
+            msg,
+          );
+          continue;
+        }
+
+        // Skip orphaned tool results (no pending tool_use to match)
+        // This happens when there's a duplicate/stale tool result in the conversation
+        if (lastToolCallIds.length === 0) {
+          console.warn(
+            `[llm-sdk] Skipping orphaned tool result (no pending tool_use): ${toolCallId}`,
+          );
+          continue;
+        }
+
+        // Skip if this tool_call_id is not in the expected list
+        if (!lastToolCallIds.includes(toolCallId)) {
+          console.warn(
+            `[llm-sdk] Skipping tool result with unexpected tool_call_id: ${toolCallId}`,
+          );
+          continue;
+        }
+
         pendingToolResults.push({
-          tool_use_id: msg.tool_call_id as string,
+          tool_use_id: toolCallId,
           content:
             typeof msg.content === "string"
               ? msg.content

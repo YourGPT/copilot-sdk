@@ -982,6 +982,11 @@ export class Runtime {
           messages: messagesWithResults as ChatRequest["messages"],
         };
 
+        // Signal end of current message turn before continuing
+        // This tells the client to finalize the current assistant message
+        // The recursive call will emit a new message:start for the next turn
+        yield { type: "message:end" } as StreamEvent;
+
         // Continue the agent loop - pass accumulated messages and HTTP request
         for await (const event of this.processChatWithLoop(
           nextRequest,
@@ -1208,10 +1213,12 @@ export class Runtime {
 
           // Emit tool call events
           for (const tc of result.toolCalls) {
+            const tool = allTools.find((t) => t.name === tc.name);
             yield {
               type: "action:start",
               id: tc.id,
               name: tc.name,
+              hidden: tool?.hidden ?? false,
             } as StreamEvent;
             yield {
               type: "action:args",

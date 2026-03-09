@@ -275,18 +275,22 @@ export function DefaultMessage({
     );
   }
 
-  // Helper: check if a tool is hidden (shouldn't appear in UI)
-  const isToolHidden = (toolName: string): boolean => {
-    const toolDef = registeredTools?.find((t) => t.name === toolName);
+  // Helper: check if a tool execution is hidden (shouldn't appear in UI)
+  // Checks both: 1) execution's hidden flag (from server), 2) registered tool's hidden flag
+  const isToolHidden = (exec: { name: string; hidden?: boolean }): boolean => {
+    // Check execution's own hidden flag first (from server's action:start event)
+    if (exec.hidden === true) return true;
+    // Then check registered tool definition
+    const toolDef = registeredTools?.find((t) => t.name === exec.name);
     return toolDef?.hidden === true;
   };
 
   // Separate tool executions into categories (excluding hidden tools)
   const pendingApprovalTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec.name),
+    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec),
   );
   const completedTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec.name),
+    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec),
   );
 
   // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, or tool.render)
@@ -487,7 +491,7 @@ export function DefaultMessage({
 
             {/* MCP-UI Resources - Interactive components from MCP tools (excluding hidden) */}
             {message.toolExecutions
-              ?.filter((exec) => !isToolHidden(exec.name))
+              ?.filter((exec) => !isToolHidden(exec))
               .map((exec) => {
                 const uiResources = exec.result?._uiResources;
                 if (!uiResources || uiResources.length === 0) return null;

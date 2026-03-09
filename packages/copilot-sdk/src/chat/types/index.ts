@@ -19,6 +19,7 @@ export type {
   ChatCallbacks,
   ChatInit,
   SendMessageOptions,
+  ServerToolInfo,
 } from "./chat";
 
 // Tool types

@@ -529,6 +529,29 @@ export class StreamResult {
         collected.toolCalls.push(...event.toolCalls);
         break;
 
+      case "action:start":
+        // Capture tool call with hidden flag (for server-side tools)
+        collected.toolCalls.push({
+          id: event.id,
+          name: event.name,
+          args: {},
+          hidden: event.hidden,
+        });
+        break;
+
+      case "action:args": {
+        // Update args for the tool call
+        const tc = collected.toolCalls.find((t) => t.id === event.id);
+        if (tc) {
+          try {
+            tc.args = JSON.parse(event.args || "{}");
+          } catch {
+            tc.args = {};
+          }
+        }
+        break;
+      }
+
       case "done":
         if (event.messages) {
           collected.messages.push(...event.messages);

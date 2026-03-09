@@ -83,6 +83,8 @@ export interface ActionStartEvent extends BaseEvent {
   type: "action:start";
   id: string;
   name: string;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**
@@ -121,6 +123,8 @@ export interface ToolCallInfo {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**
@@ -431,6 +435,13 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   ) => unknown | Promise<unknown>;
   render?: (props: unknown) => unknown;
   available?: boolean;
+  /**
+   * Hide this tool's execution from the chat UI.
+   * When true, tool calls and results won't be displayed to the user,
+   * but the tool will still execute normally.
+   * @default false
+   */
+  hidden?: boolean;
   needsApproval?: boolean;
   approvalMessage?: string | ((params: TParams) => string);
   /** AI response mode for this tool (none, brief, full) */

@@ -345,11 +345,12 @@ async function executeToolCalls(
       continue;
     }
 
-    // Emit action start
+    // Emit action start (include hidden flag for client-side filtering)
     emitEvent?.({
       type: "action:start",
       id: toolCall.id,
       name: toolCall.name,
+      hidden: tool.hidden ?? false,
     });
 
     // Emit arguments

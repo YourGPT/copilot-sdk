@@ -337,6 +337,7 @@ function CopilotChatBase(
       error: exec.error,
       timestamp: exec.startedAt ? exec.startedAt.getTime() : Date.now(),
       approvalStatus: exec.approvalStatus,
+      hidden: exec.hidden,
     }),
   );
 
@@ -385,6 +386,11 @@ function CopilotChatBase(
           );
         } else {
           // Build from stored tool_calls + tool messages (historical)
+          // Get hidden info from message metadata (set by handleJsonResponse)
+          const toolCallsHidden = (
+            m.metadata as { toolCallsHidden?: Record<string, boolean> }
+          )?.toolCallsHidden;
+
           messageToolExecutions = m.toolCalls.map(
             (tc: {
               id: string;
@@ -405,6 +411,15 @@ function CopilotChatBase(
               } catch {
                 // Keep empty args
               }
+              // Check hidden from metadata first (from server response),
+              // then fall back to registeredTools
+              let hidden = toolCallsHidden?.[tc.id];
+              if (hidden === undefined) {
+                const toolDef = registeredTools?.find(
+                  (t) => t.name === tc.function.name,
+                );
+                hidden = toolDef?.hidden;
+              }
               return {
                 id: tc.id,
                 name: tc.function.name,
@@ -414,6 +429,7 @@ function CopilotChatBase(
                   : "pending") as ToolExecutionData["status"],
                 result,
                 timestamp: Date.now(), // Historical - use current time
+                hidden,
               };
             },
           );
@@ -432,6 +448,11 @@ function CopilotChatBase(
         messageToolExecutions = savedExecutions;
       }
 
+      // Filter out hidden tool executions for the message
+      const visibleToolExecutions = messageToolExecutions?.filter(
+        (exec) => !exec.hidden,
+      );
+
       return {
         id: m.id,
         role: m.role as "user" | "assistant" | "system",
@@ -441,11 +462,27 @@ function CopilotChatBase(
         attachments: m.attachments,
         // Include tool_calls for assistant messages
         tool_calls: m.toolCalls,
-        // Attach matched tool executions to assistant messages
-        toolExecutions: messageToolExecutions,
+        // Attach matched tool executions to assistant messages (only visible ones)
+        toolExecutions: visibleToolExecutions,
         // Include metadata (citations from native web search, etc.)
         metadata: m.metadata,
+        // Mark if this message had only hidden tools (for filtering empty bubbles)
+        _hasOnlyHiddenTools:
+          messageToolExecutions &&
+          messageToolExecutions.length > 0 &&
+          (!visibleToolExecutions || visibleToolExecutions.length === 0),
       };
+    })
+    // Filter out empty assistant messages that only had hidden tools
+    .filter((m) => {
+      if (
+        m.role === "assistant" &&
+        !m.content &&
+        (m as { _hasOnlyHiddenTools?: boolean })._hasOnlyHiddenTools
+      ) {
+        return false;
+      }
+      return true;
     });
 
   // Show suggestions only when no messages

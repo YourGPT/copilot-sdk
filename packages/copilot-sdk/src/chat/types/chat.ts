@@ -67,6 +67,16 @@ export interface ChatRequestOptions {
 }
 
 /**
+ * Server-side tool execution info (from streaming action events)
+ */
+export interface ServerToolInfo {
+  id: string;
+  name: string;
+  args?: Record<string, unknown>;
+  hidden?: boolean;
+}
+
+/**
  * Chat callbacks for state updates
  */
 export interface ChatCallbacks<T extends UIMessage = UIMessage> {
@@ -86,6 +96,14 @@ export interface ChatCallbacks<T extends UIMessage = UIMessage> {
   onToolCalls?: (toolCalls: T["toolCalls"]) => void;
   /** Called when generation is complete */
   onFinish?: (messages: T[]) => void;
+  /** Called when a server-side tool starts executing (action:start event) */
+  onServerToolStart?: (info: ServerToolInfo) => void;
+  /** Called when a server-side tool receives args (action:args event) */
+  onServerToolArgs?: (info: ServerToolInfo) => void;
+  /** Called when a server-side tool finishes (action:end event) */
+  onServerToolEnd?: (
+    info: ServerToolInfo & { result?: unknown; error?: string },
+  ) => void;
 }
 
 /**

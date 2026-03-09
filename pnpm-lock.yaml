@@ -386,6 +386,9 @@ importers:
 
   examples/express-demo:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.39.0
+        version: 0.39.0
       '@yourgpt/llm-sdk':
         specifier: workspace:*
         version: link:../../packages/llm-sdk

@@ -146,6 +146,66 @@ export class ChatWithTools {
         onMessageFinish: callbacks.onMessageFinish,
         onToolCalls: callbacks.onToolCalls,
         onFinish: callbacks.onFinish,
+        // Server-side tool callbacks - track in agentLoop for UI display
+        // IMPORTANT: Only track tools that are NOT registered client-side
+        // Client-side tools are tracked via executeToolCalls() path
+        onServerToolStart: (info) => {
+          // Check if execution with this ID already exists
+          const existingExecution = this.agentLoop.toolExecutions.find(
+            (e) => e.id === info.id,
+          );
+          if (existingExecution) {
+            // Update hidden flag if this event has it (agent-loop sends hidden, adapter doesn't)
+            if (
+              info.hidden !== undefined &&
+              existingExecution.hidden !== info.hidden
+            ) {
+              this.debug(
+                "Updating hidden flag for existing execution:",
+                info.name,
+                info.hidden,
+              );
+              this.agentLoop.updateToolExecution(info.id, {
+                hidden: info.hidden,
+              });
+            }
+            return;
+          }
+          // Skip if this tool is registered client-side (will be tracked via executeToolCalls)
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) {
+            this.debug("Skipping server tracking for client tool:", info.name);
+            return;
+          }
+          this.debug("Server tool started:", info.name, {
+            hidden: info.hidden,
+            id: info.id,
+          });
+          this.agentLoop.addServerToolExecution(info);
+        },
+        onServerToolArgs: (info) => {
+          // Skip if this tool is registered client-side
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) return;
+          this.debug("Server tool args:", info.name, info.args);
+          this.agentLoop.updateServerToolArgs(info.id, info.args ?? {});
+        },
+        onServerToolEnd: (info) => {
+          // Skip if this tool is registered client-side
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) return;
+          this.debug("Server tool ended:", info.name, {
+            error: info.error,
+            hasResult: !!info.result,
+          });
+          this.agentLoop.completeServerToolExecution(info);
+        },
       },
     });
 

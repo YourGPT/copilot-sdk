@@ -168,6 +168,7 @@ export type {
   ToolDefinition,
   ToolConfig,
   ToolSet,
+  ToolSetEntry,
   UnifiedToolCall,
   UnifiedToolResult,
   ToolExecutionStatus,

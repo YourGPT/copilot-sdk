@@ -189,9 +189,16 @@ export type {
   ToolExecutionStatus,
   UnifiedToolCall,
   AgentLoopConfig,
+  // ToolSet types (for useTools)
+  ToolSet,
+  ToolSetEntry,
+  ToolConfig,
   // Permission types
   PermissionLevel,
   ToolPermission,
   PermissionStorageConfig,
   PermissionStorageAdapter,
 } from "../core";
+
+// Re-export tool helper function (Vercel AI SDK pattern)
+export { tool } from "../core";
