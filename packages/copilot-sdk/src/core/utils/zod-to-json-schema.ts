@@ -188,9 +188,29 @@ function getZodEnumValues(
 // ============================================
 
 /**
- * Convert a Zod schema to JSON Schema property (supports Zod 3 and 4)
+ * Convert a Zod schema to JSON Schema property (supports Zod 3 and 4).
+ * When used with z.object(), the result is compatible with ToolInputSchema.
+ *
+ * @example
+ * ```ts
+ * // For tool input schemas
+ * useTool({
+ *   inputSchema: zodToJsonSchema(z.object({
+ *     name: z.string().describe("User name"),
+ *   })),
+ * });
+ * ```
  */
-export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
+export function zodToJsonSchema(schema: unknown): ToolInputSchema {
+  const result = _zodToJsonSchemaInternal(schema);
+  // Cast to ToolInputSchema - callers should only pass z.object() schemas for tool inputs
+  return result as unknown as ToolInputSchema;
+}
+
+/**
+ * Internal implementation for recursive schema conversion
+ */
+function _zodToJsonSchemaInternal(schema: unknown): JSONSchemaProperty {
   if (!isZodSchema(schema)) {
     return { type: "string" };
   }
@@ -240,7 +260,9 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       const innerType = getZodInnerType(schema);
       const result: JSONSchemaProperty = {
         type: "array",
-        items: innerType ? zodToJsonSchema(innerType) : { type: "string" },
+        items: innerType
+          ? _zodToJsonSchemaInternal(innerType)
+          : { type: "string" },
       };
       if (description) result.description = description;
       return result;
@@ -256,7 +278,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       const required: string[] = [];
 
       for (const [key, value] of Object.entries(shapeObj)) {
-        properties[key] = zodToJsonSchema(value);
+        properties[key] = _zodToJsonSchemaInternal(value);
 
         // Check if the field is required (not optional/nullable)
         const fieldTypeName = getZodTypeName(value);
@@ -281,7 +303,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
     case "ZodNullable": {
       const innerType = getZodInnerType(schema);
       if (innerType) {
-        return zodToJsonSchema(innerType);
+        return _zodToJsonSchemaInternal(innerType);
       }
       return { type: "string", description };
     }
@@ -289,7 +311,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
     case "ZodDefault": {
       const innerType = getZodInnerType(schema);
       if (innerType) {
-        const result = zodToJsonSchema(innerType);
+        const result = _zodToJsonSchemaInternal(innerType);
         // Note: Default value extraction is complex in Zod 4, skip for now
         return result;
       }
@@ -342,7 +364,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       }
 
       if (options && options.length > 0) {
-        return zodToJsonSchema(options[0]);
+        return _zodToJsonSchemaInternal(options[0]);
       }
       return { type: "string", description };
     }
@@ -362,7 +384,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
  * This fallback implementation is for older Zod versions.
  */
 export function zodObjectToInputSchema(schema: unknown): ToolInputSchema {
-  const jsonSchema = zodToJsonSchema(schema);
+  const jsonSchema = _zodToJsonSchemaInternal(schema);
 
   if (jsonSchema.type !== "object" || !jsonSchema.properties) {
     const typeName = getZodTypeName(schema);
