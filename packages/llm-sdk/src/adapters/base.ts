@@ -4,7 +4,9 @@ import type {
   ActionDefinition,
   StreamEvent,
   LLMConfig,
+  ToolDefinition,
   WebSearchConfig,
+  ProviderToolRuntimeOptions,
 } from "../core/stream-events";
 import type { TokenUsage } from "../core/types";
 
@@ -31,6 +33,8 @@ export interface ChatCompletionRequest {
   rawMessages?: Array<Record<string, unknown>>;
   /** Available actions/tools */
   actions?: ActionDefinition[];
+  /** Full tool definitions for provider-native tool search / deferred loading paths. */
+  toolDefinitions?: ToolDefinition[];
   /** System prompt */
   systemPrompt?: string;
   /** LLM configuration overrides */
@@ -42,6 +46,10 @@ export interface ChatCompletionRequest {
    * When true or configured, the provider's native search is enabled.
    */
   webSearch?: boolean | WebSearchConfig;
+  /** Optional provider-specific tool policy hints derived from runtime selection. */
+  providerToolOptions?: ProviderToolRuntimeOptions;
+  /** Enable adapter-level provider payload logging. */
+  debug?: boolean;
 }
 
 /**
@@ -85,6 +93,55 @@ export interface LLMAdapter {
  * Adapter factory function type
  */
 export type AdapterFactory = (config: LLMConfig) => LLMAdapter;
+
+function stringifyForDebug(value: unknown): string {
+  return JSON.stringify(
+    value,
+    (_key, currentValue) => {
+      if (typeof currentValue === "bigint") {
+        return currentValue.toString();
+      }
+      if (currentValue instanceof Error) {
+        return {
+          name: currentValue.name,
+          message: currentValue.message,
+          stack: currentValue.stack,
+        };
+      }
+      return currentValue;
+    },
+    2,
+  );
+}
+
+export function logProviderPayload(
+  provider: string,
+  label: string,
+  payload: unknown,
+  enabled?: boolean,
+): void {
+  if (!enabled) {
+    return;
+  }
+
+  // Stream chunks/events are too noisy for regular debug output and can flood
+  // terminal context. Keep request/response payload logging, but suppress the
+  // per-event stream logs unless we add a separate verbose flag later.
+  if (label.toLowerCase().includes("stream ")) {
+    return;
+  }
+
+  try {
+    console.log(
+      `[llm-sdk:${provider}] ${label}\n${stringifyForDebug(payload)}`,
+    );
+  } catch (error) {
+    console.log(
+      `[llm-sdk:${provider}] ${label} (failed to stringify payload)`,
+      error,
+    );
+  }
+}
 
 /**
  * Convert messages to provider format (simple text only)
@@ -162,9 +219,64 @@ function parameterToJsonSchema(param: {
         ),
       ]),
     );
+    schema.additionalProperties = false;
   }
 
   return schema;
+}
+
+export function normalizeObjectJsonSchema(
+  schema: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!schema || typeof schema !== "object") {
+    return {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    };
+  }
+
+  const normalized: Record<string, unknown> = { ...schema };
+  const type = normalized.type;
+
+  if (type === "object") {
+    const properties =
+      normalized.properties &&
+      typeof normalized.properties === "object" &&
+      !Array.isArray(normalized.properties)
+        ? (normalized.properties as Record<string, unknown>)
+        : {};
+
+    normalized.properties = Object.fromEntries(
+      Object.entries(properties).map(([key, value]) => [
+        key,
+        normalizeObjectJsonSchema(value as Record<string, unknown>),
+      ]),
+    );
+
+    const propertyKeys = Object.keys(properties);
+    const required = Array.isArray(normalized.required)
+      ? normalized.required.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+    normalized.required = Array.from(new Set([...required, ...propertyKeys]));
+
+    if (normalized.additionalProperties === undefined) {
+      normalized.additionalProperties = false;
+    }
+  } else if (
+    type === "array" &&
+    normalized.items &&
+    typeof normalized.items === "object"
+  ) {
+    normalized.items = normalizeObjectJsonSchema(
+      normalized.items as Record<string, unknown>,
+    );
+  }
+
+  return normalized;
 }
 
 /**
@@ -198,6 +310,7 @@ export function formatTools(actions: ActionDefinition[]): Array<{
               .filter(([, param]) => param.required)
               .map(([key]) => key)
           : [],
+        additionalProperties: false,
       },
     },
   }));

@@ -75,6 +75,7 @@ export { AbstractChat, type ChatEvent, type ChatEventHandler } from "./classes";
 
 // AbstractAgentLoop (tool execution)
 export { AbstractAgentLoop } from "./AbstractAgentLoop";
+export { ChatContextOptimizer } from "./optimizations";
 
 // ChatWithTools (coordinated chat + tools - recommended)
 export {

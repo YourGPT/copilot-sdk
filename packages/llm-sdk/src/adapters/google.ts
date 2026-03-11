@@ -18,7 +18,7 @@ import type {
   ChatCompletionRequest,
   CompletionResult,
 } from "./base";
-import { formatTools } from "./base";
+import { formatTools, logProviderPayload } from "./base";
 
 // ============================================
 // Types
@@ -373,6 +373,24 @@ export class GoogleAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
+      logProviderPayload(
+        "google",
+        "request payload",
+        {
+          model: modelId,
+          history: mergedContents.slice(0, -1),
+          systemInstruction: systemInstruction
+            ? { parts: [{ text: systemInstruction }] }
+            : undefined,
+          tools: toolsArray.length > 0 ? toolsArray : undefined,
+          generationConfig: {
+            temperature: request.config?.temperature ?? this.config.temperature,
+            maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+          },
+          messageParts: mergedContents[mergedContents.length - 1]?.parts,
+        },
+        request.debug,
+      );
       // Start chat session with system instruction
       const chat = model.startChat({
         history: mergedContents.slice(0, -1), // All but the last message
@@ -402,6 +420,7 @@ export class GoogleAdapter implements LLMAdapter {
       const collectedCitations: Citation[] = [];
 
       for await (const chunk of result.stream) {
+        logProviderPayload("google", "stream chunk", chunk, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;
@@ -501,6 +520,12 @@ export class GoogleAdapter implements LLMAdapter {
 
       try {
         const response = await result.response;
+        logProviderPayload(
+          "google",
+          "response payload",
+          response,
+          request.debug,
+        );
         if (response.usageMetadata) {
           usage = {
             prompt_tokens: response.usageMetadata.promptTokenCount || 0,
@@ -611,6 +636,20 @@ export class GoogleAdapter implements LLMAdapter {
 
     const tools = formatToolsForGemini(request.actions);
 
+    const payload = {
+      model: modelId,
+      history: mergedContents.slice(0, -1),
+      systemInstruction: systemInstruction
+        ? { parts: [{ text: systemInstruction }] }
+        : undefined,
+      tools: tools ? [tools] : undefined,
+      generationConfig: {
+        temperature: request.config?.temperature ?? this.config.temperature,
+        maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+      },
+      messageParts: mergedContents[mergedContents.length - 1]?.parts,
+    };
+    logProviderPayload("google", "request payload", payload, request.debug);
     const chat = model.startChat({
       history: mergedContents.slice(0, -1),
       systemInstruction: systemInstruction
@@ -626,6 +665,7 @@ export class GoogleAdapter implements LLMAdapter {
     const lastMessage = mergedContents[mergedContents.length - 1];
     const result = await chat.sendMessage(lastMessage.parts);
     const response = result.response;
+    logProviderPayload("google", "response payload", response, request.debug);
 
     // Extract content and tool calls
     let textContent = "";

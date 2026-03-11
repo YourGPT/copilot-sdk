@@ -175,6 +175,153 @@ export type AIContent =
   | { type: "text"; text: string };
 
 /**
+ * How large tool results should be trimmed before they are sent back to the AI.
+ */
+export type ToolTruncationStrategy = "head" | "head-tail" | "smart";
+
+/**
+ * Truncation controls for tool results.
+ */
+export interface ToolResultTruncationConfig {
+  enabled?: boolean;
+  maxContextShare?: number;
+  hardMaxChars?: number;
+  minKeepChars?: number;
+  strategy?: ToolTruncationStrategy;
+  preserveErrors?: boolean;
+}
+
+/**
+ * Global or per-tool controls for how tool results are represented in prompts.
+ */
+export interface ToolResultConfig {
+  truncation?: ToolResultTruncationConfig;
+}
+
+/**
+ * Named tool profile for selective loading.
+ */
+export interface ToolProfile {
+  name: string;
+  description?: string;
+  include?: string[];
+  exclude?: string[];
+}
+
+/**
+ * Tool profile configuration.
+ */
+export interface ToolProfileConfig {
+  enabled?: boolean;
+  defaultProfile?: string;
+  profiles?: Record<string, ToolProfile>;
+  /** When false, active profiles exclude tools that do not declare profile membership. */
+  includeUnprofiled?: boolean;
+  dynamicSelection?: {
+    enabled?: boolean;
+    maxTools?: number;
+  };
+}
+
+/**
+ * History compaction behavior for long-running sessions.
+ */
+export interface ContextHistoryConfig {
+  maxMessages?: number;
+  maxTokens?: number;
+  maxContextShare?: number;
+  pruneStrategy?: "oldest" | "least-relevant" | "summarize";
+}
+
+/**
+ * Optional summarization controls used during history compaction.
+ */
+export interface ContextSummarizationConfig {
+  enabled?: boolean;
+  triggerAt?: number;
+  chunkSize?: number;
+  preserveRecent?: number;
+  fallbackBehavior?: "truncate" | "statistical" | "error";
+}
+
+/**
+ * Token estimation controls.
+ */
+export interface TokenEstimationConfig {
+  safetyMargin?: number;
+  charsPerToken?: number;
+}
+
+/**
+ * Conversation context management.
+ */
+export interface ContextManagementConfig {
+  enabled?: boolean;
+  history?: ContextHistoryConfig;
+  summarization?: ContextSummarizationConfig;
+  tokenEstimation?: TokenEstimationConfig;
+}
+
+/**
+ * One budget bucket in the prompt context.
+ */
+export interface ContextUsagePart {
+  tokens: number;
+  percent: number;
+}
+
+/**
+ * Prompt context usage snapshot.
+ */
+export interface ContextUsage {
+  total: ContextUsagePart;
+  breakdown: {
+    systemPrompt: ContextUsagePart;
+    history: ContextUsagePart;
+    toolResults: ContextUsagePart;
+    tools: ContextUsagePart;
+  };
+  budget: {
+    available: number;
+    remaining: number;
+  };
+  warnings: string[];
+}
+
+/**
+ * Real-time context budget configuration.
+ */
+export interface ContextBudgetConfig {
+  enabled?: boolean;
+  budget?: {
+    contextWindowTokens?: number;
+    inputHeadroomRatio?: number;
+    systemPromptShare?: number;
+    historyShare?: number;
+    toolResultsShare?: number;
+    toolDefinitionsShare?: number;
+  };
+  enforcement?: {
+    mode?: "warn" | "truncate" | "error";
+    onBudgetExceeded?: (info: ContextUsage) => void;
+  };
+  monitoring?: {
+    enabled?: boolean;
+    onUsageUpdate?: (usage: ContextUsage) => void;
+  };
+}
+
+/**
+ * Framework-agnostic optimization controls for tool-heavy chat sessions.
+ */
+export interface ToolOptimizationConfig {
+  toolProfiles?: ToolProfileConfig;
+  toolResultConfig?: ToolResultConfig;
+  contextManagement?: ContextManagementConfig;
+  contextBudget?: ContextBudgetConfig;
+}
+
+/**
  * Tool response format
  */
 export interface ToolResponse<T = unknown> {
@@ -368,6 +515,18 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * @default "custom"
    */
   source?: ToolSource;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Optional group for profile-based tool selection */
+  group?: string;
+  /** Deferred tools are discoverable but need not be sent on every request */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool selection */
+  searchKeywords?: string[];
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
 
   // ============================================
   // Display Configuration
@@ -673,6 +832,8 @@ export interface AgentLoopConfig {
   debug?: boolean;
   /** Whether to enable the agentic loop (default: true) */
   enabled?: boolean;
+  /** Optional prompt/tool optimization controls */
+  optimization?: ToolOptimizationConfig;
 }
 
 /**
@@ -738,6 +899,18 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   description: string;
   /** Where the tool executes (default: 'client') */
   location?: ToolLocation;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Optional group for profile-based tool selection */
+  group?: string;
+  /** Deferred tools are discoverable but omitted from the default prompt */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool selection */
+  searchKeywords?: string[];
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
 
   // Display Configuration
   /** Human-readable title for UI display */
@@ -799,6 +972,12 @@ export function tool<TParams = Record<string, unknown>>(
   return {
     description: config.description,
     location: config.location ?? "client",
+    category: config.category,
+    group: config.group,
+    deferLoading: config.deferLoading,
+    profiles: config.profiles,
+    searchKeywords: config.searchKeywords,
+    resultConfig: config.resultConfig,
     // Display configuration
     title: config.title,
     executingTitle: config.executingTitle,

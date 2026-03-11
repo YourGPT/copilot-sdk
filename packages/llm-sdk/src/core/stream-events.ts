@@ -427,6 +427,10 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   name: string;
   description: string;
   location: ToolLocation;
+  /** Optional logical category for tool search and selective loading. */
+  category?: string;
+  /** Optional group label for related tools. */
+  group?: string;
   title?: string | ((args: TParams) => string);
   inputSchema?: ToolInputSchema;
   handler?: (
@@ -450,6 +454,117 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   aiContext?:
     | string
     | ((result: ToolResponse, args: Record<string, unknown>) => string);
+  /** Hint that this tool should be loaded lazily when dynamic selection is active. */
+  deferLoading?: boolean;
+  /** Named profiles this tool belongs to (for example "coding" or "search"). */
+  profiles?: string[];
+  /** Extra keywords used by lightweight tool search/ranking. */
+  searchKeywords?: string[];
+}
+
+export interface ToolProfile {
+  include?: string[];
+  exclude?: string[];
+}
+
+export interface ToolDynamicSelectionConfig {
+  enabled?: boolean;
+  maxTools?: number;
+}
+
+export interface ToolSearchConfig {
+  enabled?: boolean;
+  /**
+   * Search execution mode.
+   * - auto: use native provider search when supported, otherwise fall back to manual search_tools
+   * - native: require provider-native search when supported, otherwise fall back to manual search_tools
+   * - manual: always use the SDK-managed search_tools fallback
+   */
+  mode?: "auto" | "native" | "manual";
+  metaToolName?: string;
+  maxResults?: number;
+  minScore?: number;
+  exposeWhenToolCountExceeds?: number;
+  /** Anthropic native tool search variant. Defaults to bm25. */
+  anthropicVariant?: "bm25" | "regex";
+  /**
+   * When true, tools marked with deferLoading stay hidden from the initial
+   * selected tool list and are only introduced after search_tools loads them.
+   */
+  strictDeferredLoading?: boolean;
+}
+
+export interface OpenAIToolSelectionHints {
+  /**
+   * "single" forces the selected tool when exactly one tool remains after selection.
+   * Otherwise the adapter falls back to automatic tool choice.
+   */
+  toolChoice?: "auto" | "required" | "single";
+  /** Set false to disable parallel tool calls on OpenAI-compatible providers. */
+  parallelToolCalls?: boolean;
+}
+
+export interface AnthropicToolSelectionHints {
+  /**
+   * "single" forces the selected tool when exactly one tool remains after selection.
+   * Otherwise the adapter falls back to Anthropic's automatic tool choice.
+   */
+  toolChoice?: "auto" | "any" | "single";
+  /** Disable parallel tool use when supported by the Anthropic API. */
+  disableParallelToolUse?: boolean;
+}
+
+export interface ToolNativeProviderHints {
+  openai?: OpenAIToolSelectionHints;
+  anthropic?: AnthropicToolSelectionHints;
+}
+
+export interface ToolSelectionConfig {
+  enabled?: boolean;
+  defaultProfile?: string;
+  profiles?: Record<string, ToolProfile>;
+  /** When false, active profiles exclude tools without explicit profile membership. */
+  includeUnprofiled?: boolean;
+  dynamicSelection?: ToolDynamicSelectionConfig;
+  /** Optional indexed search over deferred tools. */
+  search?: ToolSearchConfig;
+  /** Optional provider-native hints layered on top of local tool selection. */
+  nativeProviderHints?: ToolNativeProviderHints;
+}
+
+export interface OpenAIProviderToolOptions {
+  toolChoice?:
+    | "auto"
+    | "required"
+    | {
+        type: "function";
+        name: string;
+      };
+  parallelToolCalls?: boolean;
+  nativeToolSearch?: {
+    enabled: boolean;
+    useResponsesApi?: boolean;
+  };
+}
+
+export interface AnthropicProviderToolOptions {
+  toolChoice?:
+    | "auto"
+    | "any"
+    | {
+        type: "tool";
+        name: string;
+      };
+  disableParallelToolUse?: boolean;
+  nativeToolSearch?: {
+    enabled: boolean;
+    variant: "bm25" | "regex";
+  };
+}
+
+export interface ProviderToolRuntimeOptions {
+  openai?: OpenAIProviderToolOptions;
+  anthropic?: AnthropicProviderToolOptions;
 }
 
 /**
@@ -459,6 +574,7 @@ export interface AgentLoopConfig {
   maxIterations?: number;
   debug?: boolean;
   enabled?: boolean;
+  toolSelection?: ToolSelectionConfig;
 }
 
 /**

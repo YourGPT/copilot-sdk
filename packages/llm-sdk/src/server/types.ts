@@ -143,12 +143,34 @@ export interface ChatRequest {
   tools?: Array<{
     name: string;
     description: string;
+    category?: string;
+    group?: string;
+    deferLoading?: boolean;
+    profiles?: string[];
+    searchKeywords?: string[];
     inputSchema: {
       type: "object";
       properties: Record<string, unknown>;
       required?: string[];
     };
   }>;
+  /** Full client tool catalog used for server-side tool selection and deferred search. */
+  toolCatalog?: Array<{
+    name: string;
+    description: string;
+    category?: string;
+    group?: string;
+    deferLoading?: boolean;
+    profiles?: string[];
+    searchKeywords?: string[];
+    inputSchema: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required?: string[];
+    };
+  }>;
+  /** Active tool profile to apply when agentLoop.toolSelection is enabled. */
+  toolProfile?: string;
   /** Enable agentic loop mode */
   useAgentLoop?: boolean;
   /** Enable streaming responses (default: true). Set to false for non-streaming mode. */

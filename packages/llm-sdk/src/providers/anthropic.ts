@@ -27,7 +27,13 @@ export function transformTools(tools: ToolDefinition[]): AnthropicTool[] {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    input_schema: tool.inputSchema,
+    input_schema: tool.inputSchema
+      ? {
+          type: "object",
+          properties: tool.inputSchema.properties ?? {},
+          required: tool.inputSchema.required,
+        }
+      : { type: "object", properties: {} },
   }));
 }
 

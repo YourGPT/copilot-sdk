@@ -12,6 +12,7 @@
  */
 
 import type {
+  ContextUsage,
   ToolDefinition,
   MessageAttachment,
   PermissionLevel,
@@ -54,6 +55,8 @@ export interface ChatWithToolsConfig {
   tools?: ToolDefinition[];
   /** Max tool execution iterations (default: 20) */
   maxIterations?: number;
+  /** Optional prompt/tool optimization controls */
+  optimization?: ChatConfig["optimization"];
   /** Custom error message when max iterations reached (sent to AI as tool result) */
   maxIterationsMessage?: string;
   /** State implementation (injected by framework adapter) */
@@ -70,6 +73,8 @@ export interface ChatWithToolsCallbacks extends ChatCallbacks<UIMessage> {
   onToolExecutionsChange?: (executions: ToolExecution[]) => void;
   /** Called when a tool requires approval */
   onApprovalRequired?: (execution: ToolExecution) => void;
+  /** Called when prompt context usage changes */
+  onContextUsageChange?: (usage: ContextUsage) => void;
 }
 
 /**
@@ -132,6 +137,7 @@ export class ChatWithTools {
       streaming: config.streaming,
       headers: config.headers,
       body: config.body,
+      optimization: config.optimization,
       threadId: config.threadId,
       debug: config.debug,
       initialMessages: config.initialMessages,
@@ -146,6 +152,7 @@ export class ChatWithTools {
         onMessageFinish: callbacks.onMessageFinish,
         onToolCalls: callbacks.onToolCalls,
         onFinish: callbacks.onFinish,
+        onContextUsageChange: callbacks.onContextUsageChange,
         // Server-side tool callbacks - track in agentLoop for UI display
         // IMPORTANT: Only track tools that are NOT registered client-side
         // Client-side tools are tracked via executeToolCalls() path
@@ -423,6 +430,28 @@ export class ChatWithTools {
    */
   setTools(tools: ToolDefinition[]): void {
     this.chat.setTools(tools);
+  }
+
+  /**
+   * Update prompt/tool optimization controls.
+   */
+  setOptimizationConfig(config?: ChatConfig["optimization"]): void {
+    this.config.optimization = config;
+    this.chat.setOptimizationConfig(config);
+  }
+
+  /**
+   * Set the active tool profile used for request-time tool selection.
+   */
+  setToolProfile(profile?: string): void {
+    this.chat.setToolProfile(profile);
+  }
+
+  /**
+   * Get the most recent prompt context usage snapshot.
+   */
+  getContextUsage(): ContextUsage | null {
+    return this.chat.getContextUsage();
   }
 
   /**

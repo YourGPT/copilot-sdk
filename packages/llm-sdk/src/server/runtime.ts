@@ -26,6 +26,36 @@ import type {
 import { createSSEResponse } from "./streaming";
 import { StreamResult, type CollectedResult } from "./stream-result";
 import { GenerateResult } from "./generate-result";
+import {
+  buildProviderToolOptions,
+  filterToolsByProfile,
+  resolveNativeToolSearch,
+  searchTools,
+  selectTools,
+  shouldExposeToolSearch,
+} from "./tool-selection";
+
+type ToolSearchState = {
+  loadedToolNames: string[];
+};
+
+type NativeToolSearchState = ReturnType<typeof resolveNativeToolSearch>;
+
+type ToolSearchResult = {
+  success: true;
+  query: string;
+  loadedTools: string[];
+  results: Array<{
+    name: string;
+    description: string;
+    location?: ToolDefinition["location"];
+    category?: string;
+    group?: string;
+    profiles?: string[];
+    searchKeywords?: string[];
+    score: number;
+  }>;
+};
 
 // ============================================
 // AI Response Control
@@ -244,6 +274,7 @@ export class Runtime {
       config: request.config,
       signal,
       webSearch: this.getWebSearchConfig(),
+      debug: this.config.debug,
     };
 
     // Stream response from adapter
@@ -311,7 +342,15 @@ export class Runtime {
       const body = (await request.json()) as ChatRequest;
 
       if (this.config.debug) {
-        console.log("[Copilot SDK] Request:", JSON.stringify(body, null, 2));
+        console.log("[Copilot SDK] Request:", {
+          messageCount: body.messages?.length ?? 0,
+          toolCount: body.tools?.length ?? 0,
+          toolCatalogCount: body.toolCatalog?.length ?? 0,
+          hasSystemPrompt: Boolean(body.systemPrompt),
+          threadId: body.threadId,
+          streaming: body.streaming !== false,
+          toolProfile: body.toolProfile,
+        });
       }
 
       // Create abort controller from request signal
@@ -644,6 +683,195 @@ export class Runtime {
     return undefined;
   }
 
+  private collectToolsForRequest(request: ChatRequest): ToolDefinition[] {
+    const allTools: ToolDefinition[] = [...this.tools.values()];
+
+    const clientTools =
+      this.config.agentLoop?.toolSelection?.enabled &&
+      request.toolCatalog?.length
+        ? request.toolCatalog
+        : request.tools;
+
+    if (clientTools) {
+      for (const tool of clientTools) {
+        allTools.push({
+          name: tool.name,
+          description: tool.description,
+          location: "client",
+          category: tool.category,
+          group: tool.group,
+          deferLoading: tool.deferLoading,
+          profiles: tool.profiles,
+          searchKeywords: tool.searchKeywords,
+          inputSchema: tool.inputSchema as ToolDefinition["inputSchema"],
+        });
+      }
+    }
+
+    return allTools;
+  }
+
+  private selectToolsForRequest(
+    request: ChatRequest,
+    allTools: ToolDefinition[],
+    toolSearchState?: ToolSearchState,
+  ): ToolDefinition[] {
+    return selectTools({
+      tools: allTools,
+      messages: request.messages,
+      config: this.config.agentLoop?.toolSelection,
+      activeProfile: request.toolProfile,
+      forceIncludeNames: toolSearchState?.loadedToolNames,
+    });
+  }
+
+  private resolveNativeToolSearchForRequest(): NativeToolSearchState {
+    return resolveNativeToolSearch({
+      providerName: this.adapter.provider,
+      modelName: this.getModel(),
+      config: this.config.agentLoop?.toolSelection,
+    });
+  }
+
+  private buildNativeToolCatalogForRequest(
+    request: ChatRequest,
+    allTools: ToolDefinition[],
+  ): ToolDefinition[] {
+    return filterToolsByProfile({
+      tools: allTools,
+      config: this.config.agentLoop?.toolSelection,
+      activeProfile: request.toolProfile,
+    });
+  }
+
+  private buildProviderToolOptionsForRequest(selectedTools: ToolDefinition[]) {
+    return buildProviderToolOptions({
+      providerName: this.adapter.provider,
+      modelName: this.getModel(),
+      selectedTools,
+      config: this.config.agentLoop?.toolSelection,
+      metaToolName: this.getToolSearchMetaToolName(),
+    });
+  }
+
+  private getToolSearchMetaToolName(): string {
+    return (
+      this.config.agentLoop?.toolSelection?.search?.metaToolName ??
+      "search_tools"
+    );
+  }
+
+  private createToolSearchTool(
+    request: ChatRequest,
+    allTools: ToolDefinition[],
+    selectedTools: ToolDefinition[],
+  ): ToolDefinition | null {
+    if (
+      !shouldExposeToolSearch({
+        tools: allTools,
+        selectedTools,
+        config: this.config.agentLoop?.toolSelection,
+      })
+    ) {
+      return null;
+    }
+
+    const toolName = this.getToolSearchMetaToolName();
+    const excludedNames = selectedTools.map((tool) => tool.name);
+
+    return {
+      name: toolName,
+      description:
+        "Search available deferred tools and load the most relevant ones for the next step when the right tool is not currently exposed.",
+      location: "server",
+      hidden: true,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Describe the tool capability you need to find.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of matching tools to load.",
+          },
+        },
+        required: ["query"],
+      },
+      handler: async (params) => {
+        const args = params as { query: string; limit?: number };
+        const results = searchTools({
+          tools: allTools,
+          query: args.query,
+          config: this.config.agentLoop?.toolSelection,
+          activeProfile: request.toolProfile,
+          limit: args.limit,
+          excludeNames: excludedNames,
+        });
+
+        if (this.config.debug || this.config.agentLoop?.debug) {
+          console.log("[Copilot SDK] search_tools result:", {
+            query: args.query,
+            activeProfile:
+              request.toolProfile ??
+              this.config.agentLoop?.toolSelection?.defaultProfile,
+            selectedToolCount: selectedTools.length,
+            catalogCount: allTools.length,
+            loadedTools: results.map((result) => result.name),
+            results: results.map((result) => ({
+              name: result.name,
+              location: result.location,
+              category: result.category,
+              group: result.group,
+              score: result.score,
+            })),
+          });
+        }
+
+        return {
+          success: true,
+          query: args.query,
+          loadedTools: results.map((result) => result.name),
+          results,
+        } satisfies ToolSearchResult;
+      },
+    };
+  }
+
+  private extendLoadedToolNames(
+    current: ToolSearchState | undefined,
+    results: Array<{ name: string; result: unknown }>,
+  ): ToolSearchState | undefined {
+    const loaded = new Set(current?.loadedToolNames ?? []);
+    const searchToolName = this.getToolSearchMetaToolName();
+
+    for (const result of results) {
+      if (result.name !== searchToolName) {
+        continue;
+      }
+      const typedResult = result.result as {
+        loadedTools?: unknown;
+      } | null;
+      if (!Array.isArray(typedResult?.loadedTools)) {
+        continue;
+      }
+      for (const toolName of typedResult.loadedTools) {
+        if (typeof toolName === "string" && toolName) {
+          loaded.add(toolName);
+        }
+      }
+    }
+
+    if (loaded.size === 0) {
+      return current;
+    }
+
+    return {
+      loadedToolNames: [...loaded],
+    };
+  }
+
   /**
    * Process a chat request with tool support (Vercel AI SDK pattern)
    *
@@ -663,6 +891,7 @@ export class Runtime {
     _isRecursive?: boolean,
     // HTTP request for extracting headers (auth context)
     _httpRequest?: Request,
+    _toolSearchState?: ToolSearchState,
   ): AsyncGenerator<StreamEvent> {
     const debug = this.config.debug || this.config.agentLoop?.debug;
 
@@ -679,6 +908,7 @@ export class Runtime {
         _accumulatedMessages,
         _isRecursive,
         _httpRequest,
+        _toolSearchState,
       )) {
         yield event;
       }
@@ -689,25 +919,44 @@ export class Runtime {
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const maxIterations = this.config.agentLoop?.maxIterations || 20;
 
-    // Collect all tools (server + client from request)
-    const allTools: ToolDefinition[] = [...this.tools.values()];
-
-    // Add client tools from request
-    if (request.tools) {
-      for (const tool of request.tools) {
-        allTools.push({
-          name: tool.name,
-          description: tool.description,
-          location: "client",
-          inputSchema: tool.inputSchema as ToolDefinition["inputSchema"],
-        });
-      }
-    }
+    const allTools = this.collectToolsForRequest(request);
+    const nativeToolSearch = this.resolveNativeToolSearchForRequest();
+    const nativeToolCatalog = nativeToolSearch
+      ? this.buildNativeToolCatalogForRequest(request, allTools)
+      : null;
+    const selectedTools =
+      nativeToolCatalog ??
+      this.selectToolsForRequest(request, allTools, _toolSearchState);
+    const toolSearchTool = nativeToolSearch
+      ? null
+      : this.createToolSearchTool(request, allTools, selectedTools);
+    const effectiveSelectedTools = nativeToolCatalog
+      ? nativeToolCatalog
+      : toolSearchTool
+        ? [...selectedTools, toolSearchTool]
+        : selectedTools;
+    const providerToolOptions = this.buildProviderToolOptionsForRequest(
+      effectiveSelectedTools,
+    );
+    const selectedToolMap = new Map(
+      effectiveSelectedTools.map((tool) => [tool.name, tool] as const),
+    );
 
     if (debug) {
       console.log(
         `[Copilot SDK] Processing chat with ${allTools.length} tools`,
       );
+      if (effectiveSelectedTools.length !== allTools.length) {
+        console.log(
+          `[Copilot SDK] Tool selection active: ${effectiveSelectedTools.length}/${allTools.length} tools`,
+          {
+            activeProfile:
+              request.toolProfile ??
+              this.config.agentLoop?.toolSelection?.defaultProfile,
+            nativeSearch: nativeToolSearch?.provider ?? null,
+          },
+        );
+      }
       // Log messages with attachments for debugging vision support
       for (let i = 0; i < request.messages.length; i++) {
         const msg = request.messages[i];
@@ -747,11 +996,16 @@ export class Runtime {
     const completionRequest: ChatCompletionRequest = {
       messages: [], // Not used when rawMessages is provided
       rawMessages: request.messages as Array<Record<string, unknown>>,
-      actions: this.convertToolsToActions(allTools),
+      actions: nativeToolSearch
+        ? undefined
+        : this.convertToolsToActions(effectiveSelectedTools),
+      toolDefinitions: nativeToolSearch ? effectiveSelectedTools : undefined,
       systemPrompt: systemPrompt,
       config: request.config,
       signal,
       webSearch: this.getWebSearchConfig(),
+      providerToolOptions,
+      debug,
     };
 
     // Stream from adapter
@@ -846,7 +1100,7 @@ export class Runtime {
       const clientToolCalls: ToolCallInfo[] = [];
 
       for (const tc of toolCalls) {
-        const tool = allTools.find((t) => t.name === tc.name);
+        const tool = selectedToolMap.get(tc.name);
         if (tool?.location === "server" && tool.handler) {
           serverToolCalls.push(tc);
         } else {
@@ -868,7 +1122,7 @@ export class Runtime {
         "toolContext" in this.config ? this.config.toolContext : undefined;
 
       for (const tc of serverToolCalls) {
-        const tool = allTools.find((t) => t.name === tc.name);
+        const tool = selectedToolMap.get(tc.name);
         if (tool?.handler) {
           if (debug) {
             console.log(`[Copilot SDK] Executing server-side tool: ${tc.name}`);
@@ -896,6 +1150,7 @@ export class Runtime {
             yield {
               type: "action:end",
               id: tc.id,
+              name: tc.name,
               result,
             } as StreamEvent;
           } catch (error) {
@@ -917,6 +1172,7 @@ export class Runtime {
             yield {
               type: "action:end",
               id: tc.id,
+              name: tc.name,
               error:
                 error instanceof Error
                   ? error.message
@@ -981,6 +1237,13 @@ export class Runtime {
           ...request,
           messages: messagesWithResults as ChatRequest["messages"],
         };
+        const nextToolSearchState = this.extendLoadedToolNames(
+          _toolSearchState,
+          serverToolResults.map((result) => ({
+            name: result.name,
+            result: result.result,
+          })),
+        );
 
         // Signal end of current message turn before continuing
         // This tells the client to finalize the current assistant message
@@ -994,6 +1257,7 @@ export class Runtime {
           newMessages,
           true, // Mark as recursive
           _httpRequest,
+          nextToolSearchState,
         )) {
           yield event;
         }
@@ -1076,6 +1340,7 @@ export class Runtime {
     _accumulatedMessages?: DoneEventMessage[],
     _isRecursive?: boolean,
     _httpRequest?: Request,
+    _toolSearchState?: ToolSearchState,
   ): AsyncGenerator<StreamEvent> {
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const debug = this.config.debug || this.config.agentLoop?.debug;
@@ -1087,20 +1352,9 @@ export class Runtime {
       total_tokens: number;
     } = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-    // Collect all tools (server + client from request)
-    const allTools: ToolDefinition[] = [...this.tools.values()];
-
-    // Add client tools from request
-    if (request.tools) {
-      for (const tool of request.tools) {
-        allTools.push({
-          name: tool.name,
-          description: tool.description,
-          location: "client",
-          inputSchema: tool.inputSchema as ToolDefinition["inputSchema"],
-        });
-      }
-    }
+    const allTools = this.collectToolsForRequest(request);
+    const nativeToolSearch = this.resolveNativeToolSearchForRequest();
+    let toolSearchState = _toolSearchState;
 
     // Build system prompt
     const systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
@@ -1144,21 +1398,48 @@ export class Runtime {
           _accumulatedMessages,
           _isRecursive,
           _httpRequest,
+          toolSearchState,
         )) {
           yield event;
         }
         return;
       }
 
+      const nativeToolCatalog = nativeToolSearch
+        ? this.buildNativeToolCatalogForRequest(request, allTools)
+        : null;
+      const selectedTools =
+        nativeToolCatalog ??
+        this.selectToolsForRequest(request, allTools, toolSearchState);
+      const toolSearchTool = nativeToolSearch
+        ? null
+        : this.createToolSearchTool(request, allTools, selectedTools);
+      const effectiveSelectedTools = nativeToolCatalog
+        ? nativeToolCatalog
+        : toolSearchTool
+          ? [...selectedTools, toolSearchTool]
+          : selectedTools;
+      const providerToolOptions = this.buildProviderToolOptionsForRequest(
+        effectiveSelectedTools,
+      );
+      const selectedToolMap = new Map(
+        effectiveSelectedTools.map((tool) => [tool.name, tool] as const),
+      );
+
       // Create completion request
       const completionRequest: ChatCompletionRequest = {
         messages: [],
         rawMessages: conversationMessages,
-        actions: this.convertToolsToActions(allTools),
+        actions: nativeToolSearch
+          ? undefined
+          : this.convertToolsToActions(effectiveSelectedTools),
+        toolDefinitions: nativeToolSearch ? effectiveSelectedTools : undefined,
         systemPrompt: systemPrompt,
         config: request.config,
         signal,
         webSearch: this.getWebSearchConfig(),
+        providerToolOptions,
+        debug,
       };
 
       try {
@@ -1199,7 +1480,7 @@ export class Runtime {
           const clientToolCalls: ToolCallInfo[] = [];
 
           for (const tc of result.toolCalls) {
-            const tool = allTools.find((t) => t.name === tc.name);
+            const tool = selectedToolMap.get(tc.name);
             if (tool?.location === "server" && tool.handler) {
               serverToolCalls.push(tc);
             } else {
@@ -1213,7 +1494,7 @@ export class Runtime {
 
           // Emit tool call events
           for (const tc of result.toolCalls) {
-            const tool = allTools.find((t) => t.name === tc.name);
+            const tool = selectedToolMap.get(tc.name);
             yield {
               type: "action:start",
               id: tc.id,
@@ -1241,7 +1522,7 @@ export class Runtime {
             "toolContext" in this.config ? this.config.toolContext : undefined;
 
           for (const tc of serverToolCalls) {
-            const tool = allTools.find((t) => t.name === tc.name);
+            const tool = selectedToolMap.get(tc.name);
             if (tool?.handler) {
               if (debug) {
                 console.log(`[Copilot SDK] Executing tool: ${tc.name}`);
@@ -1268,6 +1549,7 @@ export class Runtime {
                 yield {
                   type: "action:end",
                   id: tc.id,
+                  name: tc.name,
                   result: toolResult,
                 } as StreamEvent;
               } catch (error) {
@@ -1288,6 +1570,7 @@ export class Runtime {
                 yield {
                   type: "action:end",
                   id: tc.id,
+                  name: tc.name,
                   error:
                     error instanceof Error
                       ? error.message
@@ -1344,6 +1627,13 @@ export class Runtime {
                 Record<string, unknown>
               >),
             ];
+            toolSearchState = this.extendLoadedToolNames(
+              toolSearchState,
+              serverToolResults.map((toolResult) => ({
+                name: toolResult.name,
+                result: toolResult.result,
+              })),
+            );
 
             // Continue loop
             continue;

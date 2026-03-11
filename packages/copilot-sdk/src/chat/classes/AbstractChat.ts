@@ -11,10 +11,12 @@
  */
 
 import type {
+  ContextUsage,
   MessageAttachment,
   AIResponseMode,
   ToolResponse,
   ToolDefinition,
+  ToolOptimizationConfig,
 } from "../../core";
 import type { ChatState } from "../interfaces/ChatState";
 import type {
@@ -40,9 +42,9 @@ import {
   createStreamState,
   processStreamChunk,
   isStreamDone,
-  requiresToolExecution,
 } from "../functions/stream";
 import { SimpleChatState } from "../interfaces/ChatState";
+import { ChatContextOptimizer } from "../optimizations";
 
 // ============================================
 // AI Response Control Helper
@@ -165,6 +167,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   protected transport: ChatTransport;
   protected config: ChatConfig;
   protected callbacks: ChatCallbacks<T>;
+  protected optimizer: ChatContextOptimizer;
+  protected lastContextUsage: ContextUsage | null = null;
 
   // Event handlers
   private eventHandlers = new Map<
@@ -185,6 +189,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       body: init.body,
       threadId: init.threadId,
       debug: init.debug,
+      optimization: init.optimization,
     };
 
     // Use provided state or create default
@@ -205,6 +210,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     // Store callbacks
     this.callbacks = init.callbacks ?? {};
+    this.optimizer = new ChatContextOptimizer(init.optimization);
 
     // Set initial messages
     if (init.initialMessages?.length) {
@@ -558,6 +564,28 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Update prompt/tool optimization behavior.
+   */
+  setOptimizationConfig(config?: ToolOptimizationConfig): void {
+    this.config.optimization = config;
+    this.optimizer.updateConfig(config);
+  }
+
+  /**
+   * Select the active tool profile for future requests.
+   */
+  setToolProfile(profile?: string): void {
+    this.optimizer.setActiveProfile(profile);
+  }
+
+  /**
+   * Get the most recent prompt context usage snapshot.
+   */
+  getContextUsage(): ContextUsage | null {
+    return this.lastContextUsage;
+  }
+
+  /**
    * Dynamic context from useAIContext hook
    */
   protected dynamicContext: string = "";
@@ -619,102 +647,35 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    * Build the request payload
    */
   protected buildRequest() {
-    // Send tools in SDK format - runtime handles conversion to LLM format
-    // Filter out tools that are marked as unavailable
-    const tools = this.config.tools
-      ?.filter((tool) => tool.available !== false)
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      }));
-
-    // Build a map of toolCallId -> { toolName, args } from assistant messages
-    const toolCallMap = new Map<
-      string,
-      { toolName: string; args: Record<string, unknown> }
-    >();
-    for (const msg of this.state.messages) {
-      if (msg.role === "assistant" && msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          try {
-            const args = tc.function?.arguments
-              ? JSON.parse(tc.function.arguments)
-              : {};
-            toolCallMap.set(tc.id, { toolName: tc.function.name, args });
-          } catch {
-            toolCallMap.set(tc.id, { toolName: tc.function.name, args: {} });
-          }
-        }
-      }
-    }
-
-    // Create a lookup for tool definitions by name
-    const toolDefMap = new Map<string, ToolWithAIConfig>();
-    if (this.config.tools) {
-      for (const tool of this.config.tools) {
-        toolDefMap.set(tool.name, {
-          name: tool.name,
-          aiResponseMode: tool.aiResponseMode,
-          aiContext: tool.aiContext,
-        });
-      }
-    }
+    const systemPrompt = this.dynamicContext
+      ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
+      : this.config.systemPrompt;
+    const optimized = this.optimizer.prepare({
+      messages: this.state.messages,
+      tools: this.config.tools,
+      systemPrompt,
+    });
+    this.lastContextUsage = optimized.contextUsage;
+    this.callbacks.onContextUsageChange?.(optimized.contextUsage);
 
     return {
-      messages: this.state.messages.map((m) => {
-        // For tool messages, transform based on aiResponseMode at SEND time
-        // This preserves full data in storage while sending brief to AI
-        if (m.role === "tool" && m.content && m.toolCallId) {
-          try {
-            const fullResult = JSON.parse(m.content);
-
-            // Look up the tool name and args from the tool call
-            const toolCallInfo = toolCallMap.get(m.toolCallId);
-            const toolDef = toolCallInfo
-              ? toolDefMap.get(toolCallInfo.toolName)
-              : undefined;
-            const toolArgs = toolCallInfo?.args;
-
-            const transformedContent = buildToolResultContentForAI(
-              fullResult,
-              toolDef,
-              toolArgs,
-            );
-            return {
-              role: m.role,
-              content: transformedContent,
-              tool_call_id: m.toolCallId,
-            };
-          } catch (e) {
-            // If not JSON, send as-is (log in debug mode)
-            this.debug("Failed to parse tool message JSON", {
-              content: m.content?.slice(0, 100),
-              error: e instanceof Error ? e.message : String(e),
-            });
-            return {
-              role: m.role,
-              content: m.content,
-              tool_call_id: m.toolCallId,
-            };
-          }
-        }
-
-        // Other messages unchanged
-        return {
-          role: m.role,
-          content: m.content,
-          tool_calls: m.toolCalls,
-          tool_call_id: m.toolCallId,
-          attachments: m.attachments,
-        };
-      }),
+      messages: optimized.messages,
       threadId: this.config.threadId,
-      systemPrompt: this.dynamicContext
-        ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
-        : this.config.systemPrompt,
+      systemPrompt,
       llm: this.config.llm,
-      tools: tools?.length ? tools : undefined,
+      tools: optimized.tools?.length ? optimized.tools : undefined,
+      toolCatalog: this.config.tools?.length
+        ? this.config.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            category: tool.category,
+            group: tool.group,
+            deferLoading: tool.deferLoading,
+            profiles: tool.profiles,
+            searchKeywords: tool.searchKeywords,
+            inputSchema: tool.inputSchema,
+          }))
+        : undefined,
     };
   }
 
@@ -856,13 +817,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
-      // Check for tool calls - only emit once per stream
-      if (requiresToolExecution(chunk) && !toolCallsEmitted) {
-        toolCallsEmitted = true;
-        this.debug("toolCalls", { toolCalls: updatedMessage.toolCalls });
-        this.emit("toolCalls", { toolCalls: updatedMessage.toolCalls });
-      }
-
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", { chunk });
@@ -873,6 +827,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           this.debug("processDoneMessages", {
             count: chunk.messages.length,
           });
+
+          const currentStreamToolCallIds = new Set(
+            this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
+          );
+          const messagesToInsert: T[] = [];
 
           // Build hidden map from stream state's toolResults
           const toolCallsHidden: Record<string, boolean> = {};
@@ -885,9 +844,26 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           }
 
           for (const msg of chunk.messages) {
-            // Skip ALL assistant messages - they're handled via streaming
-            // (message:end/message:start events create separate messages for each turn)
-            if (msg.role === "assistant") {
+            // Skip plain assistant text messages because they are already represented
+            // by streamed message:start/message:delta/message:end events. Preserve
+            // assistant messages that carry tool_calls so tool results keep a valid
+            // preceding assistant tool_call message in local state.
+            if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // The current streamed turn already becomes an assistant message from
+            // streamState/tool_calls handling. Skip the duplicate copy from the
+            // done payload, but keep assistant tool_call messages from earlier
+            // recursive turns (for example search_tools followed by a later client
+            // tool call).
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              (msg.tool_calls as Array<{ id: string }>).every((toolCall) =>
+                currentStreamToolCallIds.has(toolCall.id),
+              )
+            ) {
               continue;
             }
 
@@ -911,7 +887,40 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               metadata,
             } as T;
 
-            this.state.pushMessage(message);
+            messagesToInsert.push(message);
+          }
+
+          if (messagesToInsert.length > 0) {
+            const currentMessages = this.state.messages;
+            const currentStreamIndex = this.streamState
+              ? currentMessages.findIndex(
+                  (message) => message.id === this.streamState!.messageId,
+                )
+              : -1;
+
+            if (currentStreamIndex === -1) {
+              this.state.setMessages([...currentMessages, ...messagesToInsert]);
+            } else {
+              this.state.setMessages([
+                ...currentMessages.slice(0, currentStreamIndex),
+                ...messagesToInsert,
+                ...currentMessages.slice(currentStreamIndex),
+              ]);
+            }
+          }
+
+          // Only execute client tools once the full done payload has been
+          // merged into local state. Emitting earlier on the first tool_calls
+          // chunk can race with recursive server-tool turns and produce an
+          // invalid continuation order for OpenAI-compatible providers.
+          if (
+            chunk.requiresAction &&
+            !toolCallsEmitted &&
+            updatedMessage.toolCalls?.length
+          ) {
+            toolCallsEmitted = true;
+            this.debug("toolCalls", { toolCalls: updatedMessage.toolCalls });
+            this.emit("toolCalls", { toolCalls: updatedMessage.toolCalls });
           }
         }
 

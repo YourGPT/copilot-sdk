@@ -52,3 +52,12 @@ export {
   DEFAULT_MAX_ITERATIONS,
   type AgentLoopOptions,
 } from "./agent-loop";
+
+// Tool selection
+export {
+  selectTools,
+  searchTools,
+  shouldExposeToolSearch,
+  buildProviderToolOptions,
+} from "./tool-selection";
+export type { ToolSearchMatch } from "./tool-selection";

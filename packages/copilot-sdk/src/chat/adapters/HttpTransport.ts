@@ -90,6 +90,7 @@ export class HttpTransport implements ChatTransport {
           systemPrompt: request.systemPrompt,
           llm: request.llm,
           tools: request.tools,
+          toolCatalog: request.toolCatalog,
           actions: request.actions,
           streaming: this.config.streaming,
           ...(resolved.configBody as Record<string, unknown>),

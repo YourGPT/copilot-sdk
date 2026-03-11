@@ -4,7 +4,13 @@
  * Configuration and status types for chat functionality.
  */
 
-import type { LLMConfig, MessageAttachment, ToolDefinition } from "../../core";
+import type {
+  ContextUsage,
+  LLMConfig,
+  MessageAttachment,
+  ToolDefinition,
+  ToolOptimizationConfig,
+} from "../../core";
 import type { Resolvable } from "../../core/utils/resolvable";
 import type { UIMessage } from "./message";
 
@@ -52,6 +58,8 @@ export interface ChatConfig {
   debug?: boolean;
   /** Available tools (passed to LLM) */
   tools?: ToolDefinition[];
+  /** Optional prompt/tool optimization controls */
+  optimization?: ToolOptimizationConfig;
 }
 
 /**
@@ -96,6 +104,8 @@ export interface ChatCallbacks<T extends UIMessage = UIMessage> {
   onToolCalls?: (toolCalls: T["toolCalls"]) => void;
   /** Called when generation is complete */
   onFinish?: (messages: T[]) => void;
+  /** Called when prompt context usage changes */
+  onContextUsageChange?: (usage: ContextUsage) => void;
   /** Called when a server-side tool starts executing (action:start event) */
   onServerToolStart?: (info: ServerToolInfo) => void;
   /** Called when a server-side tool receives args (action:args event) */

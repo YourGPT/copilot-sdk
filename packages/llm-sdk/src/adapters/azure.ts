@@ -15,7 +15,11 @@ import type {
   ChatCompletionRequest,
   CompletionResult,
 } from "./base";
-import { formatMessagesForOpenAI, formatTools } from "./base";
+import {
+  formatMessagesForOpenAI,
+  formatTools,
+  logProviderPayload,
+} from "./base";
 
 // ============================================
 // Types
@@ -177,7 +181,7 @@ export class AzureAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
-      const stream = await client.chat.completions.create({
+      const payload = {
         // Azure uses deployment name, not model name
         model: this.config.deploymentName,
         messages,
@@ -185,7 +189,9 @@ export class AzureAdapter implements LLMAdapter {
         temperature: request.config?.temperature ?? this.config.temperature,
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
-      });
+      };
+      logProviderPayload("azure", "request payload", payload, request.debug);
+      const stream = await client.chat.completions.create(payload);
 
       let currentToolCall: {
         id: string;
@@ -194,6 +200,7 @@ export class AzureAdapter implements LLMAdapter {
       } | null = null;
 
       for await (const chunk of stream) {
+        logProviderPayload("azure", "stream chunk", chunk, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;
@@ -292,13 +299,16 @@ export class AzureAdapter implements LLMAdapter {
       ? formatTools(request.actions)
       : undefined;
 
-    const response = await client.chat.completions.create({
+    const payload = {
       model: this.config.deploymentName,
       messages,
       tools,
       temperature: request.config?.temperature ?? this.config.temperature,
       max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
-    });
+    };
+    logProviderPayload("azure", "request payload", payload, request.debug);
+    const response = await client.chat.completions.create(payload);
+    logProviderPayload("azure", "response payload", response, request.debug);
 
     const choice = response.choices[0];
     const message = choice?.message;

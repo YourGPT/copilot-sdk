@@ -8,14 +8,15 @@ This directory contains experimental and raw examples for testing various SDK fe
 
 ## Available Demos
 
-| Demo                    | Path               | Description                                       |
-| ----------------------- | ------------------ | ------------------------------------------------- |
-| **Non-Streaming**       | `/non-streaming`   | `runtime.generate()` with CopilotChat             |
-| **Theme Demo**          | `/theme-demo`      | 9 theme presets with live preview                 |
-| **Multi-Provider**      | `/providers`       | OpenAI, Anthropic, Google side-by-side            |
-| **Compound Components** | `/compound-test`   | Custom home screen with `Chat.Home`, `Chat.Input` |
-| **Tool Types**          | `/tool-types-demo` | Different tool rendering patterns                 |
-| **Widgets**             | `/widgets`         | Standalone UI components                          |
+| Demo                    | Path               | Description                                           |
+| ----------------------- | ------------------ | ----------------------------------------------------- |
+| **Non-Streaming**       | `/non-streaming`   | `runtime.generate()` with CopilotChat                 |
+| **Theme Demo**          | `/theme-demo`      | 9 theme presets with live preview                     |
+| **Multi-Provider**      | `/providers`       | OpenAI, Anthropic, Google side-by-side                |
+| **Compound Components** | `/compound-test`   | Custom home screen with `Chat.Home`, `Chat.Input`     |
+| **Tool Types**          | `/tool-types-demo` | Different tool rendering patterns                     |
+| **Tool Scale Lab**      | `/tool-scale`      | 100 tools with profiles, search, and deferred loading |
+| **Widgets**             | `/widgets`         | Standalone UI components                              |
 
 ## Quick Start
 
@@ -79,19 +80,22 @@ experimental/
 │   ├── providers/                  # Multi-provider test
 │   ├── compound-test/              # Compound components
 │   ├── tool-types-demo/            # Tool rendering patterns
+│   ├── tool-scale/                 # 100-tool selection/profile lab
 │   ├── widgets/                    # Standalone widgets
 │   └── api/
 │       └── chat/
 │           ├── openai/route.ts
 │           ├── anthropic/route.ts
-│           └── google/route.ts
+│           ├── google/route.ts
+│           └── tool-scale/route.ts
 ├── components/
 │   ├── theme-provider.tsx
 │   ├── provider-card.tsx
 │   └── tools/
 ├── lib/
 │   ├── utils.ts
-│   └── tools/
+│   ├── tools/
+│   └── tool-scale/
 └── README.md
 ```
 

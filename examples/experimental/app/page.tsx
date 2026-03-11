@@ -27,6 +27,11 @@ const demos = [
     description: "Different tool rendering patterns",
   },
   {
+    name: "Tool Scale Lab",
+    href: "/tool-scale",
+    description: "100-tool profile, search, and deferred-loading demo",
+  },
+  {
     name: "Widgets",
     href: "/widgets",
     description: "Standalone UI components",

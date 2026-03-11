@@ -71,6 +71,10 @@ const serverTools: ToolDefinition[] = [
     description:
       "Search the knowledge base for relevant documents. Use this when the user asks questions about YourGPT, the SDK, pricing, features, or how to use the product.",
     location: "server",
+    category: "knowledge",
+    group: "search",
+    profiles: ["support", "research"],
+    searchKeywords: ["docs", "pricing", "features", "sdk", "yourgpt"],
     // HIDDEN: This tool runs silently - user won't see it in the chat UI
     hidden: true,
     inputSchema: {
@@ -133,6 +137,11 @@ const serverTools: ToolDefinition[] = [
     name: "get_current_time",
     description: "Get the current server time",
     location: "server",
+    category: "utility",
+    group: "time",
+    profiles: ["utility"],
+    deferLoading: true,
+    searchKeywords: ["time", "clock", "timezone", "date"],
     // VISIBLE: This tool will show in the chat UI (hidden: false is default)
     inputSchema: {
       type: "object",
@@ -192,6 +201,39 @@ Be helpful, concise, and accurate. If the knowledge base doesn't have the answer
     enabled: true,
     maxIterations: 5,
     debug: true,
+    toolSelection: {
+      enabled: true,
+      defaultProfile: "support",
+      includeUnprofiled: true,
+      search: {
+        enabled: true,
+        maxResults: 3,
+        exposeWhenToolCountExceeds: 1,
+      },
+      dynamicSelection: {
+        enabled: true,
+        maxTools: 2,
+      },
+      profiles: {
+        support: {
+          include: ["category:knowledge", "search_knowledge_base"],
+          exclude: ["group:time"],
+        },
+        utility: {
+          include: ["category:utility", "get_current_time"],
+        },
+      },
+      nativeProviderHints: {
+        anthropic: {
+          toolChoice: "single",
+          disableParallelToolUse: true,
+        },
+        openai: {
+          toolChoice: "single",
+          parallelToolCalls: false,
+        },
+      },
+    },
   },
 });
 
@@ -234,6 +276,7 @@ app.post("/api/copilot-response/chat", async (req, res) => {
 app.post("/api/copilot/stream", async (req, res) => {
   console.log("\n========================================");
   console.log("[/api/copilot/stream] SSE streaming request");
+  console.log("Tool profile:", req.body.toolProfile || "default");
   console.log("Messages:", JSON.stringify(req.body.messages, null, 2));
   console.log("========================================\n");
 
@@ -254,6 +297,7 @@ app.post("/api/copilot/stream", async (req, res) => {
 app.post("/api/copilot/chat", async (req, res) => {
   console.log("\n========================================");
   console.log("[/api/copilot/chat] Non-streaming request");
+  console.log("Tool profile:", req.body.toolProfile || "default");
   console.log("Messages:", JSON.stringify(req.body.messages, null, 2));
   console.log("========================================\n");
 

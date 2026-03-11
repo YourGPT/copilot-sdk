@@ -3,6 +3,7 @@ import type {
   StreamEvent,
   WebSearchConfig,
   Citation,
+  ToolDefinition,
 } from "../core/stream-events";
 import { generateMessageId } from "../core/utils";
 import type {
@@ -13,6 +14,7 @@ import type {
 import {
   formatMessagesForAnthropic,
   messageToAnthropicContent,
+  logProviderPayload,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -337,6 +339,37 @@ export class AnthropicAdapter implements LLMAdapter {
     return messages;
   }
 
+  private buildNativeSearchTools(
+    tools: ToolDefinition[],
+    variant: "bm25" | "regex" = "bm25",
+  ): Array<Record<string, unknown>> {
+    const nativeSearchTool =
+      variant === "regex"
+        ? {
+            type: "tool_search_tool_regex_20251119",
+            name: "tool_search_tool_regex",
+          }
+        : {
+            type: "tool_search_tool_bm25_20251119",
+            name: "tool_search_tool_bm25",
+          };
+
+    const providerTools = tools
+      .filter((tool) => tool.available !== false)
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.inputSchema ?? {
+          type: "object" as const,
+          properties: {},
+          required: [],
+        },
+        defer_loading: tool.deferLoading === true,
+      }));
+
+    return [nativeSearchTool, ...providerTools];
+  }
+
   /**
    * Build common request options for both streaming and non-streaming
    */
@@ -358,32 +391,38 @@ export class AnthropicAdapter implements LLMAdapter {
       messages = formatted.messages as Array<Record<string, unknown>>;
     }
 
-    // Convert actions to Anthropic tool format
-    const tools: Array<Record<string, unknown>> =
-      request.actions?.map((action) => ({
-        name: action.name,
-        description: action.description,
-        input_schema: {
-          type: "object" as const,
-          properties: action.parameters
-            ? Object.fromEntries(
-                Object.entries(action.parameters).map(([key, param]) => [
-                  key,
-                  {
-                    type: param.type,
-                    description: param.description,
-                    enum: param.enum,
-                  },
-                ]),
-              )
-            : {},
-          required: action.parameters
-            ? Object.entries(action.parameters)
-                .filter(([, param]) => param.required)
-                .map(([key]) => key)
-            : [],
-        },
-      })) || [];
+    const anthropicNativeSearch =
+      request.providerToolOptions?.anthropic?.nativeToolSearch;
+
+    const tools: Array<Record<string, unknown>> = anthropicNativeSearch?.enabled
+      ? this.buildNativeSearchTools(
+          request.toolDefinitions ?? [],
+          anthropicNativeSearch.variant,
+        )
+      : request.actions?.map((action) => ({
+          name: action.name,
+          description: action.description,
+          input_schema: {
+            type: "object" as const,
+            properties: action.parameters
+              ? Object.fromEntries(
+                  Object.entries(action.parameters).map(([key, param]) => [
+                    key,
+                    {
+                      type: param.type,
+                      description: param.description,
+                      enum: param.enum,
+                    },
+                  ]),
+                )
+              : {},
+            required: action.parameters
+              ? Object.entries(action.parameters)
+                  .filter(([, param]) => param.required)
+                  .map(([key]) => key)
+              : [],
+          },
+        })) || [];
 
     // Check for web search configuration (from request or adapter config)
     const webSearchConfig = request.webSearch ?? this.config.webSearch;
@@ -436,6 +475,31 @@ export class AnthropicAdapter implements LLMAdapter {
       tools: tools.length ? tools : undefined,
     };
 
+    const anthropicToolOptions = request.providerToolOptions?.anthropic;
+    if (tools.length > 0 && anthropicToolOptions) {
+      if (
+        anthropicToolOptions.toolChoice ||
+        anthropicToolOptions.disableParallelToolUse !== undefined
+      ) {
+        const toolChoice: Record<string, unknown> =
+          typeof anthropicToolOptions.toolChoice === "object"
+            ? {
+                type: "tool",
+                name: anthropicToolOptions.toolChoice.name,
+              }
+            : anthropicToolOptions.toolChoice
+              ? { type: anthropicToolOptions.toolChoice }
+              : { type: "auto" };
+
+        if (anthropicToolOptions.disableParallelToolUse !== undefined) {
+          toolChoice.disable_parallel_tool_use =
+            anthropicToolOptions.disableParallelToolUse;
+        }
+
+        options.tool_choice = toolChoice;
+      }
+    }
+
     // Add server tool configuration for web search
     if (serverToolConfiguration) {
       options.server_tool_configuration = serverToolConfiguration;
@@ -466,7 +530,19 @@ export class AnthropicAdapter implements LLMAdapter {
     } as Record<string, unknown> & { stream: false };
 
     try {
+      logProviderPayload(
+        "anthropic",
+        "request payload",
+        nonStreamingOptions,
+        request.debug,
+      );
       const response = await client.messages.create(nonStreamingOptions);
+      logProviderPayload(
+        "anthropic",
+        "response payload",
+        response,
+        request.debug,
+      );
 
       // Parse response
       let content = "";
@@ -512,6 +588,12 @@ export class AnthropicAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
+      logProviderPayload(
+        "anthropic",
+        "request payload",
+        options,
+        request.debug,
+      );
       const stream = await client.messages.stream(options);
 
       let currentToolUse: {
@@ -536,6 +618,7 @@ export class AnthropicAdapter implements LLMAdapter {
         | undefined;
 
       for await (const event of stream) {
+        logProviderPayload("anthropic", "stream event", event, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;

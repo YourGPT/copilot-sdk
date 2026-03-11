@@ -89,10 +89,15 @@ export { DEFAULT_CAPABILITIES } from "./core/types";
 export {
   Runtime,
   createRuntime,
+  selectTools,
+  searchTools,
+  shouldExposeToolSearch,
+  buildProviderToolOptions,
   type RuntimeConfig,
   type ChatRequest,
   type ActionRequest,
   type RequestContext,
+  type ToolSearchMatch,
 } from "./server";
 
 // StreamResult (Industry Standard Pattern)
@@ -186,6 +191,16 @@ export type {
   UnifiedToolResult,
   ToolExecution,
   AgentLoopConfig,
+  ToolProfile,
+  ToolDynamicSelectionConfig,
+  ToolSearchConfig,
+  OpenAIToolSelectionHints,
+  AnthropicToolSelectionHints,
+  ToolNativeProviderHints,
+  ToolSelectionConfig,
+  OpenAIProviderToolOptions,
+  AnthropicProviderToolOptions,
+  ProviderToolRuntimeOptions,
   DoneEventMessage,
   ToolCallInfo,
   TokenUsageRaw,

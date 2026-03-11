@@ -3,10 +3,20 @@ import type {
   StreamEvent,
   WebSearchConfig,
   Citation,
+  ToolDefinition,
 } from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
-import type { LLMAdapter, ChatCompletionRequest } from "./base";
-import { formatMessagesForOpenAI, formatTools } from "./base";
+import type {
+  LLMAdapter,
+  ChatCompletionRequest,
+  CompletionResult,
+} from "./base";
+import {
+  formatMessagesForOpenAI,
+  formatTools,
+  logProviderPayload,
+  normalizeObjectJsonSchema,
+} from "./base";
 
 /**
  * OpenAI adapter configuration
@@ -53,7 +63,230 @@ export class OpenAIAdapter implements LLMAdapter {
     return this.client;
   }
 
+  private shouldUseResponsesApi(request: ChatCompletionRequest): boolean {
+    return (
+      request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true &&
+      request.providerToolOptions.openai.nativeToolSearch.useResponsesApi !==
+        false &&
+      Array.isArray(request.toolDefinitions) &&
+      request.toolDefinitions.length > 0
+    );
+  }
+
+  private buildResponsesInput(
+    request: ChatCompletionRequest,
+  ): Array<Record<string, unknown>> {
+    const sourceMessages =
+      request.rawMessages && request.rawMessages.length > 0
+        ? request.rawMessages
+        : (formatMessagesForOpenAI(request.messages, undefined) as Array<
+            Record<string, unknown>
+          >);
+    const input: Array<Record<string, unknown>> = [];
+
+    for (const message of sourceMessages) {
+      if (message.role === "system") {
+        continue;
+      }
+
+      if (message.role === "assistant") {
+        const content =
+          typeof message.content === "string"
+            ? message.content
+            : Array.isArray(message.content)
+              ? message.content
+              : message.content
+                ? JSON.stringify(message.content)
+                : "";
+
+        if (content) {
+          input.push({
+            type: "message",
+            role: "assistant",
+            content,
+          });
+        }
+
+        const toolCalls = Array.isArray(message.tool_calls)
+          ? (message.tool_calls as Array<{
+              id: string;
+              function?: { name?: string; arguments?: string };
+            }>)
+          : [];
+
+        for (const toolCall of toolCalls) {
+          input.push({
+            type: "function_call",
+            call_id: toolCall.id,
+            name: toolCall.function?.name,
+            arguments: toolCall.function?.arguments ?? "{}",
+          });
+        }
+        continue;
+      }
+
+      if (message.role === "tool") {
+        input.push({
+          type: "function_call_output",
+          call_id: message.tool_call_id,
+          output:
+            typeof message.content === "string"
+              ? message.content
+              : JSON.stringify(message.content ?? null),
+        });
+        continue;
+      }
+
+      input.push({
+        type: "message",
+        role: message.role === "developer" ? "developer" : "user",
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : Array.isArray(message.content)
+              ? message.content
+              : JSON.stringify(message.content ?? ""),
+      });
+    }
+
+    return input;
+  }
+
+  private buildResponsesTools(
+    tools: ToolDefinition[],
+  ): Array<Record<string, unknown>> {
+    const nativeTools = tools
+      .filter((tool) => tool.available !== false)
+      .map((tool) => ({
+        type: "function",
+        name: tool.name,
+        description: tool.description,
+        parameters: normalizeObjectJsonSchema(
+          (tool.inputSchema as Record<string, unknown> | undefined) ?? {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        ),
+        strict: true,
+        defer_loading: tool.deferLoading === true,
+      }));
+
+    return [{ type: "tool_search" }, ...nativeTools];
+  }
+
+  private parseResponsesResult(response: any): CompletionResult {
+    const content =
+      typeof response?.output_text === "string" ? response.output_text : "";
+    const toolCalls = Array.isArray(response?.output)
+      ? response.output
+          .filter((item: any) => item?.type === "function_call")
+          .map((item: any) => ({
+            id: item.call_id ?? item.id ?? generateToolCallId(),
+            name: item.name,
+            args: (() => {
+              try {
+                return JSON.parse(item.arguments ?? "{}");
+              } catch {
+                return {};
+              }
+            })(),
+          }))
+      : [];
+
+    return {
+      content,
+      toolCalls,
+      usage: response?.usage
+        ? {
+            promptTokens: response.usage.input_tokens ?? 0,
+            completionTokens: response.usage.output_tokens ?? 0,
+            totalTokens:
+              response.usage.total_tokens ??
+              (response.usage.input_tokens ?? 0) +
+                (response.usage.output_tokens ?? 0),
+          }
+        : undefined,
+      rawResponse: response as Record<string, unknown>,
+    };
+  }
+
+  private async completeWithResponses(
+    request: ChatCompletionRequest,
+  ): Promise<CompletionResult> {
+    const client = await this.getClient();
+    const openaiToolOptions = request.providerToolOptions?.openai;
+    const payload = {
+      model: request.config?.model || this.model,
+      instructions: request.systemPrompt,
+      input: this.buildResponsesInput(request),
+      tools: this.buildResponsesTools(request.toolDefinitions ?? []),
+      tool_choice:
+        openaiToolOptions?.toolChoice === "required"
+          ? "required"
+          : openaiToolOptions?.toolChoice === "auto"
+            ? "auto"
+            : undefined,
+      parallel_tool_calls: openaiToolOptions?.parallelToolCalls,
+      temperature: request.config?.temperature ?? this.config.temperature,
+      max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+      stream: false,
+    };
+
+    logProviderPayload("openai", "request payload", payload, request.debug);
+    const response = await client.responses.create(payload);
+    logProviderPayload("openai", "response payload", response, request.debug);
+
+    return this.parseResponsesResult(response);
+  }
+
   async *stream(request: ChatCompletionRequest): AsyncGenerator<StreamEvent> {
+    if (this.shouldUseResponsesApi(request)) {
+      const messageId = generateMessageId();
+      yield { type: "message:start", id: messageId };
+
+      try {
+        const result = await this.completeWithResponses(request);
+
+        if (result.content) {
+          yield { type: "message:delta", content: result.content };
+        }
+
+        for (const toolCall of result.toolCalls) {
+          yield {
+            type: "action:start",
+            id: toolCall.id,
+            name: toolCall.name,
+          };
+          yield {
+            type: "action:args",
+            id: toolCall.id,
+            args: JSON.stringify(toolCall.args),
+          };
+        }
+
+        yield { type: "message:end" };
+        yield {
+          type: "done",
+          usage: result.usage
+            ? {
+                prompt_tokens: result.usage.promptTokens,
+                completion_tokens: result.usage.completionTokens,
+                total_tokens: result.usage.totalTokens,
+              }
+            : undefined,
+        };
+        return;
+      } catch (error) {
+        yield {
+          type: "error",
+          message: error instanceof Error ? error.message : "Unknown error",
+          code: "OPENAI_RESPONSES_ERROR",
+        };
+        return;
+      }
+    }
+
     const client = await this.getClient();
 
     // Use raw messages if provided (for agent loop with tool calls), otherwise format from Message[]
@@ -163,15 +396,31 @@ export class OpenAIAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
-      const stream = await client.chat.completions.create({
+      const openaiToolOptions = request.providerToolOptions?.openai;
+      const toolChoice =
+        openaiToolOptions?.toolChoice &&
+        typeof openaiToolOptions.toolChoice === "object"
+          ? {
+              type: "function" as const,
+              function: {
+                name: openaiToolOptions.toolChoice.name,
+              },
+            }
+          : openaiToolOptions?.toolChoice;
+      const payload = {
         model: request.config?.model || this.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
+        tool_choice: tools.length > 0 ? toolChoice : undefined,
+        parallel_tool_calls:
+          tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
         temperature: request.config?.temperature ?? this.config.temperature,
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
         stream_options: { include_usage: true },
-      });
+      };
+      logProviderPayload("openai", "request payload", payload, request.debug);
+      const stream = await client.chat.completions.create(payload);
 
       let currentToolCall: {
         id: string;
@@ -192,6 +441,7 @@ export class OpenAIAdapter implements LLMAdapter {
         | undefined;
 
       for await (const chunk of stream) {
+        logProviderPayload("openai", "stream chunk", chunk, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;
@@ -307,6 +557,91 @@ export class OpenAIAdapter implements LLMAdapter {
         code: "OPENAI_ERROR",
       };
     }
+  }
+
+  async complete(request: ChatCompletionRequest): Promise<CompletionResult> {
+    if (this.shouldUseResponsesApi(request)) {
+      return this.completeWithResponses(request);
+    }
+
+    const client = await this.getClient();
+
+    let messages: Array<Record<string, unknown>>;
+    if (request.rawMessages && request.rawMessages.length > 0) {
+      messages = request.rawMessages;
+      if (
+        request.systemPrompt &&
+        !messages.some((message) => message.role === "system")
+      ) {
+        messages = [
+          { role: "system", content: request.systemPrompt },
+          ...messages,
+        ];
+      }
+    } else {
+      messages = formatMessagesForOpenAI(
+        request.messages,
+        request.systemPrompt,
+      ) as Array<Record<string, unknown>>;
+    }
+
+    const tools: Array<Record<string, unknown>> = request.actions?.length
+      ? formatTools(request.actions)
+      : [];
+
+    const openaiToolOptions = request.providerToolOptions?.openai;
+    const toolChoice =
+      openaiToolOptions?.toolChoice &&
+      typeof openaiToolOptions.toolChoice === "object"
+        ? {
+            type: "function" as const,
+            function: {
+              name: openaiToolOptions.toolChoice.name,
+            },
+          }
+        : openaiToolOptions?.toolChoice;
+
+    const payload = {
+      model: request.config?.model || this.model,
+      messages,
+      tools: tools.length > 0 ? tools : undefined,
+      tool_choice: tools.length > 0 ? toolChoice : undefined,
+      parallel_tool_calls:
+        tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
+      temperature: request.config?.temperature ?? this.config.temperature,
+      max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+      stream: false,
+    };
+
+    logProviderPayload("openai", "request payload", payload, request.debug);
+    const response = await client.chat.completions.create(payload);
+    logProviderPayload("openai", "response payload", response, request.debug);
+
+    const choice = response.choices?.[0];
+    const message = choice?.message;
+    return {
+      content: message?.content ?? "",
+      toolCalls:
+        message?.tool_calls?.map((toolCall: any) => ({
+          id: toolCall.id ?? generateToolCallId(),
+          name: toolCall.function?.name ?? "",
+          args: (() => {
+            try {
+              return JSON.parse(toolCall.function?.arguments ?? "{}");
+            } catch {
+              return {};
+            }
+          })(),
+        })) ?? [],
+      usage: response.usage
+        ? {
+            promptTokens: response.usage.prompt_tokens,
+            completionTokens: response.usage.completion_tokens,
+            totalTokens: response.usage.total_tokens,
+          }
+        : undefined,
+      rawResponse: response as Record<string, unknown>,
+    };
   }
 }
 

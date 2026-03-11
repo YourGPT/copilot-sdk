@@ -5,7 +5,7 @@ import type {
 } from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
 import type { LLMAdapter, ChatCompletionRequest } from "./base";
-import { formatMessages, formatTools } from "./base";
+import { formatMessages, formatTools, logProviderPayload } from "./base";
 import type { OllamaModelOptions } from "../providers/types";
 
 /**
@@ -288,18 +288,20 @@ export class OllamaAdapter implements LLMAdapter {
         Object.assign(ollamaOptions, this.config.options);
       }
 
+      const payload = {
+        model: request.config?.model || this.model,
+        messages,
+        tools,
+        stream: true,
+        options: ollamaOptions,
+      };
+      logProviderPayload("ollama", "request payload", payload, request.debug);
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: request.config?.model || this.model,
-          messages,
-          tools,
-          stream: true,
-          options: ollamaOptions,
-        }),
+        body: JSON.stringify(payload),
         signal: request.signal,
       });
 
@@ -336,6 +338,7 @@ export class OllamaAdapter implements LLMAdapter {
 
           try {
             const chunk = JSON.parse(line);
+            logProviderPayload("ollama", "stream chunk", chunk, request.debug);
 
             // Handle content
             if (chunk.message?.content) {
