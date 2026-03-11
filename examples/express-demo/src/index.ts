@@ -6,8 +6,11 @@ import { createAnthropic } from "@yourgpt/llm-sdk/anthropic";
 import { createOpenAI } from "@yourgpt/llm-sdk/openai";
 
 const app = express();
+const BODY_SIZE_LIMIT = process.env.BODY_SIZE_LIMIT || "100mb";
+
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: BODY_SIZE_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
 // ============================================
 // DUMMY KNOWLEDGE BASE DATA
@@ -190,6 +193,35 @@ Be helpful, concise, and accurate. If the knowledge base doesn't have the answer
     maxIterations: 5,
     debug: true,
   },
+});
+
+// ============================================
+// MINIMAL RUNTIME (No tools, simple prompt)
+// ============================================
+
+const minimalRuntime = createRuntime({
+  provider,
+  model,
+  systemPrompt: "You are a helpful AI assistant.",
+});
+
+// ============================================
+// MINIMAL COPILOT RESPONSE ENDPOINT
+// ============================================
+
+/**
+ * Minimal streaming endpoint - no tools, simple prompt
+ */
+app.post("/api/copilot-response", async (req, res) => {
+  await minimalRuntime.stream(req.body).pipeToResponse(res);
+});
+
+/**
+ * Minimal non-streaming endpoint - no tools, simple prompt
+ */
+app.post("/api/copilot-response/chat", async (req, res) => {
+  const result = await minimalRuntime.chat(req.body);
+  res.json(result);
 });
 
 // ============================================
