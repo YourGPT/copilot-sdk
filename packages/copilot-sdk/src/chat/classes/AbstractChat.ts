@@ -501,6 +501,31 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Inline skills from the client (sent on every request for server to merge)
+   */
+  protected inlineSkills: Array<{
+    name: string;
+    description: string;
+    content: string;
+    strategy?: string;
+  }> = [];
+
+  /**
+   * Set inline skills (called by SkillProvider via React layer)
+   */
+  setInlineSkills(
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ): void {
+    this.inlineSkills = skills;
+    this.debug("Inline skills updated", { count: skills.length });
+  }
+
+  /**
    * Dynamic context from useAIContext hook
    */
   protected dynamicContext: string = "";
@@ -590,6 +615,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             inputSchema: tool.inputSchema,
           }))
         : undefined,
+      __skills: this.inlineSkills.length ? this.inlineSkills : undefined,
     };
   }
 

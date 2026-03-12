@@ -96,3 +96,7 @@ export {
   type UseMCPUIIntentsConfig,
   type UseMCPUIIntentsReturn,
 } from "./useMCPUIIntents";
+
+// Skills Hooks
+export { useSkill } from "./useSkill";
+export { useSkillStatus, type UseSkillStatusReturn } from "./useSkillStatus";

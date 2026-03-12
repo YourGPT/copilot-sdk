@@ -202,3 +202,19 @@ export type {
 
 // Re-export tool helper function (Vercel AI SDK pattern)
 export { tool } from "../core";
+
+// Skills System
+export { SkillProvider, type SkillProviderProps } from "./skill/SkillProvider";
+export { defineSkill } from "./skill/define-skill";
+export { useSkill } from "./hooks/useSkill";
+export {
+  useSkillStatus,
+  type UseSkillStatusReturn,
+} from "./hooks/useSkillStatus";
+export type {
+  SkillDefinition,
+  SkillSource,
+  SkillStrategy,
+  ResolvedSkill,
+  ClientInlineSkill,
+} from "../skill-system/types";

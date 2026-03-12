@@ -44,6 +44,8 @@ import {
   type ContextTreeNode,
 } from "../utils/context-tree";
 import { useMCPTools } from "../hooks/useMCPTools";
+import { SkillProvider } from "../skill/SkillProvider";
+import type { SkillDefinition } from "../../skill-system/types";
 
 // ============================================
 // Internal MCP Connection Component
@@ -107,6 +109,12 @@ export interface CopilotProviderProps {
   mcpServers?: MCPServerConfig[];
   /** Optional prompt/tool optimization controls (tool profiles, context budgets, etc.) */
   optimization?: ToolOptimizationConfig;
+  /**
+   * Convenience prop to pre-register inline skills.
+   * Wraps children with <SkillProvider skills={skills}>.
+   * Only inline skills (source.type === "inline") are supported client-side.
+   */
+  skills?: SkillDefinition[];
 }
 
 export interface CopilotContextValue {
@@ -155,6 +163,16 @@ export interface CopilotContextValue {
   // System Prompt
   setSystemPrompt: (prompt: string) => void;
 
+  // Skills (for SkillProvider — sends inline skills to server on every request)
+  setInlineSkills: (
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ) => void;
+
   // Config
   threadId?: string;
   /**
@@ -200,6 +218,7 @@ export function CopilotProvider({
   maxIterationsMessage,
   mcpServers,
   optimization,
+  skills,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -448,6 +467,21 @@ export function CopilotProvider({
     [debugLog],
   );
 
+  const setInlineSkills = useCallback(
+    (
+      skills: Array<{
+        name: string;
+        description: string;
+        content: string;
+        strategy?: string;
+      }>,
+    ): void => {
+      chatRef.current?.setInlineSkills(skills);
+      debugLog("Inline skills updated", { count: skills.length });
+    },
+    [debugLog],
+  );
+
   // ============================================
   // Chat Actions
   // ============================================
@@ -552,6 +586,9 @@ export function CopilotProvider({
       // System Prompt
       setSystemPrompt,
 
+      // Skills
+      setInlineSkills,
+
       // Config
       threadId,
       runtimeUrl,
@@ -580,6 +617,7 @@ export function CopilotProvider({
       addContext,
       removeContext,
       setSystemPrompt,
+      setInlineSkills,
       threadId,
       runtimeUrl,
       toolsConfig,
@@ -591,7 +629,11 @@ export function CopilotProvider({
       {mcpServers?.map((config) => (
         <MCPConnection key={config.name} config={config} />
       ))}
-      {children}
+      {skills ? (
+        <SkillProvider skills={skills}>{children}</SkillProvider>
+      ) : (
+        children
+      )}
     </CopilotContext.Provider>
   );
 }
