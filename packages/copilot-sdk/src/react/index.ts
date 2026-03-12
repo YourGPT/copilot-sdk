@@ -202,3 +202,30 @@ export type {
 
 // Re-export tool helper function (Vercel AI SDK pattern)
 export { tool } from "../core";
+
+// Message History (Context Management)
+export {
+  useMessageHistory,
+  MessageHistoryContext,
+  useMessageHistoryContext,
+  defaultMessageHistoryConfig,
+  toDisplayMessage,
+  toLLMMessage,
+  toLLMMessages,
+  keepToolPairsAtomic,
+  isCompactionMarker,
+} from "./message-history";
+export type {
+  DisplayMessage,
+  CompactionMarker,
+  LLMMessage,
+  CompactedToolResult,
+  SessionCompactionState,
+  TokenUsage,
+  CompactionEvent,
+  CompactionStrategy,
+  MessageHistoryConfig,
+  UseMessageHistoryOptions,
+  UseMessageHistoryReturn,
+  MessageHistoryContextValue,
+} from "./message-history";
