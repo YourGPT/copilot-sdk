@@ -203,6 +203,17 @@ export type {
 // Re-export tool helper function (Vercel AI SDK pattern)
 export { tool } from "../core";
 
+// Skills System
+export {
+  defineSkill,
+  SkillProvider,
+  useSkill,
+  type SkillDefinition,
+  type SkillSource,
+  type SkillStrategy,
+  type SkillProviderProps,
+} from "./skills";
+
 // Message History (Context Management)
 export {
   useMessageHistory,

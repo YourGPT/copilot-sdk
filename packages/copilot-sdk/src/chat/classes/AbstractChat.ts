@@ -346,8 +346,10 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.callbacks.onMessagesChange?.(this.state.messages);
       this.callbacks.onStatusChange?.("submitted");
 
-      // Yield to allow UI to render loading state (important for non-streaming)
-      await Promise.resolve();
+      // Yield a full macrotask so React can flush the "submitted" status
+      // before the next request fires. Promise.resolve() is a microtask and
+      // is not enough for React 18 to render the loading state.
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Continue request
       await this.processRequest();
@@ -506,6 +508,25 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   protected dynamicContext: string = "";
 
   /**
+   * Optional transform applied to messages just before building the HTTP request.
+   * Used by the message-history / compaction system to send a pruned message list
+   * without mutating the in-memory store (which keeps the full history for display).
+   */
+  private requestMessageTransform:
+    | ((messages: UIMessage[]) => UIMessage[])
+    | null = null;
+
+  /**
+   * Set (or clear) the per-request message transform.
+   * Pass null to disable.
+   */
+  setRequestMessageTransform(
+    fn: ((messages: UIMessage[]) => UIMessage[]) | null,
+  ): void {
+    this.requestMessageTransform = fn;
+  }
+
+  /**
    * Set dynamic context (appended to system prompt)
    */
   setContext(context: string): void {
@@ -565,8 +586,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     const systemPrompt = this.dynamicContext
       ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
       : this.config.systemPrompt;
+    const rawMessages = this.requestMessageTransform
+      ? (this.requestMessageTransform(
+          this.state.messages as UIMessage[],
+        ) as T[])
+      : this.state.messages;
     const optimized = this.optimizer.prepare({
-      messages: this.state.messages,
+      messages: rawMessages,
       tools: this.config.tools,
       systemPrompt,
     });

@@ -350,8 +350,15 @@ function CopilotChatBase(
     });
 
   // Filter out tool messages and merge results into parent assistant messages
+  // Keep compaction-markers (system messages with type='compaction-marker') visible
   const visibleMessages = messages
-    .filter((m: UIMessage) => m.role !== "tool") // Hide tool messages - results merged into assistant
+    .filter(
+      (m: UIMessage) =>
+        m.role !== "tool" &&
+        (m.role !== "system" ||
+          (m.metadata as Record<string, unknown>)?.type ===
+            "compaction-marker"),
+    ) // Hide tool/system messages except compaction markers
     .map((m: UIMessage) => {
       // For assistant messages with tool_calls, merge results
       let messageToolExecutions: ToolExecutionData[] | undefined;
@@ -491,37 +498,49 @@ function CopilotChatBase(
       ? chatProps.suggestions
       : [];
 
-  // isProcessing: Show "Continuing..." loader ONLY when we're in an active tool flow
-  // Condition: Last message must be assistant with tool_calls (not user starting new request)
+  // isProcessing: Show "Continuing..." loader when tools finished and AI is about to respond
   const lastMessage = messages[messages.length - 1];
+
+  // Find the last assistant message with tool calls (may not be the very last message
+  // since tool result messages follow it)
+  const lastAssistantWithTools = [...messages]
+    .reverse()
+    .find(
+      (m) => m.role === "assistant" && (m as UIMessage).toolCalls?.length,
+    ) as UIMessage | undefined;
+
+  // In tool flow when: last msg is a tool result (tools ran, waiting for AI),
+  // OR last msg is assistant with tool calls (tools still executing)
   const isInToolFlow =
-    lastMessage?.role === "assistant" &&
-    (lastMessage as UIMessage).toolCalls?.length;
+    lastMessage?.role === "tool" ||
+    (lastMessage?.role === "assistant" &&
+      (lastMessage as UIMessage).toolCalls?.length);
 
   let isProcessingToolResults = false;
 
   if (isLoading && isInToolFlow) {
-    const currentToolCallIds = new Set(
-      (lastMessage as UIMessage).toolCalls?.map(
-        (tc: { id: string }) => tc.id,
-      ) || [],
-    );
-    const currentExecutions = toolExecutions.filter((exec) =>
-      currentToolCallIds.has(exec.id),
-    );
-
-    const hasCompletedTools = currentExecutions.some(
-      (exec) =>
-        exec.status === "completed" ||
-        exec.status === "error" ||
-        exec.status === "failed",
-    );
-    const hasExecutingTools = currentExecutions.some(
-      (exec) => exec.status === "executing" || exec.status === "pending",
-    );
-
-    // Show "Continuing..." only when tools completed and waiting for AI to continue
-    isProcessingToolResults = hasCompletedTools && !hasExecutingTools;
+    // Last message is a tool result → all tools for this turn are done, AI is continuing
+    if (lastMessage?.role === "tool") {
+      isProcessingToolResults = true;
+    } else if (lastAssistantWithTools) {
+      const currentToolCallIds = new Set(
+        lastAssistantWithTools.toolCalls?.map((tc: { id: string }) => tc.id) ||
+          [],
+      );
+      const currentExecutions = toolExecutions.filter((exec) =>
+        currentToolCallIds.has(exec.id),
+      );
+      const hasCompletedTools = currentExecutions.some(
+        (exec) =>
+          exec.status === "completed" ||
+          exec.status === "error" ||
+          exec.status === "failed",
+      );
+      const hasExecutingTools = currentExecutions.some(
+        (exec) => exec.status === "executing" || exec.status === "pending",
+      );
+      isProcessingToolResults = hasCompletedTools && !hasExecutingTools;
+    }
   }
 
   // Extract chat classNames (without thread picker classes)

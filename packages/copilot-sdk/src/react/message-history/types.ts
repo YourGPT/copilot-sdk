@@ -202,6 +202,8 @@ export interface UseMessageHistoryReturn {
   llmMessages: LLMMessage[];
   /** Live token estimate. Updated after each AI response. */
   tokenUsage: TokenUsage;
+  /** True while auto-compaction is running (summarizing old messages). */
+  isCompacting: boolean;
   /** Compaction metadata. */
   compactionState: SessionCompactionState;
   /** Manually trigger compaction. Optional instructions guide the summarizer. */

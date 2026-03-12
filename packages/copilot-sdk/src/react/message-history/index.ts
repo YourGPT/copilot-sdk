@@ -15,6 +15,27 @@ export {
   isToolMessage,
   isAssistantWithToolCalls,
 } from "./message-utils";
+export {
+  estimateTokensFast,
+  estimateMessageTokens,
+  estimateMessagesTokens,
+  estimateTokens,
+} from "./token-counter";
+export {
+  applySlidingWindow,
+  truncateToolResults,
+  applySelectivePrune,
+  buildSummaryBufferContext,
+  runCompaction,
+  shouldCompact,
+} from "./strategies";
+export {
+  saveCompactionState,
+  loadCompactionState,
+  saveDisplayMessages,
+  loadDisplayMessages,
+  clearSession,
+} from "./session-persistence";
 export type {
   DisplayMessage,
   CompactionMarker,

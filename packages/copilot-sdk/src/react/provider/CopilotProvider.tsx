@@ -44,6 +44,15 @@ import {
   type ContextTreeNode,
 } from "../utils/context-tree";
 import { useMCPTools } from "../hooks/useMCPTools";
+import {
+  MessageHistoryContext,
+  defaultMessageHistoryConfig,
+  useMessageHistoryContext,
+} from "../message-history/context";
+import { useMessageHistory } from "../message-history/useMessageHistory";
+import { toDisplayMessage } from "../message-history/message-utils";
+import { buildSummaryBufferContext } from "../message-history/strategies/summary-buffer";
+import type { MessageHistoryConfig } from "../message-history/types";
 
 // ============================================
 // Internal MCP Connection Component
@@ -59,6 +68,147 @@ function MCPConnection({ config }: { config: MCPServerConfig }) {
     prefixToolNames: config.prefixToolNames ?? true,
     timeout: config.timeout,
   });
+  return null;
+}
+
+// ============================================
+// MessageHistoryBridge — wires useMessageHistory into AbstractChat.buildRequest()
+// ============================================
+
+const COMPACTING_MARKER_ID = "__compacting-in-progress__";
+
+function MessageHistoryBridge({
+  chatRef,
+}: {
+  chatRef: React.MutableRefObject<InstanceType<
+    typeof ReactChatWithTools
+  > | null>;
+}) {
+  const { compactionState, tokenUsage } = useMessageHistory();
+  const ctx = useMessageHistoryContext();
+
+  // Track whether we've already added the loading marker for the current compaction cycle
+  const loaderAddedRef = useRef(false);
+  const prevCompactionCountRef = useRef(compactionState.compactionCount);
+
+  // When threshold is first crossed → add loading indicator
+  useEffect(() => {
+    if (!tokenUsage.isApproaching) {
+      loaderAddedRef.current = false;
+      return;
+    }
+    if (loaderAddedRef.current) return;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const alreadyAdded = chat.messages.some(
+      (m) => m.id === COMPACTING_MARKER_ID,
+    );
+    if (alreadyAdded) return;
+    loaderAddedRef.current = true;
+    const loading: UIMessage = {
+      id: COMPACTING_MARKER_ID,
+      role: "system",
+      content: "Compacting conversation…",
+      createdAt: new Date(),
+      metadata: { type: "compaction-marker", compacting: true },
+    };
+    chat.setMessages([...chat.messages, loading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenUsage.isApproaching]);
+
+  // When compaction count increases → replace loader with permanent marker
+  useEffect(() => {
+    if (compactionState.compactionCount <= prevCompactionCountRef.current)
+      return;
+    prevCompactionCountRef.current = compactionState.compactionCount;
+    loaderAddedRef.current = false;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const hasLoader = chat.messages.some((m) => m.id === COMPACTING_MARKER_ID);
+    const base = hasLoader
+      ? chat.messages.map((m) =>
+          m.id === COMPACTING_MARKER_ID
+            ? {
+                ...m,
+                id: `compaction-marker-${compactionState.compactionCount}`,
+                content: `Conversation compacted — context window refreshed`,
+                metadata: { type: "compaction-marker", compacting: false },
+              }
+            : m,
+        )
+      : [
+          ...chat.messages,
+          {
+            id: `compaction-marker-${compactionState.compactionCount}`,
+            role: "system" as const,
+            content: `Conversation compacted — context window refreshed`,
+            createdAt: new Date(),
+            metadata: { type: "compaction-marker", compacting: false },
+          },
+        ];
+    chat.setMessages(base);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compactionState.compactionCount]);
+
+  // Keep latest compaction state + config in refs so the transform
+  // (called synchronously inside AbstractChat) always sees fresh values.
+  const compactionStateRef = useRef(compactionState);
+  compactionStateRef.current = compactionState;
+  const configRef = useRef(ctx.config);
+  configRef.current = ctx.config;
+
+  useEffect(() => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (chat as any).setRequestMessageTransform((allMessages: UIMessage[]) => {
+      if (allMessages.length === 0) return allMessages;
+
+      // Find the last user message — everything from here is the "current turn"
+      // (user msg + any assistant tool-calls + tool results).
+      // This is ALWAYS kept verbatim so we never send an invalid payload.
+      let lastUserIdx = -1;
+      for (let i = allMessages.length - 1; i >= 0; i--) {
+        if (allMessages[i].role === "user") {
+          lastUserIdx = i;
+          break;
+        }
+      }
+
+      // No user message at all — pass through untouched (safety valve)
+      if (lastUserIdx === -1) return allMessages;
+
+      const historyMessages = allMessages.slice(0, lastUserIdx);
+      const currentTurn = allMessages.slice(lastUserIdx);
+
+      // Nothing to compact
+      if (historyMessages.length === 0) return allMessages;
+
+      const cfg = configRef.current;
+      const maxTokens = cfg.maxContextTokens ?? 128000;
+      const reserve = cfg.reserveForResponse ?? 4096;
+
+      // Apply summary-buffer only to the completed history, never the current turn
+      const compactedHistory = buildSummaryBufferContext(
+        historyMessages.map(toDisplayMessage),
+        compactionStateRef.current,
+        {
+          recentBuffer: cfg.recentBuffer ?? 10,
+          tokenBudget: maxTokens - reserve,
+          compactionThreshold: cfg.compactionThreshold ?? 0.75,
+          compactionUrl: cfg.compactionUrl,
+        },
+      );
+
+      return [...compactedHistory, ...currentTurn] as unknown as UIMessage[];
+    });
+    return () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chatRef.current as any)?.setRequestMessageTransform(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return null;
 }
 
@@ -107,6 +257,12 @@ export interface CopilotProviderProps {
   mcpServers?: MCPServerConfig[];
   /** Optional prompt/tool optimization controls (tool profiles, context budgets, etc.) */
   optimization?: ToolOptimizationConfig;
+  /**
+   * Context window management config. Controls compaction strategy, token budgets,
+   * session persistence, and working memory.
+   * @default strategy: 'none' — current behaviour, zero breaking changes
+   */
+  messageHistory?: MessageHistoryConfig;
 }
 
 export interface CopilotContextValue {
@@ -200,6 +356,7 @@ export function CopilotProvider({
   maxIterationsMessage,
   mcpServers,
   optimization,
+  messageHistory,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -586,12 +743,39 @@ export function CopilotProvider({
     ],
   );
 
+  const messageHistoryContextValue = React.useMemo(
+    () => ({
+      config: { ...defaultMessageHistoryConfig, ...messageHistory },
+      tokenUsage: {
+        current: 0,
+        max: messageHistory?.maxContextTokens ?? 128000,
+        percentage: 0,
+        isApproaching: false,
+      },
+      compactionState: {
+        rollingSummary: null,
+        lastCompactionAt: null,
+        compactionCount: 0,
+        totalTokensSaved: 0,
+        workingMemory: [],
+        displayMessageCount: 0,
+        llmMessageCount: 0,
+      },
+    }),
+    [messageHistory],
+  );
+
   return (
-    <CopilotContext.Provider value={contextValue}>
-      {mcpServers?.map((config) => (
-        <MCPConnection key={config.name} config={config} />
-      ))}
-      {children}
-    </CopilotContext.Provider>
+    <MessageHistoryContext.Provider value={messageHistoryContextValue}>
+      <CopilotContext.Provider value={contextValue}>
+        {mcpServers?.map((config) => (
+          <MCPConnection key={config.name} config={config} />
+        ))}
+        {messageHistory?.strategy && messageHistory.strategy !== "none" && (
+          <MessageHistoryBridge chatRef={chatRef} />
+        )}
+        {children}
+      </CopilotContext.Provider>
+    </MessageHistoryContext.Provider>
   );
 }

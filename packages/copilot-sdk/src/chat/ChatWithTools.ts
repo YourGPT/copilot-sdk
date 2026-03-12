@@ -492,6 +492,12 @@ export class ChatWithTools {
     this.chat.setBody(body);
   }
 
+  setRequestMessageTransform(
+    fn: ((messages: UIMessage[]) => UIMessage[]) | null,
+  ): void {
+    this.chat.setRequestMessageTransform(fn);
+  }
+
   // ============================================
   // Tool Registration
   // ============================================

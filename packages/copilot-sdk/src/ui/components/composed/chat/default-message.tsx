@@ -105,7 +105,40 @@ export function DefaultMessage({
   citations = { enabled: true },
 }: DefaultMessageProps) {
   const isUser = message.role === "user";
+  const isCompactionMarker =
+    message.role === "system" &&
+    (message.metadata as Record<string, unknown>)?.type === "compaction-marker";
   const isStreaming = isLastMessage && isLoading;
+
+  // Render compaction marker divider
+  if (isCompactionMarker) {
+    const tokensSaved = (message.metadata as Record<string, unknown>)
+      ?.tokensSaved as number | undefined;
+    return (
+      <div className="flex items-center gap-3 py-2 px-1 my-1">
+        <div className="flex-1 h-px bg-border" />
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap flex items-center gap-1.5">
+          <svg
+            className="size-3 opacity-60"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19 9l-7 7-7-7"
+            />
+          </svg>
+          {tokensSaved
+            ? `Earlier conversation summarized · ~${tokensSaved.toLocaleString()} tokens saved`
+            : "Earlier conversation summarized"}
+        </span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+    );
+  }
 
   // Parse follow-up questions from assistant messages
   const { cleanContent: contentWithoutFollowUps, followUps } =
@@ -357,11 +390,13 @@ export function DefaultMessage({
           />
         )}
 
-        {/* Show loader when processing after tool execution (only for last message) */}
-        {isLastMessage && isProcessing ? (
-          <div className="rounded-lg bg-muted px-4 py-2 flex items-center gap-2">
+        {/* Show loader when processing after tool execution (only for last message with no tools yet) */}
+        {isLastMessage &&
+        isProcessing &&
+        !completedTools?.length &&
+        !pendingApprovalTools?.length ? (
+          <div className="rounded-lg bg-muted px-4 py-2">
             <Loader variant="dots" size="sm" />
-            <span className="text-sm text-muted-foreground">Continuing...</span>
           </div>
         ) : /* Show streaming loader when loading with no content and no tools */
         isLastMessage &&
@@ -503,6 +538,16 @@ export function DefaultMessage({
                   />
                 );
               })}
+
+            {/* Processing indicator below completed tools (AI is continuing after tool execution) */}
+            {isLastMessage &&
+              isProcessing &&
+              completedTools &&
+              completedTools.length > 0 && (
+                <div className="mt-2 rounded-lg bg-muted px-4 py-2">
+                  <Loader variant="dots" size="sm" />
+                </div>
+              )}
 
             {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
             {pendingApprovalTools && pendingApprovalTools.length > 0 && (
