@@ -32,6 +32,16 @@ export interface ChatRequest {
   actions?: unknown[];
   /** Additional body properties */
   body?: Record<string, unknown>;
+  /**
+   * Inline client skills to send to the server for merging with server-side skills.
+   * Set by AbstractChat when useSkill() hooks are active.
+   */
+  __skills?: Array<{
+    name: string;
+    description: string;
+    content: string;
+    strategy?: string;
+  }>;
 }
 
 /**
