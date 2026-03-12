@@ -197,43 +197,23 @@ IMPORTANT: When the user asks about YourGPT, the SDK, pricing, or any product-re
 Be helpful, concise, and accurate. If the knowledge base doesn't have the answer, say so.`,
   debug: true,
   tools: serverTools,
-  agentLoop: {
-    enabled: true,
-    maxIterations: 5,
-    debug: true,
-    toolSelection: {
-      enabled: true,
-      defaultProfile: "support",
-      includeUnprofiled: true,
-      search: {
-        enabled: true,
-        maxResults: 3,
-        exposeWhenToolCountExceeds: 1,
+  maxIterations: 5,
+  toolSearch: {
+    maxResults: 3,
+    exposeWhenExceeds: 1,
+    maxEagerTools: 2,
+    defaultProfile: "support",
+    includeUnprofiled: true,
+    profiles: {
+      support: {
+        include: ["category:knowledge", "search_knowledge_base"],
+        exclude: ["group:time"],
       },
-      dynamicSelection: {
-        enabled: true,
-        maxTools: 2,
-      },
-      profiles: {
-        support: {
-          include: ["category:knowledge", "search_knowledge_base"],
-          exclude: ["group:time"],
-        },
-        utility: {
-          include: ["category:utility", "get_current_time"],
-        },
-      },
-      nativeProviderHints: {
-        anthropic: {
-          toolChoice: "single",
-          disableParallelToolUse: true,
-        },
-        openai: {
-          toolChoice: "single",
-          parallelToolCalls: false,
-        },
+      utility: {
+        include: ["category:utility", "get_current_time"],
       },
     },
+    parallelCalls: false,
   },
 });
 
@@ -242,28 +222,179 @@ Be helpful, concise, and accurate. If the knowledge base doesn't have the answer
 // ============================================
 
 const minimalRuntime = createRuntime({
-  provider,
-  model,
+  // provider: openai,
+  provider: anthropic,
+  model: "claude-haiku-4-5",
+  // model: "gpt-5.4",
   systemPrompt: "You are a helpful AI assistant.",
+  debug: true, // enables logProviderPayload() calls in adapters
 });
+
+// ============================================
+// PER-REQUEST DEBUG LOG CAPTURE
+// Captures what the SDK sends to Anthropic/OpenAI
+// ============================================
+
+interface CapturedLog {
+  label: string;
+  payload: unknown;
+}
+
+function captureProviderLogs(fn: () => Promise<void>): Promise<CapturedLog[]> {
+  const captured: CapturedLog[] = [];
+  const origLog = console.log;
+
+  console.log = (...args: unknown[]) => {
+    origLog(...args); // still print to terminal
+    const line = args.map((a) => (typeof a === "string" ? a : "")).join(" ");
+    // SDK logs format: "[llm-sdk:anthropic] request payload\n{...json...}"
+    const match = line.match(/^\[llm-sdk:[^\]]+\] (.+?)\n([\s\S]*)$/);
+    if (match) {
+      const label = match[1].trim();
+      const raw = match[2].trim();
+      try {
+        captured.push({ label, payload: JSON.parse(raw) });
+      } catch {
+        captured.push({ label, payload: raw });
+      }
+    }
+  };
+
+  return fn()
+    .catch((err) => {
+      throw err;
+    })
+    .finally(() => {
+      console.log = origLog;
+    })
+    .then(() => captured);
+}
 
 // ============================================
 // MINIMAL COPILOT RESPONSE ENDPOINT
 // ============================================
 
+// ============================================
+// LOGGING HELPERS
+// ============================================
+
+function logRequest(endpoint: string, body: Record<string, unknown>) {
+  const { tools, messages, systemPrompt, ...rest } = body;
+  console.log(`\n${"═".repeat(60)}`);
+  console.log(`▶ REQUEST  ${endpoint}`);
+  console.log(`${"─".repeat(60)}`);
+  if (systemPrompt) {
+    console.log(`[systemPrompt]\n${systemPrompt}`);
+    console.log(`${"─".repeat(60)}`);
+  }
+  if (Array.isArray(messages)) {
+    console.log(`[messages] (${messages.length})`);
+    for (const m of messages as Record<string, unknown>[]) {
+      const role = String(m.role ?? "?").padEnd(10);
+      const content =
+        typeof m.content === "string"
+          ? m.content.slice(0, 300) + (m.content.length > 300 ? "…" : "")
+          : JSON.stringify(m.content ?? "").slice(0, 300);
+      console.log(`  ${role} ${content}`);
+    }
+    console.log(`${"─".repeat(60)}`);
+  }
+  if (Array.isArray(tools) && tools.length > 0) {
+    const toolNames = (tools as Record<string, unknown>[]).map(
+      (t) => t.name ?? "?",
+    );
+    console.log(`[tools] (${tools.length}): ${toolNames.join(", ")}`);
+    console.log(`${"─".repeat(60)}`);
+  }
+  if (Object.keys(rest).length > 0) {
+    console.log(`[config] ${JSON.stringify(rest, null, 2)}`);
+    console.log(`${"─".repeat(60)}`);
+  }
+}
+
+function logResponse(result: Record<string, unknown>) {
+  console.log(`${"─".repeat(60)}`);
+  console.log(`◀ RESPONSE`);
+  console.log(`${"─".repeat(60)}`);
+  if (result.text) {
+    const text = String(result.text);
+    console.log(
+      `[text]\n${text.slice(0, 800)}${text.length > 800 ? "\n…(truncated)" : ""}`,
+    );
+  }
+  if (Array.isArray(result.toolCalls) && result.toolCalls.length > 0) {
+    console.log(`[toolCalls]`);
+    console.log(JSON.stringify(result.toolCalls, null, 2));
+  }
+  if (result.usage) {
+    console.log(`[usage] ${JSON.stringify(result.usage)}`);
+  }
+  console.log(`${"═".repeat(60)}\n`);
+}
+
 /**
  * Minimal streaming endpoint - no tools, simple prompt
  */
 app.post("/api/copilot-response", async (req, res) => {
-  await minimalRuntime.stream(req.body).pipeToResponse(res);
+  logRequest("/api/copilot-response (stream)", req.body);
+
+  let fullText = "";
+  const stream = minimalRuntime.stream(req.body);
+  stream.on("text", (chunk: string) => {
+    fullText += chunk;
+  });
+  stream.on("error", (err: Error) => {
+    console.error(`[/api/copilot-response] Stream error:`, err.message);
+  });
+
+  await stream.pipeToResponse(res);
+
+  // Log assembled response after stream completes
+  logResponse({ text: fullText });
 });
 
 /**
  * Minimal non-streaming endpoint - no tools, simple prompt
  */
 app.post("/api/copilot-response/chat", async (req, res) => {
-  const result = await minimalRuntime.chat(req.body);
-  res.json(result);
+  logRequest("/api/copilot-response/chat", req.body);
+
+  let result: Awaited<ReturnType<typeof minimalRuntime.chat>>;
+  const { tools, messages, systemPrompt, ...restConfig } = req.body;
+
+  const providerLogs = await captureProviderLogs(async () => {
+    result = await minimalRuntime.chat(req.body);
+  });
+
+  logResponse(result! as unknown as Record<string, unknown>);
+
+  // Split captured logs into request/response pairs
+  const aiRequest =
+    providerLogs.find((l) => l.label.includes("request payload"))?.payload ??
+    null;
+  const aiResponse =
+    providerLogs.find((l) => l.label.includes("response"))?.payload ?? null;
+
+  res.json({
+    ...result!,
+    _debug: {
+      // What the SDK client sent to this server
+      sdkRequest: {
+        systemPrompt: systemPrompt ?? null,
+        messageCount: Array.isArray(messages) ? messages.length : 0,
+        messages: messages ?? [],
+        toolCount: Array.isArray(tools) ? tools.length : 0,
+        toolNames: Array.isArray(tools)
+          ? (tools as { name?: string }[]).map((t) => t.name)
+          : [],
+        config: restConfig,
+      },
+      // Raw payload this server sent to Anthropic/OpenAI
+      aiProviderRequest: aiRequest,
+      // Raw response back from Anthropic/OpenAI
+      aiProviderResponse: aiResponse,
+    },
+  });
 });
 
 // ============================================

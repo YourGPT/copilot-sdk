@@ -12,9 +12,7 @@ const runtime = createRuntime({
     "You are a helpful assistant powered by OpenAI GPT-4o. Be concise and helpful.",
   debug: process.env.NODE_ENV === "development",
   // For testing max iterations - set to 2 to easily trigger the limit
-  agentLoop: {
-    maxIterations: 2,
-  },
+  maxIterations: 2,
 });
 
 export async function POST(request: Request) {

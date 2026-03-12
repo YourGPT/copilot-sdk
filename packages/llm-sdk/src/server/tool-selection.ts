@@ -1,10 +1,9 @@
 import type {
+  ToolDefinition,
+  ToolProfile,
   AnthropicProviderToolOptions,
   OpenAIProviderToolOptions,
   ProviderToolRuntimeOptions,
-  ToolDefinition,
-  ToolSearchConfig,
-  ToolSelectionConfig,
 } from "../core/stream-events";
 
 type ToolSelectionMessage = {
@@ -29,8 +28,25 @@ export interface ResolvedNativeToolSearch {
   useResponsesApi?: boolean;
 }
 
+/**
+ * Internal tool selection configuration.
+ * Built by resolveEffectiveToolSelectionConfig in runtime.ts.
+ * Not part of the public API.
+ */
+export interface InternalToolSelectionConfig {
+  maxEagerTools: number;
+  maxResults: number;
+  exposeWhenExceeds: number;
+  defaultProfile?: string;
+  profiles?: Record<string, ToolProfile>;
+  includeUnprofiled?: boolean;
+  toolChoice?: "auto" | "required";
+  parallelCalls?: boolean;
+}
+
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
+const MIN_SCORE = 0.1;
 
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
@@ -45,12 +61,8 @@ function tokenize(text: string): string[] {
 }
 
 function stringifyContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (!content) {
-    return "";
-  }
+  if (typeof content === "string") return content;
+  if (!content) return "";
   try {
     return JSON.stringify(content);
   } catch {
@@ -60,11 +72,9 @@ function stringifyContent(content: unknown): string {
 
 function buildToolQuery(messages: ToolSelectionMessage[]): string {
   return messages
-    .filter(
-      (message) => message.role === "user" || message.role === "assistant",
-    )
+    .filter((m) => m.role === "user" || m.role === "assistant")
     .slice(-3)
-    .map((message) => stringifyContent(message.content))
+    .map((m) => stringifyContent(m.content))
     .filter(Boolean)
     .join(" ");
 }
@@ -88,16 +98,9 @@ function matchesSelector(
   activeProfile?: string,
 ): boolean {
   const normalized = selector.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  if (normalized === "*" || normalized === "all") {
-    return true;
-  }
-  if (normalized === tool.name.toLowerCase()) {
-    return true;
-  }
+  if (!normalized) return false;
+  if (normalized === "*" || normalized === "all") return true;
+  if (normalized === tool.name.toLowerCase()) return true;
   if (normalized.startsWith("group:")) {
     return (tool.group ?? "").toLowerCase() === normalized.slice(6);
   }
@@ -106,12 +109,12 @@ function matchesSelector(
   }
   if (normalized.startsWith("profile:")) {
     return (tool.profiles ?? [])
-      .map((value) => value.toLowerCase())
+      .map((v) => v.toLowerCase())
       .includes(normalized.slice(8));
   }
   if (activeProfile && normalized === activeProfile.toLowerCase()) {
     return (tool.profiles ?? [])
-      .map((value) => value.toLowerCase())
+      .map((v) => v.toLowerCase())
       .includes(normalized);
   }
   return false;
@@ -135,18 +138,12 @@ function scoreTool(
     .toLowerCase();
 
   let score = tool.deferLoading ? 0 : 2;
-  if (activeProfile && tool.profiles?.includes(activeProfile)) {
-    score += 2;
-  }
+  if (activeProfile && tool.profiles?.includes(activeProfile)) score += 2;
 
   for (const token of queryTokens) {
-    if (tool.name.toLowerCase() === token) {
-      score += 6;
-    } else if (tool.name.toLowerCase().includes(token)) {
-      score += 4;
-    } else if (haystack.includes(token)) {
-      score += 2;
-    }
+    if (tool.name.toLowerCase() === token) score += 6;
+    else if (tool.name.toLowerCase().includes(token)) score += 4;
+    else if (haystack.includes(token)) score += 2;
   }
 
   return score;
@@ -154,14 +151,12 @@ function scoreTool(
 
 export function filterToolsByProfile(params: {
   tools: ToolDefinition[];
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
   activeProfile?: string;
 }): ToolDefinition[] {
   const available = params.tools.filter((tool) => tool.available !== false);
   const config = params.config;
-  if (!config?.enabled) {
-    return available;
-  }
+  if (!config) return available;
 
   const activeProfile = params.activeProfile ?? config.defaultProfile;
   const includeUnprofiled = config.includeUnprofiled ?? true;
@@ -178,9 +173,7 @@ export function filterToolsByProfile(params: {
     );
   } else if (activeProfile) {
     filtered = filtered.filter((tool) => {
-      if (tool.profiles?.length) {
-        return tool.profiles.includes(activeProfile);
-      }
+      if (tool.profiles?.length) return tool.profiles.includes(activeProfile);
       return includeUnprofiled;
     });
   }
@@ -209,13 +202,9 @@ function calculateBM25Score(
   const docLength = Math.max(1, tokens.length);
 
   let score = 0;
-
   for (const term of queryTerms) {
-    const termFreq = tokens.filter((token) => token === term).length;
-    if (termFreq === 0) {
-      continue;
-    }
-
+    const termFreq = tokens.filter((t) => t === term).length;
+    if (termFreq === 0) continue;
     const termIDF = idf.get(term) ?? 0;
     const numerator = termFreq * (BM25_K1 + 1);
     const denominator =
@@ -225,16 +214,11 @@ function calculateBM25Score(
 
   const nameLower = tool.name.toLowerCase();
   for (const term of queryTerms) {
-    if (nameLower === term) {
-      score += 3;
-    } else if (nameLower.includes(term)) {
-      score += 1.5;
-    }
+    if (nameLower === term) score += 3;
+    else if (nameLower.includes(term)) score += 1.5;
   }
 
-  if (activeProfile && tool.profiles?.includes(activeProfile)) {
-    score += 0.75;
-  }
+  if (activeProfile && tool.profiles?.includes(activeProfile)) score += 0.75;
 
   return score;
 }
@@ -242,7 +226,7 @@ function calculateBM25Score(
 export function selectTools(params: {
   tools: ToolDefinition[];
   messages: ToolSelectionMessage[];
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
   activeProfile?: string;
   forceIncludeNames?: string[];
 }): ToolDefinition[] {
@@ -252,97 +236,60 @@ export function selectTools(params: {
     config,
     activeProfile: params.activeProfile,
   });
-  if (!config?.enabled) {
-    return available;
-  }
+
+  // No config means no selection — return all available tools
+  if (!config) return available;
+
   const activeProfile = params.activeProfile ?? config.defaultProfile;
   const forceIncludeNames = new Set(params.forceIncludeNames ?? []);
-  let filtered = available;
-  const strictDeferredLoading =
-    config.search?.enabled && config.search.strictDeferredLoading === true;
 
-  if (strictDeferredLoading) {
-    filtered = filtered.filter(
-      (tool) => !tool.deferLoading || forceIncludeNames.has(tool.name),
-    );
-  }
-
-  if (!config.dynamicSelection?.enabled) {
-    if (forceIncludeNames.size === 0) {
-      return filtered;
-    }
-    const merged = new Map(filtered.map((tool) => [tool.name, tool]));
-    for (const tool of available) {
-      if (forceIncludeNames.has(tool.name)) {
-        merged.set(tool.name, tool);
-      }
-    }
-    return [...merged.values()];
-  }
-
-  if (filtered.length === 0) {
-    return filtered;
-  }
-
-  const maxTools = Math.max(
-    1,
-    Math.min(
-      config.dynamicSelection.maxTools ?? filtered.length,
-      filtered.length,
-    ),
+  // Always strip deferred tools from initial context (they're loaded via search)
+  let filtered = available.filter(
+    (tool) => !tool.deferLoading || forceIncludeNames.has(tool.name),
   );
+
+  if (filtered.length === 0) return filtered;
+
+  const maxTools = Math.max(1, Math.min(config.maxEagerTools, filtered.length));
   const queryTokens = unique(tokenize(buildToolQuery(params.messages)));
-  const ranked = [...filtered].sort((left, right) => {
-    const scoreDiff =
-      scoreTool(right, queryTokens, activeProfile) -
-      scoreTool(left, queryTokens, activeProfile);
-    if (scoreDiff !== 0) {
-      return scoreDiff;
-    }
-    return left.name.localeCompare(right.name);
+  const ranked = [...filtered].sort((a, b) => {
+    const diff =
+      scoreTool(b, queryTokens, activeProfile) -
+      scoreTool(a, queryTokens, activeProfile);
+    return diff !== 0 ? diff : a.name.localeCompare(b.name);
   });
 
-  if (forceIncludeNames.size === 0) {
-    return ranked.slice(0, maxTools);
-  }
+  if (forceIncludeNames.size === 0) return ranked.slice(0, maxTools);
 
-  const forced = ranked.filter((tool) => forceIncludeNames.has(tool.name));
-  const others = ranked.filter((tool) => !forceIncludeNames.has(tool.name));
-  const remainingSlots = Math.max(0, maxTools - forced.length);
-  return [...forced, ...others.slice(0, remainingSlots)];
+  const forced = ranked.filter((t) => forceIncludeNames.has(t.name));
+  const others = ranked.filter((t) => !forceIncludeNames.has(t.name));
+  const remaining = Math.max(0, maxTools - forced.length);
+  return [...forced, ...others.slice(0, remaining)];
 }
 
 export function searchTools(params: {
   tools: ToolDefinition[];
   query: string;
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
   activeProfile?: string;
   limit?: number;
   excludeNames?: string[];
   includeSelected?: boolean;
 }): ToolSearchMatch[] {
   const queryTerms = unique(tokenize(params.query));
-  if (queryTerms.length === 0) {
-    return [];
-  }
+  if (queryTerms.length === 0) return [];
 
   const candidates = filterToolsByProfile({
     tools: params.tools,
     config: params.config,
     activeProfile: params.activeProfile,
   }).filter((tool) => {
-    if ((params.excludeNames ?? []).includes(tool.name)) {
-      return false;
-    }
-    if (params.includeSelected) {
-      return true;
-    }
+    if ((params.excludeNames ?? []).includes(tool.name)) return false;
+    if (params.includeSelected) return true;
     return tool.deferLoading === true;
   });
 
-  if (candidates.length === 0) {
-    return [];
-  }
+  if (candidates.length === 0) return [];
 
   const docs = candidates.map((tool) => tokenize(buildSearchText(tool)));
   const avgDocLength =
@@ -361,11 +308,7 @@ export function searchTools(params: {
     );
   }
 
-  const minScore = params.config?.search?.minScore ?? 0.1;
-  const limit = Math.max(
-    1,
-    params.limit ?? params.config?.search?.maxResults ?? 5,
-  );
+  const limit = Math.max(1, params.limit ?? params.config?.maxResults ?? 8);
   const activeProfile = params.activeProfile ?? params.config?.defaultProfile;
 
   return candidates
@@ -379,13 +322,10 @@ export function searchTools(params: {
         activeProfile,
       ),
     }))
-    .filter((entry) => entry.score >= minScore)
-    .sort((left, right) => {
-      const scoreDiff = right.score - left.score;
-      if (scoreDiff !== 0) {
-        return scoreDiff;
-      }
-      return left.tool.name.localeCompare(right.tool.name);
+    .filter((entry) => entry.score >= MIN_SCORE)
+    .sort((a, b) => {
+      const diff = b.score - a.score;
+      return diff !== 0 ? diff : a.tool.name.localeCompare(b.tool.name);
     })
     .slice(0, limit)
     .map(({ tool, score }) => ({
@@ -406,14 +346,7 @@ function normalizeModelName(modelName?: string): string {
 
 export function supportsAnthropicNativeToolSearch(modelName?: string): boolean {
   const model = normalizeModelName(modelName);
-  if (!model) {
-    return false;
-  }
-
-  if (model.includes("haiku")) {
-    return false;
-  }
-
+  if (!model || model.includes("haiku")) return false;
   return (
     /(?:^|[-_ ])(?:sonnet|opus)[-_ ]?4(?:$|[-_. ])/.test(model) ||
     /claude[-_ ](?:sonnet|opus)[-_ ]?4/.test(model) ||
@@ -423,122 +356,79 @@ export function supportsAnthropicNativeToolSearch(modelName?: string): boolean {
 
 export function supportsOpenAINativeToolSearch(modelName?: string): boolean {
   const model = normalizeModelName(modelName);
-  if (!model) {
-    return false;
-  }
-
+  if (!model) return false;
   const match = model.match(/^gpt-5(?:[._-](\d+))?(?:$|[._-])/);
-  if (!match) {
-    return false;
-  }
-
+  if (!match) return false;
   const minorVersion = match[1] ? Number.parseInt(match[1], 10) : Number.NaN;
-  if (!Number.isFinite(minorVersion)) {
-    return false;
-  }
-
+  if (!Number.isFinite(minorVersion)) return false;
   return minorVersion >= 4;
 }
 
 export function resolveNativeToolSearch(params: {
   providerName: string;
   modelName?: string;
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
 }): ResolvedNativeToolSearch | null {
-  const searchConfig = params.config?.search;
-  if (!searchConfig?.enabled) {
-    return null;
-  }
-
-  const mode = searchConfig.mode ?? "auto";
-  if (mode === "manual") {
-    return null;
-  }
+  // No config means no deferred tools — no need for native search
+  if (!params.config) return null;
 
   if (
     params.providerName === "anthropic" &&
     supportsAnthropicNativeToolSearch(params.modelName)
   ) {
-    return {
-      provider: "anthropic",
-      variant: searchConfig.anthropicVariant ?? "bm25",
-    };
+    return { provider: "anthropic", variant: "bm25" };
   }
 
   if (
     params.providerName === "openai" &&
     supportsOpenAINativeToolSearch(params.modelName)
   ) {
-    return {
-      provider: "openai",
-      useResponsesApi: true,
-    };
+    return { provider: "openai", useResponsesApi: true };
   }
 
-  return mode === "native" ? null : null;
+  return null;
 }
 
 export function shouldExposeToolSearch(params: {
   tools: ToolDefinition[];
-  selectedTools: ToolDefinition[];
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
 }): boolean {
-  const searchConfig = params.config?.search;
-  if (!searchConfig?.enabled) {
-    return false;
-  }
-
-  const deferredCount = params.tools.filter((tool) => tool.deferLoading).length;
-  if (deferredCount === 0) {
-    return false;
-  }
-
-  const threshold = searchConfig.exposeWhenToolCountExceeds ?? 8;
-  return (
-    params.tools.length >= threshold ||
-    deferredCount > Math.max(0, params.selectedTools.length)
-  );
+  if (!params.config) return false;
+  const deferredCount = params.tools.filter((t) => t.deferLoading).length;
+  if (deferredCount === 0) return false;
+  return params.tools.length >= params.config.exposeWhenExceeds;
 }
 
 export function buildProviderToolOptions(params: {
   providerName: string;
   modelName?: string;
   selectedTools: ToolDefinition[];
-  config?: ToolSelectionConfig;
+  config?: InternalToolSelectionConfig;
   metaToolName?: string;
 }): ProviderToolRuntimeOptions | undefined {
-  const nativeHints = params.config?.nativeProviderHints;
+  const { toolChoice, parallelCalls } = params.config ?? {};
   const resolvedNativeSearch = resolveNativeToolSearch({
     providerName: params.providerName,
     modelName: params.modelName,
     config: params.config,
   });
-  const effectiveTools = params.metaToolName
-    ? params.selectedTools.filter((tool) => tool.name !== params.metaToolName)
-    : params.selectedTools;
 
   if (params.providerName === "openai") {
-    const hints = nativeHints?.openai;
-    if (!hints && !resolvedNativeSearch) {
+    if (
+      toolChoice === undefined &&
+      parallelCalls === undefined &&
+      !resolvedNativeSearch
+    ) {
       return undefined;
     }
-
-    let toolChoice: OpenAIProviderToolOptions["toolChoice"];
-    if (hints?.toolChoice === "required") {
-      toolChoice = "required";
-    } else if (hints?.toolChoice === "single" && effectiveTools.length === 1) {
-      toolChoice = {
-        type: "function",
-        name: effectiveTools[0].name,
-      };
-    } else if (hints?.toolChoice === "auto") {
-      toolChoice = "auto";
-    }
+    let oaiToolChoice: OpenAIProviderToolOptions["toolChoice"];
+    if (toolChoice === "required") oaiToolChoice = "required";
+    else if (toolChoice === "auto") oaiToolChoice = "auto";
 
     return {
       openai: {
-        toolChoice,
-        parallelToolCalls: hints?.parallelToolCalls,
+        toolChoice: oaiToolChoice,
+        parallelToolCalls: parallelCalls,
         nativeToolSearch:
           resolvedNativeSearch?.provider === "openai"
             ? {
@@ -551,33 +441,26 @@ export function buildProviderToolOptions(params: {
   }
 
   if (params.providerName === "anthropic") {
-    const hints = nativeHints?.anthropic;
-    if (!hints && !resolvedNativeSearch) {
+    if (
+      toolChoice === undefined &&
+      parallelCalls === undefined &&
+      !resolvedNativeSearch
+    ) {
       return undefined;
     }
-
-    let toolChoice: AnthropicProviderToolOptions["toolChoice"];
-    if (hints?.toolChoice === "any") {
-      toolChoice = "any";
-    } else if (hints?.toolChoice === "single" && effectiveTools.length === 1) {
-      toolChoice = {
-        type: "tool",
-        name: effectiveTools[0].name,
-      };
-    } else if (hints?.toolChoice === "auto") {
-      toolChoice = "auto";
-    }
+    let anthropicToolChoice: AnthropicProviderToolOptions["toolChoice"];
+    // "required" maps to Anthropic's "any" (force tool use)
+    if (toolChoice === "required") anthropicToolChoice = "any";
+    else if (toolChoice === "auto") anthropicToolChoice = "auto";
 
     return {
       anthropic: {
-        toolChoice,
-        disableParallelToolUse: hints?.disableParallelToolUse,
+        toolChoice: anthropicToolChoice,
+        // parallelCalls: false → disableParallelToolUse: true
+        disableParallelToolUse: parallelCalls === false ? true : undefined,
         nativeToolSearch:
           resolvedNativeSearch?.provider === "anthropic"
-            ? {
-                enabled: true,
-                variant: resolvedNativeSearch.variant ?? "bm25",
-              }
+            ? { enabled: true, variant: resolvedNativeSearch.variant ?? "bm25" }
             : undefined,
       },
     };

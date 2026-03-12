@@ -28,8 +28,6 @@ export interface ChatRequest {
   llm?: Record<string, unknown>;
   /** Tool definitions */
   tools?: unknown[];
-  /** Full client-side tool catalog for server-side selection/search */
-  toolCatalog?: unknown[];
   /** Action definitions */
   actions?: unknown[];
   /** Additional body properties */

@@ -33,6 +33,7 @@ import {
   searchTools,
   selectTools,
   shouldExposeToolSearch,
+  type InternalToolSelectionConfig,
 } from "./tool-selection";
 
 type ToolSearchState = {
@@ -345,7 +346,6 @@ export class Runtime {
         console.log("[Copilot SDK] Request:", {
           messageCount: body.messages?.length ?? 0,
           toolCount: body.tools?.length ?? 0,
-          toolCatalogCount: body.toolCatalog?.length ?? 0,
           hasSystemPrompt: Boolean(body.systemPrompt),
           threadId: body.threadId,
           streaming: body.streaming !== false,
@@ -356,10 +356,10 @@ export class Runtime {
       // Create abort controller from request signal
       const signal = request.signal;
 
-      // Use agent loop if tools are present or explicitly enabled
+      // Use agent loop if tools are present
       const hasTools =
         (body.tools && body.tools.length > 0) || this.tools.size > 0;
-      const useAgentLoop = hasTools || this.config.agentLoop?.enabled;
+      const useAgentLoop = hasTools;
 
       // NON-STREAMING: Return JSON response instead of SSE
       if (body.streaming === false) {
@@ -683,17 +683,41 @@ export class Runtime {
     return undefined;
   }
 
+  /**
+   * Resolve effective tool selection config for a request.
+   */
+  private resolveEffectiveToolSelectionConfig(
+    request: ChatRequest,
+  ): InternalToolSelectionConfig | undefined {
+    const toolSearch =
+      "toolSearch" in this.config ? this.config.toolSearch : undefined;
+
+    const hasDeferredServerTool = [...this.tools.values()].some(
+      (t) => t.deferLoading,
+    );
+    const hasDeferredInRequest = request.tools?.some((t) => t.deferLoading);
+
+    if (!hasDeferredServerTool && !hasDeferredInRequest && !toolSearch) {
+      return undefined;
+    }
+
+    return {
+      maxEagerTools: toolSearch?.maxEagerTools ?? 20,
+      maxResults: toolSearch?.maxResults ?? 8,
+      exposeWhenExceeds: toolSearch?.exposeWhenExceeds ?? 8,
+      toolChoice: toolSearch?.toolChoice,
+      parallelCalls: toolSearch?.parallelCalls,
+      defaultProfile: toolSearch?.defaultProfile,
+      profiles: toolSearch?.profiles,
+      includeUnprofiled: toolSearch?.includeUnprofiled,
+    };
+  }
+
   private collectToolsForRequest(request: ChatRequest): ToolDefinition[] {
     const allTools: ToolDefinition[] = [...this.tools.values()];
 
-    const clientTools =
-      this.config.agentLoop?.toolSelection?.enabled &&
-      request.toolCatalog?.length
-        ? request.toolCatalog
-        : request.tools;
-
-    if (clientTools) {
-      for (const tool of clientTools) {
+    if (request.tools) {
+      for (const tool of request.tools) {
         allTools.push({
           name: tool.name,
           description: tool.description,
@@ -719,17 +743,19 @@ export class Runtime {
     return selectTools({
       tools: allTools,
       messages: request.messages,
-      config: this.config.agentLoop?.toolSelection,
+      config: this.resolveEffectiveToolSelectionConfig(request),
       activeProfile: request.toolProfile,
       forceIncludeNames: toolSearchState?.loadedToolNames,
     });
   }
 
-  private resolveNativeToolSearchForRequest(): NativeToolSearchState {
+  private resolveNativeToolSearchForRequest(
+    request: ChatRequest,
+  ): NativeToolSearchState {
     return resolveNativeToolSearch({
       providerName: this.adapter.provider,
       modelName: this.getModel(),
-      config: this.config.agentLoop?.toolSelection,
+      config: this.resolveEffectiveToolSelectionConfig(request),
     });
   }
 
@@ -739,26 +765,28 @@ export class Runtime {
   ): ToolDefinition[] {
     return filterToolsByProfile({
       tools: allTools,
-      config: this.config.agentLoop?.toolSelection,
+      config: this.resolveEffectiveToolSelectionConfig(request),
       activeProfile: request.toolProfile,
     });
   }
 
-  private buildProviderToolOptionsForRequest(selectedTools: ToolDefinition[]) {
+  private buildProviderToolOptionsForRequest(
+    selectedTools: ToolDefinition[],
+    request: ChatRequest,
+  ) {
     return buildProviderToolOptions({
       providerName: this.adapter.provider,
       modelName: this.getModel(),
       selectedTools,
-      config: this.config.agentLoop?.toolSelection,
+      config: this.resolveEffectiveToolSelectionConfig(request),
       metaToolName: this.getToolSearchMetaToolName(),
     });
   }
 
   private getToolSearchMetaToolName(): string {
-    return (
-      this.config.agentLoop?.toolSelection?.search?.metaToolName ??
-      "search_tools"
-    );
+    const toolSearch =
+      "toolSearch" in this.config ? this.config.toolSearch : undefined;
+    return toolSearch?.name ?? "search_tools";
   }
 
   private createToolSearchTool(
@@ -769,8 +797,7 @@ export class Runtime {
     if (
       !shouldExposeToolSearch({
         tools: allTools,
-        selectedTools,
-        config: this.config.agentLoop?.toolSelection,
+        config: this.resolveEffectiveToolSelectionConfig(request),
       })
     ) {
       return null;
@@ -782,6 +809,7 @@ export class Runtime {
     return {
       name: toolName,
       description:
+        ("toolSearch" in this.config && this.config.toolSearch?.description) ||
         "Search available deferred tools and load the most relevant ones for the next step when the right tool is not currently exposed.",
       location: "server",
       hidden: true,
@@ -804,18 +832,16 @@ export class Runtime {
         const results = searchTools({
           tools: allTools,
           query: args.query,
-          config: this.config.agentLoop?.toolSelection,
+          config: this.resolveEffectiveToolSelectionConfig(request),
           activeProfile: request.toolProfile,
           limit: args.limit,
           excludeNames: excludedNames,
         });
 
-        if (this.config.debug || this.config.agentLoop?.debug) {
+        if (this.config.debug) {
           console.log("[Copilot SDK] search_tools result:", {
             query: args.query,
-            activeProfile:
-              request.toolProfile ??
-              this.config.agentLoop?.toolSelection?.defaultProfile,
+            activeProfile: request.toolProfile,
             selectedToolCount: selectedTools.length,
             catalogCount: allTools.length,
             loadedTools: results.map((result) => result.name),
@@ -893,7 +919,7 @@ export class Runtime {
     _httpRequest?: Request,
     _toolSearchState?: ToolSearchState,
   ): AsyncGenerator<StreamEvent> {
-    const debug = this.config.debug || this.config.agentLoop?.debug;
+    const debug = this.config.debug;
 
     // Check if non-streaming mode is requested
     // Use non-streaming for better comparison with original studio-ai behavior
@@ -917,10 +943,10 @@ export class Runtime {
 
     // Track new messages created during this request
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
-    const maxIterations = this.config.agentLoop?.maxIterations || 20;
+    const maxIterations = this.config.maxIterations ?? 20;
 
     const allTools = this.collectToolsForRequest(request);
-    const nativeToolSearch = this.resolveNativeToolSearchForRequest();
+    const nativeToolSearch = this.resolveNativeToolSearchForRequest(request);
     const nativeToolCatalog = nativeToolSearch
       ? this.buildNativeToolCatalogForRequest(request, allTools)
       : null;
@@ -937,6 +963,7 @@ export class Runtime {
         : selectedTools;
     const providerToolOptions = this.buildProviderToolOptionsForRequest(
       effectiveSelectedTools,
+      request,
     );
     const selectedToolMap = new Map(
       effectiveSelectedTools.map((tool) => [tool.name, tool] as const),
@@ -950,9 +977,7 @@ export class Runtime {
         console.log(
           `[Copilot SDK] Tool selection active: ${effectiveSelectedTools.length}/${allTools.length} tools`,
           {
-            activeProfile:
-              request.toolProfile ??
-              this.config.agentLoop?.toolSelection?.defaultProfile,
+            activeProfile: request.toolProfile,
             nativeSearch: nativeToolSearch?.provider ?? null,
           },
         );
@@ -1343,8 +1368,8 @@ export class Runtime {
     _toolSearchState?: ToolSearchState,
   ): AsyncGenerator<StreamEvent> {
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
-    const debug = this.config.debug || this.config.agentLoop?.debug;
-    const maxIterations = this.config.agentLoop?.maxIterations || 20;
+    const debug = this.config.debug;
+    const maxIterations = this.config.maxIterations ?? 20;
     // Track accumulated usage across iterations (for onFinish callback)
     let accumulatedUsage: {
       prompt_tokens: number;
@@ -1353,7 +1378,7 @@ export class Runtime {
     } = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     const allTools = this.collectToolsForRequest(request);
-    const nativeToolSearch = this.resolveNativeToolSearchForRequest();
+    const nativeToolSearch = this.resolveNativeToolSearchForRequest(request);
     let toolSearchState = _toolSearchState;
 
     // Build system prompt
@@ -1421,6 +1446,7 @@ export class Runtime {
           : selectedTools;
       const providerToolOptions = this.buildProviderToolOptionsForRequest(
         effectiveSelectedTools,
+        request,
       );
       const selectedToolMap = new Map(
         effectiveSelectedTools.map((tool) => [tool.name, tool] as const),

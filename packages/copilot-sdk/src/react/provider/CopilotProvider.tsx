@@ -25,6 +25,7 @@ import type {
   ActionDefinition,
   MessageAttachment,
   PermissionLevel,
+  ToolOptimizationConfig,
 } from "../../core";
 
 import type { MCPServerConfig } from "../../mcp/types";
@@ -104,6 +105,8 @@ export interface CopilotProviderProps {
   maxIterationsMessage?: string;
   /** MCP servers to connect to automatically */
   mcpServers?: MCPServerConfig[];
+  /** Optional prompt/tool optimization controls (tool profiles, context budgets, etc.) */
+  optimization?: ToolOptimizationConfig;
 }
 
 export interface CopilotContextValue {
@@ -196,6 +199,7 @@ export function CopilotProvider({
   maxIterations,
   maxIterationsMessage,
   mcpServers,
+  optimization,
 }: CopilotProviderProps) {
   // Debug logger
   const debugLog = useCallback(
@@ -261,6 +265,7 @@ export function CopilotProvider({
         debug,
         maxIterations,
         maxIterationsMessage,
+        optimization,
       },
       {
         onToolExecutionsChange: (executions) => {

@@ -8,6 +8,8 @@ import type {
   ToolRenderProps,
   ToolSet,
   ToolInputSchema,
+  AIResponseMode,
+  ToolResultConfig,
 } from "../../core";
 import { zodToJsonSchema } from "../../core";
 import { useCopilot } from "../provider/CopilotProvider";
@@ -61,6 +63,30 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
    * @default false
    */
   hidden?: boolean;
+  /** Deferred tools stay out of the default request payload; discovered only when query matches */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool-selection scoring */
+  searchKeywords?: string[];
+  /** Optional group for profile-based selection */
+  group?: string;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
+  /** Human-readable title for UI display */
+  title?: string | ((args: TParams) => string);
+  /** Title shown while executing */
+  executingTitle?: string | ((args: TParams) => string);
+  /** Title shown after completion */
+  completedTitle?: string | ((args: TParams) => string);
+  /** How the AI should respond when this tool's result is rendered as UI */
+  aiResponseMode?: AIResponseMode;
+  /** Context/summary sent to AI instead of full result */
+  aiContext?:
+    | string
+    | ((result: ToolResponse, args: Record<string, unknown>) => string);
 }
 
 /**
@@ -137,6 +163,17 @@ export function useTool<TParams = Record<string, unknown>>(
       approvalMessage:
         config.approvalMessage as ToolDefinition["approvalMessage"],
       hidden: config.hidden,
+      deferLoading: config.deferLoading,
+      profiles: config.profiles,
+      searchKeywords: config.searchKeywords,
+      group: config.group,
+      category: config.category,
+      resultConfig: config.resultConfig,
+      title: config.title as ToolDefinition["title"],
+      executingTitle: config.executingTitle as ToolDefinition["executingTitle"],
+      completedTitle: config.completedTitle as ToolDefinition["completedTitle"],
+      aiResponseMode: config.aiResponseMode,
+      aiContext: config.aiContext as ToolDefinition["aiContext"],
     };
 
     // Register tool

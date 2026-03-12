@@ -467,33 +467,6 @@ export interface ToolProfile {
   exclude?: string[];
 }
 
-export interface ToolDynamicSelectionConfig {
-  enabled?: boolean;
-  maxTools?: number;
-}
-
-export interface ToolSearchConfig {
-  enabled?: boolean;
-  /**
-   * Search execution mode.
-   * - auto: use native provider search when supported, otherwise fall back to manual search_tools
-   * - native: require provider-native search when supported, otherwise fall back to manual search_tools
-   * - manual: always use the SDK-managed search_tools fallback
-   */
-  mode?: "auto" | "native" | "manual";
-  metaToolName?: string;
-  maxResults?: number;
-  minScore?: number;
-  exposeWhenToolCountExceeds?: number;
-  /** Anthropic native tool search variant. Defaults to bm25. */
-  anthropicVariant?: "bm25" | "regex";
-  /**
-   * When true, tools marked with deferLoading stay hidden from the initial
-   * selected tool list and are only introduced after search_tools loads them.
-   */
-  strictDeferredLoading?: boolean;
-}
-
 export interface OpenAIToolSelectionHints {
   /**
    * "single" forces the selected tool when exactly one tool remains after selection.
@@ -517,19 +490,6 @@ export interface AnthropicToolSelectionHints {
 export interface ToolNativeProviderHints {
   openai?: OpenAIToolSelectionHints;
   anthropic?: AnthropicToolSelectionHints;
-}
-
-export interface ToolSelectionConfig {
-  enabled?: boolean;
-  defaultProfile?: string;
-  profiles?: Record<string, ToolProfile>;
-  /** When false, active profiles exclude tools without explicit profile membership. */
-  includeUnprofiled?: boolean;
-  dynamicSelection?: ToolDynamicSelectionConfig;
-  /** Optional indexed search over deferred tools. */
-  search?: ToolSearchConfig;
-  /** Optional provider-native hints layered on top of local tool selection. */
-  nativeProviderHints?: ToolNativeProviderHints;
 }
 
 export interface OpenAIProviderToolOptions {
@@ -565,16 +525,6 @@ export interface AnthropicProviderToolOptions {
 export interface ProviderToolRuntimeOptions {
   openai?: OpenAIProviderToolOptions;
   anthropic?: AnthropicProviderToolOptions;
-}
-
-/**
- * Agent loop configuration
- */
-export interface AgentLoopConfig {
-  maxIterations?: number;
-  debug?: boolean;
-  enabled?: boolean;
-  toolSelection?: ToolSelectionConfig;
 }
 
 /**

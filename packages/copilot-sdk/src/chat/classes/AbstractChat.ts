@@ -13,8 +13,6 @@
 import type {
   ContextUsage,
   MessageAttachment,
-  AIResponseMode,
-  ToolResponse,
   ToolDefinition,
   ToolOptimizationConfig,
 } from "../../core";
@@ -45,89 +43,6 @@ import {
 } from "../functions/stream";
 import { SimpleChatState } from "../interfaces/ChatState";
 import { ChatContextOptimizer } from "../optimizations";
-
-// ============================================
-// AI Response Control Helper
-// ============================================
-
-/**
- * Tool definition with AI response control fields
- */
-interface ToolWithAIConfig {
-  name: string;
-  aiResponseMode?: AIResponseMode;
-  aiContext?:
-    | string
-    | ((result: ToolResponse, args: Record<string, unknown>) => string);
-}
-
-/**
- * Build tool result content for AI based on aiResponseMode and aiContext
- * This transforms client-side tool results before sending to the LLM
- *
- * Priority for responseMode: result._aiResponseMode > tool.aiResponseMode > "full"
- * Priority for context: result._aiContext > tool.aiContext > undefined
- *
- * @param result - The tool result (may include _aiResponseMode, _aiContext, _aiContent)
- * @param tool - Optional tool definition with aiResponseMode and aiContext
- * @param args - Tool arguments (for dynamic aiContext functions)
- * @returns The content string to send to the AI
- */
-function buildToolResultContentForAI(
-  result: unknown,
-  tool?: ToolWithAIConfig,
-  args?: Record<string, unknown>,
-): string {
-  if (typeof result === "string") return result;
-
-  const typedResult = result as ToolResponse | null;
-
-  // Priority: result._aiResponseMode > tool.aiResponseMode > "full"
-  const responseMode =
-    typedResult?._aiResponseMode ?? tool?.aiResponseMode ?? "full";
-
-  // Check for multimodal content
-  if (typedResult?._aiContent) {
-    return JSON.stringify(typedResult._aiContent);
-  }
-
-  // Get AI context: result._aiContext > tool.aiContext (string or function)
-  let aiContext: string | undefined = typedResult?._aiContext;
-  if (!aiContext && tool?.aiContext) {
-    aiContext =
-      typeof tool.aiContext === "function"
-        ? tool.aiContext(typedResult as ToolResponse, args ?? {})
-        : tool.aiContext;
-  }
-
-  switch (responseMode) {
-    case "none":
-      return aiContext ?? "[Result displayed to user]";
-
-    case "brief":
-      return aiContext ?? "[Tool executed successfully]";
-
-    case "full":
-    default:
-      if (aiContext) {
-        // Include context as prefix, then full data (without the control fields)
-        const {
-          _aiResponseMode,
-          _aiContext,
-          _aiContent,
-          _uiResources,
-          ...dataOnly
-        } = typedResult ?? {};
-        return `${aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
-      }
-      // Strip UI resources from full result - they're for rendering, not for AI
-      if (typedResult?._uiResources) {
-        const { _uiResources, ...dataOnly } = typedResult;
-        return JSON.stringify(dataOnly);
-      }
-      return JSON.stringify(result);
-  }
-}
 
 /**
  * Event types emitted by AbstractChat
@@ -663,8 +578,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       threadId: this.config.threadId,
       systemPrompt,
       llm: this.config.llm,
-      tools: optimized.tools?.length ? optimized.tools : undefined,
-      toolCatalog: this.config.tools?.length
+      tools: this.config.tools?.length
         ? this.config.tools.map((tool) => ({
             name: tool.name,
             description: tool.description,
@@ -699,7 +613,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.debug("handleStreamResponse", "Starting to process stream");
 
     let chunkCount = 0;
-    let hasError = false;
     let toolCallsEmitted = false; // Guard to prevent emitting toolCalls twice
 
     // Process stream chunks
@@ -709,7 +622,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
       // Handle error chunks immediately
       if (chunk.type === "error") {
-        hasError = true;
         const error = new Error(chunk.message || "Stream error");
         this.handleError(error);
         return;

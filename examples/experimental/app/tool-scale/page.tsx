@@ -47,20 +47,15 @@ const requestSnippet = `{
   ]
 }`;
 
-const selectionSnippet = `toolSelection: {
-  enabled: true,
+const selectionSnippet = `toolSearch: {
+  maxResults: 6,
+  exposeWhenExceeds: 12,
+  maxEagerTools: 6,
   defaultProfile: "support",
   includeUnprofiled: false,
-  search: {
-    enabled: true,
-    maxResults: 6,
-    exposeWhenToolCountExceeds: 12,
-    metaToolName: "search_tools",
-    strictDeferredLoading: true,
-  },
-  dynamicSelection: {
-    enabled: true,
-    maxTools: 6,
+  profiles: {
+    support: { include: ["profile:support", "category:knowledge"] },
+    workspace: { include: ["profile:workspace", "category:workspace"] },
   },
 }`;
 

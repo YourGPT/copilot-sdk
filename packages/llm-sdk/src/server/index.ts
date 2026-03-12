@@ -2,6 +2,7 @@
 export { Runtime, createRuntime } from "./runtime";
 export type {
   RuntimeConfig,
+  ToolSearchConfig,
   ChatRequest,
   ActionRequest,
   RequestContext,

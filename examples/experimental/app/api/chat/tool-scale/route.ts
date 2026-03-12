@@ -45,74 +45,52 @@ Use tools sparingly and intentionally.
 When tools are missing, rely on the search_tools meta-tool to discover deferred tools rather than guessing.
 Keep answers short and explain which class of tools you used when it helps the user understand tool selection behavior.`,
   tools: toolScaleServerTools,
-  agentLoop: {
-    enabled: true,
-    maxIterations: 6,
-    debug: process.env.NODE_ENV === "development",
-    toolSelection: {
-      enabled: true,
-      defaultProfile: "support",
-      includeUnprofiled: false,
-      search: {
-        enabled: true,
-        maxResults: 6,
-        minScore: 0.15,
-        exposeWhenToolCountExceeds: 12,
-        metaToolName: "search_tools",
-        strictDeferredLoading: true,
+  maxIterations: 6,
+  toolSearch: {
+    maxResults: 6,
+    exposeWhenExceeds: 12,
+    maxEagerTools: 6,
+    defaultProfile: "support",
+    includeUnprofiled: false,
+    profiles: {
+      support: {
+        include: [
+          "profile:support",
+          "category:knowledge",
+          "category:billing",
+          "category:browser",
+          "category:utility",
+        ],
+        exclude: ["group:admin"],
       },
-      dynamicSelection: {
-        enabled: true,
-        maxTools: 6,
+      workspace: {
+        include: [
+          "profile:workspace",
+          "category:workspace",
+          "category:browser",
+          "category:analytics",
+          "category:utility",
+        ],
       },
-      profiles: {
-        support: {
-          include: [
-            "profile:support",
-            "category:knowledge",
-            "category:billing",
-            "category:browser",
-            "category:utility",
-          ],
-          exclude: ["group:admin"],
-        },
-        workspace: {
-          include: [
-            "profile:workspace",
-            "category:workspace",
-            "category:browser",
-            "category:analytics",
-            "category:utility",
-          ],
-        },
-        commerce: {
-          include: [
-            "profile:commerce",
-            "category:commerce",
-            "category:billing",
-            "group:actions",
-          ],
-        },
-        admin: {
-          include: [
-            "profile:admin",
-            "category:operations",
-            "category:analytics",
-            "category:utility",
-          ],
-        },
+      commerce: {
+        include: [
+          "profile:commerce",
+          "category:commerce",
+          "category:billing",
+          "group:actions",
+        ],
       },
-      nativeProviderHints: {
-        anthropic: {
-          toolChoice: "auto",
-          disableParallelToolUse: true,
-        },
-        openai: {
-          toolChoice: "auto",
-          parallelToolCalls: false,
-        },
+      admin: {
+        include: [
+          "profile:admin",
+          "category:operations",
+          "category:analytics",
+          "category:utility",
+        ],
       },
     },
+    toolChoice: "auto",
+    parallelCalls: false,
   },
 });
 

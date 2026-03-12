@@ -43,9 +43,7 @@ const runtime = createRuntime({
     "You are a helpful assistant. Use the get_random_number tool when asked for random numbers.",
   debug: true,
   tools: serverTools,
-  agentLoop: {
-    maxIterations: 2, // Low limit for testing
-  },
+  maxIterations: 2, // Low limit for testing
 });
 
 export async function POST(request: Request) {

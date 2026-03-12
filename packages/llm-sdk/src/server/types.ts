@@ -2,11 +2,66 @@ import type {
   ActionDefinition,
   KnowledgeBaseConfig,
   ToolDefinition,
-  AgentLoopConfig,
+  ToolProfile,
   WebSearchConfig,
 } from "../core/stream-events";
 import type { LLMAdapter } from "../adapters";
 import type { AIProvider } from "../providers/types";
+
+/**
+ * Tool search/discovery configuration.
+ * Controls the `search_tools` meta-tool that lets the AI discover deferred tools.
+ *
+ * Tools marked with `deferLoading: true` are excluded from the default context
+ * and loaded on demand when the AI calls `search_tools`.
+ */
+export interface ToolSearchConfig {
+  /**
+   * Custom description for the search_tools meta-tool shown to the AI.
+   */
+  description?: string;
+  /**
+   * Custom name for the search meta-tool (default: "search_tools").
+   */
+  name?: string;
+  /**
+   * Max eager tools sent to the AI per request (default: 20).
+   * Tools beyond this limit are deferred and discoverable via search.
+   */
+  maxEagerTools?: number;
+  /**
+   * Max deferred tools returned per search query (default: 8).
+   */
+  maxResults?: number;
+  /**
+   * Expose the search tool when total tool count exceeds this number (default: 8).
+   */
+  exposeWhenExceeds?: number;
+  /**
+   * How the AI should choose tools.
+   * - "auto": model decides whether to use a tool (default)
+   * - "required": model must call at least one tool
+   */
+  toolChoice?: "auto" | "required";
+  /**
+   * Allow the model to call multiple tools in a single turn (default: true).
+   * Set false to force one tool call at a time.
+   */
+  parallelCalls?: boolean;
+  /**
+   * Default active profile when none is provided in the request.
+   */
+  defaultProfile?: string;
+  /**
+   * Named tool profiles with include/exclude selectors.
+   * Profiles filter which tools are visible to the AI per request.
+   */
+  profiles?: Record<string, ToolProfile>;
+  /**
+   * When a profile is active, include tools with no profile membership (default: true).
+   */
+  includeUnprofiled?: boolean;
+}
 
 /**
  * Runtime configuration with adapter (advanced usage)
@@ -20,8 +75,15 @@ export interface RuntimeConfigWithAdapter {
   actions?: ActionDefinition[];
   /** Available tools (new - supports location: server/client) */
   tools?: ToolDefinition[];
-  /** Agent loop configuration */
-  agentLoop?: AgentLoopConfig;
+  /**
+   * Max agent loop iterations before stopping (default: 20).
+   */
+  maxIterations?: number;
+  /**
+   * Configure deferred tool discovery. Tools with `deferLoading: true` are
+   * excluded from the default context and discoverable via the search meta-tool.
+   */
+  toolSearch?: ToolSearchConfig;
   /** Knowledge base configuration (enables search_knowledge tool) */
   knowledgeBase?: KnowledgeBaseConfig;
   /** Enable debug logging */
@@ -60,8 +122,15 @@ export interface RuntimeConfigWithProvider {
   actions?: ActionDefinition[];
   /** Available tools (new - supports location: server/client) */
   tools?: ToolDefinition[];
-  /** Agent loop configuration */
-  agentLoop?: AgentLoopConfig;
+  /**
+   * Max agent loop iterations before stopping (default: 20).
+   */
+  maxIterations?: number;
+  /**
+   * Configure deferred tool discovery. Tools with `deferLoading: true` are
+   * excluded from the default context and discoverable via the search meta-tool.
+   */
+  toolSearch?: ToolSearchConfig;
   /** Knowledge base configuration (enables search_knowledge tool) */
   knowledgeBase?: KnowledgeBaseConfig;
   /** Enable debug logging */
@@ -154,22 +223,7 @@ export interface ChatRequest {
       required?: string[];
     };
   }>;
-  /** Full client tool catalog used for server-side tool selection and deferred search. */
-  toolCatalog?: Array<{
-    name: string;
-    description: string;
-    category?: string;
-    group?: string;
-    deferLoading?: boolean;
-    profiles?: string[];
-    searchKeywords?: string[];
-    inputSchema: {
-      type: "object";
-      properties: Record<string, unknown>;
-      required?: string[];
-    };
-  }>;
-  /** Active tool profile to apply when agentLoop.toolSelection is enabled. */
+  /** Active tool profile to apply (filters tools by profile when toolSearch is configured). */
   toolProfile?: string;
   /** Enable agentic loop mode */
   useAgentLoop?: boolean;

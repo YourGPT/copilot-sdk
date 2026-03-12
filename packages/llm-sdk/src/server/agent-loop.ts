@@ -16,7 +16,6 @@ import type {
   UnifiedToolCall,
   UnifiedToolResult,
   ToolResponse,
-  AgentLoopConfig,
   Message,
 } from "../core/stream-events";
 import type { AIProvider } from "../providers/types";
@@ -27,6 +26,7 @@ import {
   searchTools,
   selectTools,
   shouldExposeToolSearch,
+  type InternalToolSelectionConfig,
 } from "./tool-selection";
 
 // ========================================
@@ -54,8 +54,12 @@ export interface AgentLoopOptions {
   provider: AIProvider;
   /** Abort signal for cancellation */
   signal?: AbortSignal;
-  /** Loop configuration */
-  config?: AgentLoopConfig;
+  /** Max agent loop iterations (default: 20) */
+  maxIterations?: number;
+  /** Enable debug logging */
+  debug?: boolean;
+  /** Internal tool selection config (from resolveEffectiveToolSelectionConfig) */
+  toolSelectionConfig?: InternalToolSelectionConfig;
   /** Optional active tool profile for selective loading. */
   toolProfile?: string;
   /**
@@ -114,18 +118,19 @@ export async function* runAgentLoop(
     systemPrompt,
     provider,
     signal,
-    config,
+    maxIterations: optMaxIterations,
+    debug: optDebug,
+    toolSelectionConfig,
     toolProfile,
     callLLM,
     executeServerTool,
     waitForClientToolResult,
   } = options;
 
-  const maxIterations = config?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const debug = config?.debug ?? false;
+  const maxIterations = optMaxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const debug = optDebug ?? false;
   const formatter = getFormatter(provider.name);
-  const toolSearchMetaToolName =
-    config?.toolSelection?.search?.metaToolName ?? "search_tools";
+  const toolSearchMetaToolName = "search_tools";
 
   // Separate server and client tools
   const serverTools = tools.filter((t) => t.location === "server");
@@ -147,7 +152,7 @@ export async function* runAgentLoop(
       availableToolCount: allTools.length,
       serverToolCount: serverTools.length,
       clientToolCount: clientTools.length,
-      activeProfile: toolProfile ?? config?.toolSelection?.defaultProfile,
+      activeProfile: toolProfile ?? toolSelectionConfig?.defaultProfile,
       maxIterations,
     });
   }
@@ -176,14 +181,13 @@ export async function* runAgentLoop(
     const selectedTools = selectTools({
       tools: allTools,
       messages,
-      config: config?.toolSelection,
+      config: toolSelectionConfig,
       activeProfile: toolProfile,
       forceIncludeNames: [...loadedToolNames],
     });
     const toolSearchTool = shouldExposeToolSearch({
       tools: allTools,
-      selectedTools,
-      config: config?.toolSelection,
+      config: toolSelectionConfig,
     })
       ? ({
           name: toolSearchMetaToolName,
@@ -212,7 +216,7 @@ export async function* runAgentLoop(
             const results = searchTools({
               tools: allTools,
               query,
-              config: config?.toolSelection,
+              config: toolSelectionConfig,
               activeProfile: toolProfile,
               limit,
               excludeNames: selectedTools.map((tool) => tool.name),
@@ -232,7 +236,7 @@ export async function* runAgentLoop(
     const providerToolOptions = buildProviderToolOptions({
       providerName: provider.name,
       selectedTools: effectiveSelectedTools,
-      config: config?.toolSelection,
+      config: toolSelectionConfig,
       metaToolName: toolSearchMetaToolName,
     });
     const providerTools = formatter.transformTools(effectiveSelectedTools);
