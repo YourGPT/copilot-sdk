@@ -54,7 +54,7 @@ export interface ChatConfig {
   body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
-  /** Debug mode */
+  /** Enable debug logging */
   debug?: boolean;
   /** Available tools (passed to LLM) */
   tools?: ToolDefinition[];

@@ -277,23 +277,22 @@ export class AbstractAgentLoop implements AgentLoopActions {
     this._isProcessing = true;
 
     this.setIteration(this._iteration + 1);
-    const results: ToolResponse[] = [];
 
-    for (const toolCall of toolCalls) {
-      // Check if cancelled before each tool
-      if (this._isCancelled || this.abortController.signal.aborted) {
-        // Mark remaining tools as cancelled
-        results.push({
-          toolCallId: toolCall.id,
-          success: false,
-          error: "Tool execution cancelled",
-        });
-        continue;
-      }
-
-      const result = await this.executeSingleTool(toolCall);
-      results.push(result);
-    }
+    // Run all tools in parallel so approval-required tools don't block
+    // non-approval tools. All results are still collected together before
+    // returning (Anthropic API requires results for every tool_use block).
+    const results = await Promise.all(
+      toolCalls.map((toolCall) => {
+        if (this._isCancelled || this.abortController!.signal.aborted) {
+          return Promise.resolve<ToolResponse>({
+            toolCallId: toolCall.id,
+            success: false,
+            error: "Tool execution cancelled",
+          });
+        }
+        return this.executeSingleTool(toolCall);
+      }),
+    );
 
     this._isProcessing = false;
     return results;

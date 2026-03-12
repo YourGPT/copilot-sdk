@@ -30,6 +30,7 @@ import type {
 
 import type { MCPServerConfig } from "../../mcp/types";
 import type { Resolvable } from "../../core/utils/resolvable";
+import { createLogger } from "../../core/utils/logger";
 
 import type { UIMessage, ToolExecution } from "../../chat";
 
@@ -50,8 +51,6 @@ import {
   useMessageHistoryContext,
 } from "../message-history/context";
 import { useMessageHistory } from "../message-history/useMessageHistory";
-import { toDisplayMessage } from "../message-history/message-utils";
-import { buildSummaryBufferContext } from "../message-history/strategies/summary-buffer";
 import type { MessageHistoryConfig } from "../message-history/types";
 
 // ============================================
@@ -185,22 +184,58 @@ function MessageHistoryBridge({
       if (historyMessages.length === 0) return allMessages;
 
       const cfg = configRef.current;
-      const maxTokens = cfg.maxContextTokens ?? 128000;
-      const reserve = cfg.reserveForResponse ?? 4096;
 
-      // Apply summary-buffer only to the completed history, never the current turn
-      const compactedHistory = buildSummaryBufferContext(
-        historyMessages.map(toDisplayMessage),
-        compactionStateRef.current,
-        {
-          recentBuffer: cfg.recentBuffer ?? 10,
-          tokenBudget: maxTokens - reserve,
-          compactionThreshold: cfg.compactionThreshold ?? 0.75,
-          compactionUrl: cfg.compactionUrl,
-        },
+      // Apply summary-buffer windowing to history, keeping UIMessage format.
+      //
+      // WHY NOT buildSummaryBufferContext here:
+      // buildSummaryBufferContext returns LLMMessage[] (snake_case: tool_calls,
+      // tool_call_id). The optimizer's transformMessages() only reads camelCase
+      // (toolCalls, toolCallId), so mixing LLMMessage into this array causes it
+      // to silently strip tool call data → "Missing call_id" API errors.
+      // The optimizer must own the UIMessage → RequestMessage conversion.
+      const cs = compactionStateRef.current;
+      const recentBuffer = cfg.recentBuffer ?? 10;
+
+      // Identify compaction marker messages (UI-only, already represented by rollingSummary)
+      const isCompactionMsg = (m: UIMessage) =>
+        m.metadata?.["type"] === "compaction-marker";
+
+      const windowedHistory: UIMessage[] = [];
+
+      // 1. Working memory (always first)
+      if (cs.workingMemory.length > 0) {
+        windowedHistory.push({
+          id: "working-memory",
+          role: "system",
+          content: `[Working memory — always active]\n${cs.workingMemory.join("\n")}`,
+          createdAt: new Date(),
+        } as UIMessage);
+      }
+
+      // 2. Rolling summary replaces older history
+      if (cs.rollingSummary) {
+        windowedHistory.push({
+          id: "rolling-summary",
+          role: "system",
+          content: `[Previous conversation summary]\n${cs.rollingSummary}`,
+          createdAt: new Date(),
+        } as UIMessage);
+      }
+
+      // 3. Non-compaction system messages (e.g. injected context)
+      const systemMsgs = historyMessages.filter(
+        (m) => m.role === "system" && !isCompactionMsg(m),
       );
+      windowedHistory.push(...systemMsgs);
 
-      return [...compactedHistory, ...currentTurn] as unknown as UIMessage[];
+      // 4. Recent conversation messages (windowed to recentBuffer)
+      const conversationMsgs = historyMessages.filter(
+        (m) => m.role !== "system",
+      );
+      const recentStart = Math.max(0, conversationMsgs.length - recentBuffer);
+      windowedHistory.push(...conversationMsgs.slice(recentStart));
+
+      return [...windowedHistory, ...currentTurn];
     });
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -358,10 +393,10 @@ export function CopilotProvider({
   optimization,
   messageHistory,
 }: CopilotProviderProps) {
-  // Debug logger
+  // Debug logger — scoped to "provider" namespace
   const debugLog = useCallback(
-    (...args: unknown[]) => {
-      if (debug) console.log("[Copilot SDK]", ...args);
+    (action: string, data?: unknown) => {
+      createLogger("provider", () => debug ?? false)(action, data);
     },
     [debug],
   );

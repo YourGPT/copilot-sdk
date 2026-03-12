@@ -18,6 +18,7 @@ import type {
   PermissionLevel,
 } from "../core";
 import type { Resolvable } from "../core/utils/resolvable";
+import { createLogger } from "../core/utils/logger";
 import { AbstractChat } from "./classes/AbstractChat";
 import { AbstractAgentLoop } from "./AbstractAgentLoop";
 import type { ChatConfig, ChatCallbacks } from "./types";
@@ -47,7 +48,7 @@ export interface ChatWithToolsConfig {
   body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
-  /** Debug mode */
+  /** Enable debug logging */
   debug?: boolean;
   /** Initial messages */
   initialMessages?: UIMessage[];
@@ -601,9 +602,10 @@ export class ChatWithTools {
   // ============================================
 
   private debug(message: string, ...args: unknown[]): void {
-    if (this.config.debug) {
-      console.log(`[ChatWithTools] ${message}`, ...args);
-    }
+    createLogger("tools", () => this.config.debug ?? false)(
+      message,
+      args.length === 1 ? args[0] : args.length > 1 ? args : undefined,
+    );
   }
 }
 

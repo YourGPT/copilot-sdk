@@ -43,6 +43,7 @@ import {
 } from "../functions/stream";
 import { SimpleChatState } from "../interfaces/ChatState";
 import { ChatContextOptimizer } from "../optimizations";
+import { createLogger } from "../../core/utils/logger";
 
 /**
  * Event types emitted by AbstractChat
@@ -462,13 +463,29 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     // Build request
     const request = this.buildRequest();
 
+    // For streaming: pre-push an empty assistant message BEFORE the HTTP
+    // round-trip so the UI shows a loading bubble immediately (e.g. between
+    // tool execution and the continuation stream starting).
+    let preCreatedMessageId: string | undefined;
+    if (this.config.streaming !== false) {
+      const preMsg = createEmptyAssistantMessage() as T;
+      this.state.pushMessage(preMsg);
+      this.callbacks.onMessagesChange?.(this.state.messages);
+      preCreatedMessageId = preMsg.id;
+    }
+
     // Send request
     const response = await this.transport.send(request);
 
     // Check if streaming or JSON
     if (this.isAsyncIterable(response)) {
-      await this.handleStreamResponse(response);
+      await this.handleStreamResponse(response, preCreatedMessageId);
     } else {
+      // Non-streaming: remove the pre-pushed placeholder (not needed)
+      if (preCreatedMessageId) {
+        const id = preCreatedMessageId;
+        this.state.setMessages(this.state.messages.filter((m) => m.id !== id));
+      }
       this.handleJsonResponse(response);
     }
   }
@@ -531,7 +548,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   setContext(context: string): void {
     this.dynamicContext = context;
-    this.debug("Context updated", { length: context.length });
   }
 
   /**
@@ -540,7 +556,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   setSystemPrompt(prompt: string): void {
     this.config.systemPrompt = prompt;
-    this.debug("System prompt updated", { length: prompt.length });
   }
 
   /**
@@ -552,7 +567,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     if (this.transport.setHeaders && headers !== undefined) {
       this.transport.setHeaders(headers);
     }
-    this.debug("Headers config updated");
   }
 
   /**
@@ -564,7 +578,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     if (this.transport.setUrl) {
       this.transport.setUrl(url);
     }
-    this.debug("URL config updated");
   }
 
   /**
@@ -576,7 +589,6 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     if (this.transport.setBody && body !== undefined) {
       this.transport.setBody(body);
     }
-    this.debug("Body config updated");
   }
 
   /**
@@ -624,27 +636,51 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   protected async handleStreamResponse(
     stream: AsyncIterable<StreamChunk>,
+    preCreatedMessageId?: string,
   ): Promise<void> {
     this.state.status = "streaming";
     this.callbacks.onStatusChange?.("streaming");
 
-    // Create empty assistant message for streaming
-    const assistantMessage = createEmptyAssistantMessage() as T;
-    this.state.pushMessage(assistantMessage);
+    // Reuse the pre-pushed empty assistant message (created in processRequest
+    // before the HTTP round-trip) so there's no blank gap waiting for stream start.
+    // Fall back to pushing a new one if not provided.
+    let assistantMessage: T;
+    if (preCreatedMessageId) {
+      const existing = this.state.messages.find(
+        (m) => m.id === preCreatedMessageId,
+      );
+      if (existing) {
+        assistantMessage = existing;
+      } else {
+        assistantMessage = createEmptyAssistantMessage() as T;
+        this.state.pushMessage(assistantMessage);
+      }
+    } else {
+      assistantMessage = createEmptyAssistantMessage() as T;
+      this.state.pushMessage(assistantMessage);
+    }
 
     // Initialize stream state
     this.streamState = createStreamState(assistantMessage.id);
     this.callbacks.onMessageStart?.(assistantMessage.id);
 
-    this.debug("handleStreamResponse", "Starting to process stream");
+    this.debugGroup("handleStreamResponse");
+    this.debug("Starting to process stream");
 
     let chunkCount = 0;
     let toolCallsEmitted = false; // Guard to prevent emitting toolCalls twice
+    // Holds client tool calls received via a tool_calls chunk AFTER a
+    // mid-stream message:end nulled streamState.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pendingClientToolCalls: any[] | undefined;
 
     // Process stream chunks
     for await (const chunk of stream) {
       chunkCount++;
-      this.debug("chunk", { count: chunkCount, type: chunk.type });
+      // Skip high-frequency delta chunks from the chunk log to reduce noise
+      if (chunk.type !== "message:delta") {
+        this.debug("chunk", { count: chunkCount, type: chunk.type });
+      }
 
       // Handle error chunks immediately
       if (chunk.type === "error") {
@@ -656,7 +692,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Handle message:end mid-stream (server-side agent loop turn completed)
       // This creates separate messages for each turn instead of combining them
       if (chunk.type === "message:end" && this.streamState?.content) {
-        this.debug("message:end mid-stream - finalizing current turn");
+        this.debug("message:end mid-stream", {
+          messageId: this.streamState.messageId,
+          contentLength: this.streamState.content.length,
+          toolCallsInState: this.streamState.toolCalls?.length ?? 0,
+          chunkCount,
+        });
 
         // Finalize current message with its content and tool calls
         const turnMessage = streamStateToMessage(this.streamState) as T;
@@ -702,8 +743,128 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       // Update stream state (pure function)
-      // Skip if streamState is null (shouldn't happen but be safe)
+      // Skip most chunks if streamState is null.
+      // EXCEPTION: after a mid-stream message:end the server can still send
+      // tool_calls + done for client-side tool dispatch. Handle those directly.
       if (!this.streamState) {
+        if (chunk.type === "tool_calls") {
+          // Store for emission when done arrives. Do NOT update message state
+          // here — done.messages carries the assistant message with tool_calls
+          // in proper OpenAI format, which we use in the done handler below.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          pendingClientToolCalls = (chunk as { toolCalls: any[] }).toolCalls;
+          this.debug("tool_calls (post-message:end, stored as pending)", {
+            count: pendingClientToolCalls?.length,
+            ids: pendingClientToolCalls?.map((tc: { id?: string }) => tc.id),
+          });
+          continue;
+        }
+
+        if (chunk.type === "done") {
+          this.debug("done (post-message:end)", {
+            hasPendingToolCalls: !!pendingClientToolCalls?.length,
+            pendingCount: pendingClientToolCalls?.length ?? 0,
+            doneMessagesCount: chunk.messages?.length ?? 0,
+            requiresAction: (chunk as { requiresAction?: boolean })
+              .requiresAction,
+            toolCallsEmitted,
+          });
+          // Process done.messages to:
+          // 1. Insert any server-side tool results missing from state
+          // 2. Merge OpenAI-format tool_calls into the finalized assistant message
+          if (chunk.messages?.length) {
+            const pendingIds = new Set(
+              ((pendingClientToolCalls ?? []) as Array<{ id?: string }>)
+                .filter((tc) => tc?.id)
+                .map((tc) => tc.id as string),
+            );
+            const messagesToInsert: T[] = [];
+            let clientAssistantToolCalls: unknown[] | undefined;
+
+            for (const msg of chunk.messages) {
+              // This is the client-tool assistant message already in state
+              // (finalized by message:end but without toolCalls).
+              // Capture its OpenAI-format tool_calls to merge into state.
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                pendingIds.size > 0 &&
+                (msg.tool_calls as Array<{ id?: string }>).every((tc) =>
+                  pendingIds.has(tc?.id ?? ""),
+                )
+              ) {
+                clientAssistantToolCalls = msg.tool_calls as unknown[];
+                continue; // Already in state — don't insert a duplicate
+              }
+              // Skip plain assistant text — already streamed
+              if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Everything else (server tool results) needs inserting
+              messagesToInsert.push({
+                id: generateMessageId(),
+                role: msg.role as T["role"],
+                content: msg.content ?? "",
+                toolCalls: msg.tool_calls as T["toolCalls"],
+                toolCallId: msg.tool_call_id,
+                createdAt: new Date(),
+              } as T);
+            }
+
+            // Merge OpenAI-format tool_calls into the existing last assistant message
+            if (clientAssistantToolCalls) {
+              const currentMessages = this.state.messages;
+              for (let i = currentMessages.length - 1; i >= 0; i--) {
+                if (currentMessages[i].role === "assistant") {
+                  this.state.updateMessageById(
+                    currentMessages[i].id,
+                    (m) =>
+                      ({
+                        ...m,
+                        toolCalls: clientAssistantToolCalls,
+                      }) as T,
+                  );
+                  break;
+                }
+              }
+            }
+
+            if (messagesToInsert.length > 0) {
+              // Insert server tool results before the last assistant message
+              const currentMessages = this.state.messages;
+              let insertIdx = currentMessages.length;
+              for (let i = currentMessages.length - 1; i >= 0; i--) {
+                if (currentMessages[i].role === "assistant") {
+                  insertIdx = i;
+                  break;
+                }
+              }
+              this.state.setMessages([
+                ...currentMessages.slice(0, insertIdx),
+                ...messagesToInsert,
+                ...currentMessages.slice(insertIdx),
+              ]);
+            }
+          }
+
+          // Emit client tool calls so ChatWithTools executes them
+          if (!toolCallsEmitted && pendingClientToolCalls?.length) {
+            toolCallsEmitted = true;
+            this.debug("emit toolCalls (post-message:end path)", {
+              count: pendingClientToolCalls.length,
+              names: pendingClientToolCalls.map(
+                (tc: { function?: { name: string }; name?: string }) =>
+                  tc.function?.name ?? tc.name,
+              ),
+            });
+            this.emit("toolCalls", { toolCalls: pendingClientToolCalls });
+          } else {
+            this.debug("skip emit toolCalls (post-message:end path)", {
+              toolCallsEmitted,
+              hasPending: !!pendingClientToolCalls?.length,
+            });
+          }
+          continue;
+        }
+
         this.debug("warning", "streamState is null, skipping chunk");
         continue;
       }
@@ -757,13 +918,26 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
       // Check for completion
       if (isStreamDone(chunk)) {
-        this.debug("streamDone", { chunk });
+        this.debug("streamDone", {
+          chunkType: chunk.type,
+          requiresAction: (chunk as { requiresAction?: boolean })
+            .requiresAction,
+          doneMessagesCount:
+            (chunk as { messages?: unknown[] }).messages?.length ?? 0,
+          streamToolCallsCount: this.streamState?.toolCalls?.length ?? 0,
+          toolCallsEmitted,
+          chunkCount,
+        });
 
         // CRITICAL: Process messages from done event (server-side tool results)
         // Without this, tool_call_id is lost and causes Anthropic API errors
         if (chunk.type === "done" && chunk.messages?.length) {
           this.debug("processDoneMessages", {
             count: chunk.messages.length,
+            roles: chunk.messages.map(
+              (m) =>
+                `${m.role}${m.tool_calls?.length ? `[${(m.tool_calls as unknown[]).length}tc]` : ""}`,
+            ),
           });
 
           const currentStreamToolCallIds = new Set(
@@ -851,14 +1025,57 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           // merged into local state. Emitting earlier on the first tool_calls
           // chunk can race with recursive server-tool turns and produce an
           // invalid continuation order for OpenAI-compatible providers.
-          if (
-            chunk.requiresAction &&
-            !toolCallsEmitted &&
-            updatedMessage.toolCalls?.length
-          ) {
-            toolCallsEmitted = true;
-            this.debug("toolCalls", { toolCalls: updatedMessage.toolCalls });
-            this.emit("toolCalls", { toolCalls: updatedMessage.toolCalls });
+          this.debug("requiresAction check", {
+            requiresAction: chunk.requiresAction,
+            toolCallsEmitted,
+            updatedMessageToolCallsCount: updatedMessage.toolCalls?.length ?? 0,
+            messagesToInsertCount: messagesToInsert.length,
+          });
+
+          if (chunk.requiresAction && !toolCallsEmitted) {
+            // When the server runs a multi-turn agent loop before handing off
+            // to the client, the client tool calls arrive via done.messages
+            // (messagesToInsert), NOT in the current streaming message's
+            // toolCalls (which is always empty because action:start/args/end
+            // chunks only fire callbacks and never update streamState.toolCalls).
+            // Find the last assistant message in the inserted batch that carries
+            // tool calls — that is the pending client tool dispatch.
+            let clientToolCalls = updatedMessage.toolCalls;
+            if (!clientToolCalls?.length && messagesToInsert.length > 0) {
+              for (let i = messagesToInsert.length - 1; i >= 0; i--) {
+                const m = messagesToInsert[i];
+                if (m.role === "assistant" && m.toolCalls?.length) {
+                  clientToolCalls = m.toolCalls;
+                  this.debug("clientToolCalls from messagesToInsert", {
+                    index: i,
+                    count: clientToolCalls?.length,
+                  });
+                  break;
+                }
+              }
+            }
+
+            if (clientToolCalls?.length) {
+              toolCallsEmitted = true;
+              this.debug("emit toolCalls (normal done path)", {
+                count: clientToolCalls.length,
+                names: (
+                  clientToolCalls as Array<{
+                    function?: { name: string };
+                    name?: string;
+                  }>
+                ).map((tc) => tc.function?.name ?? tc.name),
+              });
+              this.emit("toolCalls", { toolCalls: clientToolCalls });
+            } else {
+              this.debug("requiresAction=true but no clientToolCalls found", {
+                updatedMessageToolCalls: updatedMessage.toolCalls,
+                messagesToInsert: messagesToInsert.map((m) => ({
+                  role: m.role,
+                  hasToolCalls: !!m.toolCalls?.length,
+                })),
+              });
+            }
           }
         }
 
@@ -914,9 +1131,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     this.callbacks.onMessagesChange?.(this.state.messages);
 
+    // Close the stream group opened at the start of handleStreamResponse
+    this.debugGroupEnd();
+
     // Only set status to "ready" if NO tool calls were emitted
     // If tool calls were emitted, the async handler will manage status
     // (it will set "submitted" then "streaming" for the continuation)
+    this.debug("stream end", {
+      toolCallsEmitted,
+      totalChunks: chunkCount,
+      messagesInState: this.state.messages.length,
+    });
     if (!toolCallsEmitted) {
       this.state.status = "ready";
       this.callbacks.onStatusChange?.("ready");
@@ -1010,13 +1235,31 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.emit("error", { error });
   }
 
-  /**
-   * Debug logging
-   */
-  protected debug(action: string, data?: unknown): void {
-    if (this.config.debug) {
-      console.log(`[AbstractChat] ${action}`, data);
+  // ─── Debug helpers ────────────────────────────────────────────────────────
+
+  private _log?: import("../../core/utils/logger").ScopedLogger;
+
+  private get log(): import("../../core/utils/logger").ScopedLogger {
+    if (!this._log) {
+      this._log = createLogger("streaming", () => this.config.debug ?? false);
     }
+    return this._log;
+  }
+
+  protected debug(action: string, data?: unknown): void {
+    this.log(action, data);
+  }
+
+  protected debugGroup(label: string, collapsed = true): void {
+    if (collapsed) {
+      this.log.groupCollapsed(label);
+    } else {
+      this.log.group(label);
+    }
+  }
+
+  protected debugGroupEnd(): void {
+    this.log.groupEnd();
   }
 
   /**

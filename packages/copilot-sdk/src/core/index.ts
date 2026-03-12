@@ -98,6 +98,12 @@ export type {
 } from "./tools";
 
 // ============================================
+// Logger
+// ============================================
+export { createLogger, logOnce } from "./utils/logger";
+export type { ScopedLogger, DebugConfig } from "./utils/logger";
+
+// ============================================
 // Core Types
 // ============================================
 
