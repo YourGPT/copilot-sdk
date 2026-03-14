@@ -225,7 +225,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.error = undefined;
 
       // Notify callbacks
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
       // Yield to allow UI to render loading state (important for non-streaming)
@@ -291,7 +291,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.state.pushMessage(toolMessage);
       }
 
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
     }
   }
 
@@ -372,7 +372,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       this.state.status = "submitted";
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
       // Yield a full macrotask so React can flush the "submitted" status
@@ -429,6 +429,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     if (messageId) {
       targetMessage = messages.find((m) => m.id === messageId);
+      // Not on visible path — check inactive branches too
+      if (!targetMessage) {
+        targetMessage = this.state.getAllMessages?.().find(
+          (m) => m.id === messageId,
+        );
+      }
     } else {
       // Find last assistant message in the visible path
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -446,7 +452,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Rewind active path to target's parent
       // The new assistant response will be pushed as a new child (sibling)
       this.state.setCurrentLeaf(targetMessage.parentId ?? null);
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
       this.state.status = "submitted";
       await Promise.resolve();
       await this.processRequest();
@@ -457,7 +463,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     const targetIndex = messages.indexOf(targetMessage);
     if (targetIndex > 0) {
       this.state.setMessages(messages.slice(0, targetIndex));
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
       await this.processRequest();
     }
   }
@@ -465,6 +471,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   // ============================================
   // Event Handling
   // ============================================
+
+  /**
+   * Returns all messages across all branches when the state supports it
+   * (branch-aware), otherwise returns the visible path.
+   * Use this whenever firing onMessagesChange so inactive branches are not lost.
+   */
+  private _allMessages(): T[] {
+    return this.state.getAllMessages?.() ?? this.state.messages;
+  }
 
   /**
    * Subscribe to events
@@ -518,7 +533,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     if (this.config.streaming !== false) {
       const preMsg = createEmptyAssistantMessage() as T;
       this.state.pushMessage(preMsg);
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
       preCreatedMessageId = preMsg.id;
     }
 
@@ -1177,7 +1192,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
     }
 
-    this.callbacks.onMessagesChange?.(this.state.messages);
+    this.callbacks.onMessagesChange?.(this._allMessages());
 
     // Close the stream group opened at the start of handleStreamResponse
     this.debugGroupEnd();
@@ -1249,7 +1264,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.pushMessage(message);
     }
 
-    this.callbacks.onMessagesChange?.(this.state.messages);
+    this.callbacks.onMessagesChange?.(this._allMessages());
 
     // Check for tool calls BEFORE setting status to ready
     // If tool calls exist, the async handler will manage status

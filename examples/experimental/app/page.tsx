@@ -2,6 +2,11 @@ import Link from "next/link";
 
 const demos = [
   {
+    name: "Conversation Branching",
+    href: "/branching",
+    description: "Edit & regenerate to branch — live tree visualization",
+  },
+  {
     name: "Non-Streaming",
     href: "/non-streaming",
     description: "runtime.generate() with CopilotChat",
