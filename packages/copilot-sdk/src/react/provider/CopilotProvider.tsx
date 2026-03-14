@@ -323,6 +323,8 @@ export interface CopilotContextValue {
   getBranchInfo: (messageId: string) => import("../../chat/branching").BranchInfo | null;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   hasBranches: boolean;
+  /** Get ALL messages across all branches (for persistence). Visible path only when no branches. */
+  getAllMessages: () => UIMessage[];
 
   // Tool execution
   registerTool: (tool: ToolDefinition) => void;
@@ -716,6 +718,11 @@ export function CopilotProvider({
     () => false,
   );
 
+  const getAllMessages = useCallback(
+    () => chatRef.current?.getAllMessages?.() ?? [],
+    [],
+  );
+
   // ============================================
   // Callbacks
   // ============================================
@@ -723,13 +730,17 @@ export function CopilotProvider({
   // Notify external callbacks
   useEffect(() => {
     if (onMessagesChange && messages.length > 0) {
-      const coreMessages: Message[] = messages.map((m) => ({
+      // Use getAllMessages() to persist all branches, not just the visible path
+      const allUIMessages = chatRef.current?.getAllMessages?.() ?? messages;
+      const coreMessages: Message[] = allUIMessages.map((m) => ({
         id: m.id,
         role: m.role,
         content: m.content,
         created_at: m.createdAt,
         tool_calls: m.toolCalls,
         tool_call_id: m.toolCallId,
+        parent_id: m.parentId,
+        children_ids: m.childrenIds,
         metadata: {
           attachments: m.attachments,
           thinking: m.thinking,
@@ -776,6 +787,7 @@ export function CopilotProvider({
       getBranchInfo,
       editMessage,
       hasBranches,
+      getAllMessages,
 
       // Tool execution
       registerTool,
@@ -819,6 +831,7 @@ export function CopilotProvider({
       getBranchInfo,
       editMessage,
       hasBranches,
+      getAllMessages,
       registerTool,
       unregisterTool,
       registeredTools,

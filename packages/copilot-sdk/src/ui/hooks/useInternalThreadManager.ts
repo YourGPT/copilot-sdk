@@ -81,7 +81,7 @@ export function useInternalThreadManager(
   } = threadManager;
 
   // Get copilot context for setMessages and status
-  const { messages, setMessages, status, isLoading } = useCopilot();
+  const { messages, setMessages, status, isLoading, getAllMessages } = useCopilot();
 
   // Track if we're in the middle of loading messages from a thread switch
   const isLoadingMessagesRef = useRef(false);
@@ -113,6 +113,8 @@ export function useInternalThreadManager(
       created_at: m.createdAt,
       tool_calls: m.toolCalls,
       tool_call_id: m.toolCallId,
+      parent_id: m.parentId,
+      children_ids: m.childrenIds,
       // Preserve full metadata including citations, toolExecutions, etc.
       metadata: {
         ...m.metadata,
@@ -136,6 +138,8 @@ export function useInternalThreadManager(
           createdAt: m.created_at ?? new Date(),
           toolCalls: m.tool_calls,
           toolCallId: m.tool_call_id,
+          parentId: m.parent_id,
+          childrenIds: m.children_ids,
           attachments: m.metadata?.attachments,
         }));
         lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
@@ -197,6 +201,8 @@ export function useInternalThreadManager(
         createdAt: m.created_at ?? new Date(),
         toolCalls: m.tool_calls,
         toolCallId: m.tool_call_id,
+        parentId: m.parent_id,
+        childrenIds: m.children_ids,
         attachments: m.metadata?.attachments,
         thinking: m.metadata?.thinking as string | undefined,
         // Preserve full metadata including citations, toolExecutions, etc.
@@ -241,7 +247,11 @@ export function useInternalThreadManager(
       return;
     }
 
-    const coreMessages = convertToCore(messages);
+    // Use getAllMessages() so all branches are persisted, not just the visible path
+    const allUIMessages = getAllMessages();
+    const coreMessages = convertToCore(
+      allUIMessages.length > 0 ? allUIMessages : messages,
+    );
 
     // If no thread exists, create one with these messages
     if (!currentThreadId && !savingToThreadRef.current) {
@@ -276,6 +286,7 @@ export function useInternalThreadManager(
     refreshThreads,
     getMessageSnapshot,
     convertToCore,
+    getAllMessages,
     onThreadChange,
   ]);
 
