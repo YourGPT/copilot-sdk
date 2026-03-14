@@ -25,11 +25,17 @@ import { SourceGroup, type SourceItem } from "../../ui/source";
 
 type DefaultMessageProps = {
   message: ChatMessage;
-  userAvatar: { src?: string; fallback?: string; component?: React.ReactNode };
+  userAvatar: {
+    src?: string;
+    fallback?: string;
+    component?: React.ReactNode;
+    className?: string;
+  };
   assistantAvatar: {
     src?: string;
     fallback?: string;
     component?: React.ReactNode;
+    className?: string;
   };
   showUserAvatar?: boolean;
   userMessageClassName?: string;
@@ -57,6 +63,8 @@ type DefaultMessageProps = {
   toolRenderers?: ToolRenderers;
   /** Catch-all renderer for MCP tools (tools with source: "mcp") */
   mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
+  /** Catch-all renderer for any tool not matched by toolRenderers */
+  fallbackToolRenderer?: React.ComponentType<ToolRendererProps>;
   /** Called when user approves a tool execution */
   onApproveToolExecution?: (
     executionId: string,
@@ -96,6 +104,7 @@ export function DefaultMessage({
   registeredTools,
   toolRenderers,
   mcpToolRenderer,
+  fallbackToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   showFollowUps = true,
@@ -300,6 +309,7 @@ export function DefaultMessage({
             src={userAvatar.src}
             alt="User"
             fallback={userAvatar.fallback}
+            className={userAvatar.className}
           >
             {userAvatar.component}
           </MessageAvatar>
@@ -326,13 +336,14 @@ export function DefaultMessage({
     (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec),
   );
 
-  // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, or tool.render)
+  // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, fallbackToolRenderer, or tool.render)
   const hasCustomRender = (toolName: string, execSource?: string): boolean => {
     if (toolRenderers?.[toolName]) return true;
     const toolDef = registeredTools?.find((t) => t.name === toolName);
     // Check if mcpToolRenderer applies (MCP tool with catch-all renderer)
     if (mcpToolRenderer && (execSource === "mcp" || toolDef?.source === "mcp"))
       return true;
+    if (fallbackToolRenderer) return true;
     if (toolDef?.render) return true;
     return false;
   };
@@ -376,7 +387,7 @@ export function DefaultMessage({
             <CopilotSDKLogo className="size-5" />
           ) : undefined
         }
-        className="bg-muted"
+        className={cn("bg-muted", assistantAvatar.className)}
       >
         {assistantAvatar.component}
       </MessageAvatar>
@@ -473,7 +484,26 @@ export function DefaultMessage({
                     );
                   }
 
-                  // PRIORITY 3: tool's own render function
+                  // PRIORITY 3: fallbackToolRenderer (catch-all for any unmatched tool)
+                  if (fallbackToolRenderer) {
+                    const FallbackRenderer = fallbackToolRenderer;
+                    return (
+                      <FallbackRenderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
+                          source: exec.source,
+                        }}
+                      />
+                    );
+                  }
+
+                  // PRIORITY 4: tool's own render function
                   // toolDef already defined above for MCP check
                   const toolDefForRender =
                     toolDef ??

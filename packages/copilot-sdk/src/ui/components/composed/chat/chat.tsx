@@ -523,6 +523,7 @@ function ChatComponent({
   registeredTools,
   toolRenderers,
   mcpToolRenderer,
+  fallbackToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   // Follow-up Questions
@@ -535,6 +536,8 @@ function ChatComponent({
   renderMessage,
   renderInput,
   renderHeader,
+  // Avatar grouping
+  groupConsecutiveMessages = false,
   // Styling
   className,
   classNames = {},
@@ -910,6 +913,43 @@ function ChatComponent({
                   {/* Messages */}
                   {messages.map((message, index) => {
                     const isLastMessage = index === messages.length - 1;
+
+                    const GROUP_THRESHOLD_MS = 5 * 60 * 1000;
+                    const shouldHideAvatar = (() => {
+                      if (!groupConsecutiveMessages || index === 0)
+                        return false;
+                      let prevIdx = index - 1;
+                      while (prevIdx >= 0) {
+                        const prev = messages[prevIdx];
+                        const isToolMsg = prev.role === "tool";
+                        const isInvisibleSystem =
+                          prev.role === "system" &&
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          (prev.metadata as Record<string, unknown>)?.type !==
+                            "compaction-marker";
+                        if (!isToolMsg && !isInvisibleSystem) break;
+                        prevIdx--;
+                      }
+                      if (prevIdx < 0) return false;
+                      const prevVisible = messages[prevIdx];
+                      if (prevVisible.role !== message.role) return false;
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      const curTs = (message as any).timestamp as
+                        | number
+                        | undefined;
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      const prevTs = (prevVisible as any).timestamp as
+                        | number
+                        | undefined;
+                      if (
+                        curTs &&
+                        prevTs &&
+                        curTs - prevTs > GROUP_THRESHOLD_MS
+                      )
+                        return false;
+                      return true;
+                    })();
+
                     const isEmptyAssistant =
                       message.role === "assistant" && !message.content?.trim();
 
@@ -967,8 +1007,16 @@ function ChatComponent({
                       <DefaultMessage
                         key={message.id}
                         message={messageWithExecutions}
-                        userAvatar={userAvatar}
-                        assistantAvatar={assistantAvatar}
+                        userAvatar={
+                          shouldHideAvatar && message.role === "user"
+                            ? { ...userAvatar, className: "invisible" }
+                            : userAvatar
+                        }
+                        assistantAvatar={
+                          shouldHideAvatar && message.role === "assistant"
+                            ? { ...assistantAvatar, className: "invisible" }
+                            : assistantAvatar
+                        }
                         showUserAvatar={showUserAvatar}
                         userMessageClassName={classNames.userMessage}
                         assistantMessageClassName={classNames.assistantMessage}
@@ -980,6 +1028,7 @@ function ChatComponent({
                         registeredTools={registeredTools}
                         toolRenderers={toolRenderers}
                         mcpToolRenderer={mcpToolRenderer}
+                        fallbackToolRenderer={fallbackToolRenderer}
                         onApproveToolExecution={onApproveToolExecution}
                         onRejectToolExecution={onRejectToolExecution}
                         showFollowUps={showFollowUps}

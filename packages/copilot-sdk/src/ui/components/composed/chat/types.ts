@@ -403,6 +403,19 @@ export type ChatProps = {
    */
   mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
 
+  /**
+   * Catch-all renderer for ALL tools not matched by `toolRenderers`.
+   * Applied regardless of tool source (native, custom, or MCP).
+   *
+   * Priority: toolRenderers[name] > mcpToolRenderer (mcp only) > fallbackToolRenderer > tool.render > default
+   *
+   * @example
+   * ```tsx
+   * <Chat fallbackToolRenderer={DefaultToolCard} />
+   * ```
+   */
+  fallbackToolRenderer?: React.ComponentType<ToolRendererProps>;
+
   // === Tool Approval (Human-in-the-loop) ===
   /**
    * Called when user approves a tool execution.
@@ -429,6 +442,10 @@ export type ChatProps = {
   renderInput?: () => React.ReactNode;
   /** Custom header renderer (replaces entire header) */
   renderHeader?: () => React.ReactNode;
+
+  /** Group consecutive messages from same role — hides avatar on non-first messages in a run.
+   *  Resets on role change or if messages are > 5 minutes apart. */
+  groupConsecutiveMessages?: boolean;
 
   // === Styling ===
   /** Class name for root container (use for sizing) */
