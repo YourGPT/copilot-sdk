@@ -202,9 +202,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       if (options?.editMessageId && this.state.setCurrentLeaf) {
         const allMessages =
           this.state.getAllMessages?.() ?? this.state.messages;
-        const target = allMessages.find(
-          (m) => m.id === options.editMessageId,
-        );
+        const target = allMessages.find((m) => m.id === options.editMessageId);
         if (target && target.parentId !== undefined) {
           newParentId = target.parentId;
           // Rewind active path to just before the original message
@@ -431,9 +429,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       targetMessage = messages.find((m) => m.id === messageId);
       // Not on visible path — check inactive branches too
       if (!targetMessage) {
-        targetMessage = this.state.getAllMessages?.().find(
-          (m) => m.id === messageId,
-        );
+        targetMessage = this.state
+          .getAllMessages?.()
+          .find((m) => m.id === messageId);
       }
     } else {
       // Find last assistant message in the visible path
@@ -583,6 +581,31 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Inline skills from the client (sent on every request for server to merge)
+   */
+  protected inlineSkills: Array<{
+    name: string;
+    description: string;
+    content: string;
+    strategy?: string;
+  }> = [];
+
+  /**
+   * Set inline skills (called by SkillProvider via React layer)
+   */
+  setInlineSkills(
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ): void {
+    this.inlineSkills = skills;
+    this.debug("Inline skills updated", { count: skills.length });
+  }
+
+  /**
    * Dynamic context from useAIContext hook
    */
   protected dynamicContext: string = "";
@@ -691,6 +714,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             inputSchema: tool.inputSchema,
           }))
         : undefined,
+      __skills: this.inlineSkills.length ? this.inlineSkills : undefined,
     };
   }
 

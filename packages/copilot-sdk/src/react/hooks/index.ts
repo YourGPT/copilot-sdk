@@ -103,3 +103,7 @@ export {
   type ContextStats,
   type MessageTokenUsage,
 } from "./useContextStats";
+
+// Skills Hooks
+export { useSkill } from "./useSkill";
+export { useSkillStatus, type UseSkillStatusReturn } from "./useSkillStatus";

@@ -53,6 +53,8 @@ import {
 } from "../message-history/context";
 import { useMessageHistory } from "../message-history/useMessageHistory";
 import type { MessageHistoryConfig } from "../message-history/types";
+import { SkillProvider } from "../skill/SkillProvider";
+import type { SkillDefinition } from "../../skill-system/types";
 
 // ============================================
 // Internal MCP Connection Component
@@ -299,6 +301,12 @@ export interface CopilotProviderProps {
    * @default strategy: 'none' — current behaviour, zero breaking changes
    */
   messageHistory?: MessageHistoryConfig;
+  /**
+   * Convenience prop to pre-register inline skills.
+   * Wraps children with <SkillProvider skills={skills}>.
+   * Only inline skills (source.type === "inline") are supported client-side.
+   */
+  skills?: SkillDefinition[];
 }
 
 export interface CopilotContextValue {
@@ -320,7 +328,9 @@ export interface CopilotContextValue {
 
   // Branching actions
   switchBranch: (messageId: string) => void;
-  getBranchInfo: (messageId: string) => import("../../chat/branching").BranchInfo | null;
+  getBranchInfo: (
+    messageId: string,
+  ) => import("../../chat/branching").BranchInfo | null;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   hasBranches: boolean;
   /** Get ALL messages across all branches (for persistence). Visible path only when no branches. */
@@ -364,6 +374,16 @@ export interface CopilotContextValue {
    * null until the first message is sent.
    */
   contextUsage: ContextUsage | null;
+
+  // Skills (for SkillProvider — sends inline skills to server on every request)
+  setInlineSkills: (
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ) => void;
 
   // Config
   threadId?: string;
@@ -411,6 +431,7 @@ export function CopilotProvider({
   mcpServers,
   optimization,
   messageHistory,
+  skills,
 }: CopilotProviderProps) {
   // Debug logger — scoped to "provider" namespace
   const debugLog = useCallback(
@@ -666,6 +687,21 @@ export function CopilotProvider({
     [debugLog],
   );
 
+  const setInlineSkills = useCallback(
+    (
+      skills: Array<{
+        name: string;
+        description: string;
+        content: string;
+        strategy?: string;
+      }>,
+    ): void => {
+      chatRef.current?.setInlineSkills(skills);
+      debugLog("Inline skills updated", { count: skills.length });
+    },
+    [debugLog],
+  );
+
   // ============================================
   // Chat Actions
   // ============================================
@@ -812,6 +848,9 @@ export function CopilotProvider({
       // System Prompt
       setSystemPrompt,
 
+      // Skills
+      setInlineSkills,
+
       // Config
       threadId,
       runtimeUrl,
@@ -847,6 +886,7 @@ export function CopilotProvider({
       contextChars,
       contextUsage,
       setSystemPrompt,
+      setInlineSkills,
       threadId,
       runtimeUrl,
       toolsConfig,
@@ -884,7 +924,11 @@ export function CopilotProvider({
         {messageHistory?.strategy && messageHistory.strategy !== "none" && (
           <MessageHistoryBridge chatRef={chatRef} />
         )}
-        {children}
+        {skills ? (
+          <SkillProvider skills={skills}>{children}</SkillProvider>
+        ) : (
+          children
+        )}
       </CopilotContext.Provider>
     </MessageHistoryContext.Provider>
   );

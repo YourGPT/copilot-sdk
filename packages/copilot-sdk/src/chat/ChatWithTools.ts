@@ -503,6 +503,20 @@ export class ChatWithTools {
     this.chat.setRequestMessageTransform(fn);
   }
 
+  /**
+   * Set inline skills (forwarded to underlying chat instance)
+   */
+  setInlineSkills(
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ): void {
+    this.chat.setInlineSkills(skills);
+  }
+
   // ============================================
   // Tool Registration
   // ============================================
