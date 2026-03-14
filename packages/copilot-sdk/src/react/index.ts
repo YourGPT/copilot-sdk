@@ -240,3 +240,13 @@ export type {
   UseMessageHistoryReturn,
   MessageHistoryContextValue,
 } from "./message-history";
+
+// Context Stats Hook
+export {
+  useContextStats,
+  type ContextStats,
+  type MessageTokenUsage,
+} from "./hooks/useContextStats";
+
+// Re-export ContextUsage for useContextStats consumers
+export type { ContextUsage, ContextUsagePart } from "../core";

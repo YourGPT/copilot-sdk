@@ -96,3 +96,10 @@ export {
   type UseMCPUIIntentsConfig,
   type UseMCPUIIntentsReturn,
 } from "./useMCPUIIntents";
+
+// Context Stats (context window usage, token estimates, tool count)
+export {
+  useContextStats,
+  type ContextStats,
+  type MessageTokenUsage,
+} from "./useContextStats";

@@ -26,6 +26,7 @@ import type {
   MessageAttachment,
   PermissionLevel,
   ToolOptimizationConfig,
+  ContextUsage,
 } from "../../core";
 
 import type { MCPServerConfig } from "../../mcp/types";
@@ -346,6 +347,16 @@ export interface CopilotContextValue {
   // System Prompt
   setSystemPrompt: (prompt: string) => void;
 
+  // Context stats (reactive — updates when useAIContext adds/removes context)
+  /** Total characters currently registered in the AI context tree (system prompt contribution). */
+  contextChars: number;
+  /**
+   * Live prompt context usage snapshot — updated on every message send.
+   * Includes token counts and percentages for systemPrompt, history, toolResults, tools buckets.
+   * null until the first message is sent.
+   */
+  contextUsage: ContextUsage | null;
+
   // Config
   threadId?: string;
   /**
@@ -466,6 +477,9 @@ export function CopilotProvider({
         },
         onApprovalRequired: (execution) => {
           debugLog("Tool approval required:", execution.name);
+        },
+        onContextUsageChange: (usage) => {
+          setContextUsage(usage);
         },
         onError: (error) => {
           if (error) onError?.(error);
@@ -599,6 +613,8 @@ export function CopilotProvider({
 
   const contextTreeRef = useRef<ContextTreeNode[]>([]);
   const contextIdCounter = useRef(0);
+  const [contextChars, setContextChars] = useState(0);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
   const addContext = useCallback(
     (context: string, parentId?: string): string => {
@@ -611,6 +627,7 @@ export function CopilotProvider({
       // Update chat's context
       const contextString = printTree(contextTreeRef.current);
       chatRef.current?.setContext(contextString);
+      setContextChars(contextString.length);
       debugLog("Context added:", id);
       return id;
     },
@@ -623,6 +640,7 @@ export function CopilotProvider({
       // Update chat's context
       const contextString = printTree(contextTreeRef.current);
       chatRef.current?.setContext(contextString);
+      setContextChars(contextString.length);
       debugLog("Context removed:", id);
     },
     [debugLog],
@@ -740,6 +758,8 @@ export function CopilotProvider({
       // AI Context
       addContext,
       removeContext,
+      contextChars,
+      contextUsage,
 
       // System Prompt
       setSystemPrompt,
@@ -771,6 +791,8 @@ export function CopilotProvider({
       registeredActions,
       addContext,
       removeContext,
+      contextChars,
+      contextUsage,
       setSystemPrompt,
       threadId,
       runtimeUrl,
