@@ -146,6 +146,17 @@ export interface Message {
 
   /** When the message was created */
   created_at: Date;
+
+  /**
+   * Parent message ID for branching support.
+   * - null = root message (no parent)
+   * - undefined = legacy linear message (no branch awareness)
+   * - string = ID of parent message
+   */
+  parent_id?: string | null;
+
+  /** Direct children IDs for O(1) sibling lookup */
+  children_ids?: string[];
 }
 
 /**
@@ -195,6 +206,8 @@ export function createMessage(
     tool_call_id: partial.tool_call_id,
     metadata: partial.metadata,
     created_at: partial.created_at ?? new Date(),
+    ...(partial.parent_id !== undefined ? { parent_id: partial.parent_id } : {}),
+    ...(partial.children_ids !== undefined ? { children_ids: partial.children_ids } : {}),
   };
 }
 
@@ -207,6 +220,7 @@ export function createUserMessage(
     id?: string;
     thread_id?: string;
     attachments?: MessageAttachment[];
+    parent_id?: string | null;
   },
 ): Message {
   return createMessage({
@@ -217,6 +231,7 @@ export function createUserMessage(
     metadata: options?.attachments
       ? { attachments: options.attachments }
       : undefined,
+    ...(options?.parent_id !== undefined ? { parent_id: options.parent_id } : {}),
   });
 }
 

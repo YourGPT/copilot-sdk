@@ -170,10 +170,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Send a message
    * Returns false if a request is already in progress
+   *
+   * @param content - Message content
+   * @param attachments - Optional attachments
+   * @param options - Optional branching options
+   * @param options.editMessageId - Edit flow: new message branches from the
+   *   same parent as this message ID, creating a parallel conversation path
    */
   async sendMessage(
     content: string,
     attachments?: MessageAttachment[],
+    options?: {
+      editMessageId?: string;
+    },
   ): Promise<boolean> {
     // Guard: Don't send if already processing
     if (this.isBusy) {
@@ -181,15 +190,34 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       return false;
     }
 
-    this.debug("sendMessage", { content, attachments });
+    this.debug("sendMessage", { content, attachments, options });
 
     try {
       // IMPORTANT: Resolve any pending tool_calls before sending
       // This prevents Anthropic API errors: "tool_use without tool_result"
       this.resolveUnresolvedToolCalls();
 
-      // Create user message
-      const userMessage = createUserMessage(content, attachments) as T;
+      // Edit flow: branch from the same parent as the edited message
+      let newParentId: string | null | undefined;
+      if (options?.editMessageId && this.state.setCurrentLeaf) {
+        const allMessages =
+          this.state.getAllMessages?.() ?? this.state.messages;
+        const target = allMessages.find(
+          (m) => m.id === options.editMessageId,
+        );
+        if (target && target.parentId !== undefined) {
+          newParentId = target.parentId;
+          // Rewind active path to just before the original message
+          this.state.setCurrentLeaf(
+            typeof target.parentId === "string" ? target.parentId : null,
+          );
+        }
+      }
+
+      // Create user message (with optional parentId for branching)
+      const userMessage = createUserMessage(content, attachments, {
+        parentId: newParentId,
+      }) as T;
 
       // Add to state
       this.state.pushMessage(userMessage);
@@ -385,31 +413,51 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
-   * Regenerate last response
+   * Regenerate last response.
+   *
+   * Branch-aware: when the state supports branching (setCurrentLeaf is available),
+   * regenerate creates a new sibling response instead of destroying the original.
+   * The old response is preserved and navigable via switchBranch().
+   *
+   * Legacy fallback: when branching is not available, uses old slice() behavior.
    */
   async regenerate(messageId?: string): Promise<void> {
-    // Remove messages from the specified ID (or last assistant message)
-    const messages = this.state.messages;
-    let targetIndex = messages.length - 1;
+    if (this.isBusy) return;
+
+    const messages = this.state.messages; // visible path
+    let targetMessage: T | undefined;
 
     if (messageId) {
-      targetIndex = messages.findIndex((m) => m.id === messageId);
+      targetMessage = messages.find((m) => m.id === messageId);
     } else {
-      // Find last assistant message
+      // Find last assistant message in the visible path
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "assistant") {
-          targetIndex = i;
+          targetMessage = messages[i];
           break;
         }
       }
     }
 
+    if (!targetMessage) return;
+
+    // Branch-aware regenerate: preserve old response as inactive sibling
+    if (targetMessage.parentId !== undefined && this.state.setCurrentLeaf) {
+      // Rewind active path to target's parent
+      // The new assistant response will be pushed as a new child (sibling)
+      this.state.setCurrentLeaf(targetMessage.parentId ?? null);
+      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.state.status = "submitted";
+      await Promise.resolve();
+      await this.processRequest();
+      return;
+    }
+
+    // Legacy fallback: old slice() behavior for non-tree-aware state
+    const targetIndex = messages.indexOf(targetMessage);
     if (targetIndex > 0) {
-      // Remove from target onwards
       this.state.setMessages(messages.slice(0, targetIndex));
       this.callbacks.onMessagesChange?.(this.state.messages);
-
-      // Resend
       await this.processRequest();
     }
   }

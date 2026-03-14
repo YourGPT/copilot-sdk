@@ -22,6 +22,8 @@ import type {
 import type { ToolDefinition, ToolRenderProps } from "../../../../core";
 import CopilotSDKLogo from "../../icons/copilot-sdk-logo";
 import { SourceGroup, type SourceItem } from "../../ui/source";
+import { BranchNavigator } from "../../ui/branch-navigator";
+import type { BranchInfo } from "../../../../chat/branching";
 
 type DefaultMessageProps = {
   message: ChatMessage;
@@ -87,6 +89,26 @@ type DefaultMessageProps = {
   followUpButtonClassName?: string;
   /** Citation/Sources configuration */
   citations?: CitationConfig;
+
+  // ============================================
+  // Branching
+  // ============================================
+
+  /**
+   * Branch navigation info for this message.
+   * When non-null and totalSiblings > 1, the BranchNavigator is shown.
+   */
+  branchInfo?: BranchInfo | null;
+  /**
+   * Called when the user navigates to a sibling branch.
+   * Receives the message ID to switch to.
+   */
+  onSwitchBranch?: (messageId: string) => void;
+  /**
+   * Called when the user submits an edited message.
+   * Triggers a new branch from the same parent as messageId.
+   */
+  onEditMessage?: (messageId: string, newContent: string) => void;
 };
 
 export function DefaultMessage({
@@ -112,12 +134,56 @@ export function DefaultMessage({
   followUpClassName,
   followUpButtonClassName,
   citations = { enabled: true },
+  branchInfo,
+  onSwitchBranch,
+  onEditMessage,
 }: DefaultMessageProps) {
   const isUser = message.role === "user";
   const isCompactionMarker =
     message.role === "system" &&
     (message.metadata as Record<string, unknown>)?.type === "compaction-marker";
   const isStreaming = isLastMessage && isLoading;
+
+  // Inline-edit state (user messages only)
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editValue, setEditValue] = React.useState(message.content ?? "");
+  const editRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const startEdit = React.useCallback(() => {
+    setEditValue(message.content ?? "");
+    setIsEditing(true);
+    // Focus textarea on next frame
+    requestAnimationFrame(() => editRef.current?.focus());
+  }, [message.content]);
+
+  const cancelEdit = React.useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
+  const submitEdit = React.useCallback(() => {
+    const trimmed = editValue.trim();
+    if (!trimmed || !onEditMessage) return;
+    onEditMessage(message.id, trimmed);
+    setIsEditing(false);
+  }, [editValue, message.id, onEditMessage]);
+
+  const handleEditKeyDown = React.useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitEdit();
+      }
+      if (e.key === "Escape") {
+        cancelEdit();
+      }
+    },
+    [submitEdit, cancelEdit],
+  );
+
+  // Whether branching UI should be shown for this message
+  const showBranchNav =
+    isUser && branchInfo && branchInfo.totalSiblings > 1 && onSwitchBranch;
+  const showEditBtn = isUser && !!onEditMessage && !isLoading;
 
   // Render compaction marker divider
   if (isCompactionMarker) {
@@ -276,32 +342,118 @@ export function DefaultMessage({
 
     return (
       <Message
-        className={cn(
-          "flex gap-2",
-          showUserAvatar ? "justify-end" : "justify-end",
-        )}
+        className={cn("flex gap-2 group/user-msg justify-end")}
       >
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
-          {/* Text content */}
-          {message.content && (
-            <MessageContent
-              className={cn(
-                "csdk-message-user rounded-lg px-4 py-2 bg-primary text-primary-foreground",
-                userMessageClassName,
-              )}
-              markdown
-              size={size}
-            >
-              {message.content}
-            </MessageContent>
-          )}
-          {/* Image Attachments */}
-          {hasAttachments && (
-            <div className="mt-2 flex flex-wrap gap-2 justify-end">
-              {message.attachments!.map((attachment, index) => (
-                <AttachmentPreview key={index} attachment={attachment} />
-              ))}
+          {/* Edit mode: inline textarea */}
+          {isEditing ? (
+            <div className="flex flex-col gap-1.5 w-full min-w-[200px]">
+              <textarea
+                ref={editRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                rows={Math.max(2, (editValue.match(/\n/g) || []).length + 1)}
+                className={cn(
+                  "csdk-edit-textarea w-full rounded-lg px-3 py-2 text-sm resize-none",
+                  "bg-primary text-primary-foreground placeholder:text-primary-foreground/50",
+                  "focus:outline-none focus:ring-2 focus:ring-primary-foreground/30",
+                  userMessageClassName,
+                )}
+              />
+              <div className="flex gap-1.5 justify-end">
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="csdk-edit-cancel px-3 py-1 text-xs rounded-md bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitEdit}
+                  disabled={!editValue.trim()}
+                  className="csdk-edit-submit px-3 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  Send
+                </button>
+              </div>
             </div>
+          ) : (
+            <>
+              {/* Text content */}
+              {message.content && (
+                <div className="relative">
+                  <MessageContent
+                    className={cn(
+                      "csdk-message-user rounded-lg px-4 py-2 bg-primary text-primary-foreground",
+                      userMessageClassName,
+                    )}
+                    markdown
+                    size={size}
+                  >
+                    {message.content}
+                  </MessageContent>
+                  {/* Edit button — hover reveal */}
+                  {showEditBtn && (
+                    <button
+                      type="button"
+                      onClick={startEdit}
+                      aria-label="Edit message"
+                      className={cn(
+                        "csdk-edit-btn absolute -left-7 top-1/2 -translate-y-1/2",
+                        "size-6 flex items-center justify-center rounded-full",
+                        "text-muted-foreground bg-background border border-border shadow-sm",
+                        "opacity-0 group-hover/user-msg:opacity-100 transition-opacity",
+                        "hover:text-foreground hover:bg-muted",
+                      )}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              )}
+              {/* Image Attachments */}
+              {hasAttachments && (
+                <div className="mt-2 flex flex-wrap gap-2 justify-end">
+                  {message.attachments!.map((attachment, index) => (
+                    <AttachmentPreview key={index} attachment={attachment} />
+                  ))}
+                </div>
+              )}
+              {/* Branch Navigator */}
+              {showBranchNav && (
+                <BranchNavigator
+                  siblingIndex={branchInfo!.siblingIndex}
+                  totalSiblings={branchInfo!.totalSiblings}
+                  hasPrevious={branchInfo!.hasPrevious}
+                  hasNext={branchInfo!.hasNext}
+                  onPrevious={() =>
+                    onSwitchBranch!(
+                      branchInfo!.siblingIds[branchInfo!.siblingIndex - 1],
+                    )
+                  }
+                  onNext={() =>
+                    onSwitchBranch!(
+                      branchInfo!.siblingIds[branchInfo!.siblingIndex + 1],
+                    )
+                  }
+                  className="mt-1"
+                />
+              )}
+            </>
           )}
         </div>
         {showUserAvatar && (

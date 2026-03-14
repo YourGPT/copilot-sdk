@@ -375,10 +375,14 @@ export class ChatWithTools {
   /**
    * Send a message
    * Returns false if a request is already in progress
+   *
+   * @param options.editMessageId - Edit flow: new message branches from the
+   *   same parent as this message ID
    */
   async sendMessage(
     content: string,
     attachments?: MessageAttachment[],
+    options?: { editMessageId?: string },
   ): Promise<boolean> {
     // Guard: Don't send if already processing
     if (this.isLoading) {
@@ -388,7 +392,7 @@ export class ChatWithTools {
 
     // Reset iteration counter so user can continue after max iterations
     this.agentLoop.resetIterations();
-    return await this.chat.sendMessage(content, attachments);
+    return await this.chat.sendMessage(content, attachments, options);
   }
 
   /**

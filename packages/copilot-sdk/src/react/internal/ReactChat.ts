@@ -16,6 +16,7 @@ import {
   type ChatEventHandler,
 } from "../../chat";
 import { ReactChatState } from "./ReactChatState";
+import type { BranchInfo } from "../../chat/branching";
 
 /**
  * Chat status for UI state
@@ -130,6 +131,39 @@ export class ReactChat extends AbstractChat<UIMessage> {
    */
   onError(handler: ChatEventHandler<"error">): () => void {
     return this.on("error", handler);
+  }
+
+  // ============================================
+  // Branching API — pass-throughs to ReactChatState
+  // ============================================
+
+  /**
+   * Navigate to a sibling branch (makes it the active path).
+   */
+  switchBranch(messageId: string): void {
+    this.reactState.switchBranch(messageId);
+  }
+
+  /**
+   * Get branch navigation info for a message.
+   * Returns null if the message has no siblings.
+   */
+  getBranchInfo(messageId: string): BranchInfo | null {
+    return this.reactState.getBranchInfo(messageId);
+  }
+
+  /**
+   * Get all messages across all branches (for persistence).
+   */
+  getAllMessages(): UIMessage[] {
+    return this.reactState.getAllMessages();
+  }
+
+  /**
+   * Whether any message has siblings (branching has occurred).
+   */
+  get hasBranches(): boolean {
+    return this.reactState.hasBranches;
   }
 
   // ============================================

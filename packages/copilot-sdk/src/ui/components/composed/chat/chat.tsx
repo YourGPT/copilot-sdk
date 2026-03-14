@@ -547,6 +547,10 @@ function ChatComponent({
   currentThreadId,
   onSwitchThread,
   isThreadBusy,
+  // Branching
+  getBranchInfo,
+  onSwitchBranch,
+  onEditMessage,
 }: ChatProps) {
   // Merge avatar props with defaults (so user can pass partial config)
   const userAvatar = { fallback: "U", ...userAvatarProp };
@@ -1038,6 +1042,13 @@ function ChatComponent({
                         citations={
                           citations === false ? { enabled: false } : citations
                         }
+                        branchInfo={
+                          message.role === "user"
+                            ? getBranchInfo?.(message.id) ?? null
+                            : null
+                        }
+                        onSwitchBranch={onSwitchBranch}
+                        onEditMessage={onEditMessage}
                       />
                     );
                   })}

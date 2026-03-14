@@ -1,16 +1,19 @@
 /**
  * ReactChatState - React-specific implementation of ChatState
  *
- * This class implements the ChatState interface with callback-based
- * reactivity for use with React's useSyncExternalStore.
+ * Backed by MessageTree for conversation branching support.
+ * The `messages` getter returns only the visible path (active branch).
+ * Use `getAllMessages()` for full persistence.
  *
  * Pattern inspired by Vercel AI SDK's useSyncExternalStore pattern.
  */
 
 import type { ChatState, UIMessage, ChatStatus } from "../../chat";
+import { MessageTree, type BranchInfo } from "../../chat/branching";
 
 /**
  * ReactChatState implements ChatState with callback-based reactivity
+ * and full conversation branching support via MessageTree.
  *
  * @example
  * ```tsx
@@ -21,14 +24,17 @@ import type { ChatState, UIMessage, ChatStatus } from "../../chat";
  *   console.log('State changed');
  * });
  *
- * // Get snapshot (for useSyncExternalStore)
+ * // Get visible path (active branch only)
  * const messages = state.messages;
+ *
+ * // Get all messages across branches (for persistence)
+ * const all = state.getAllMessages();
  * ```
  */
 export class ReactChatState<
   T extends UIMessage = UIMessage,
 > implements ChatState<T> {
-  private _messages: T[] = [];
+  private tree: MessageTree<T>;
   private _status: ChatStatus = "ready";
   private _error: Error | undefined = undefined;
 
@@ -36,17 +42,21 @@ export class ReactChatState<
   private subscribers = new Set<() => void>();
 
   constructor(initialMessages?: T[]) {
-    if (initialMessages) {
-      this._messages = initialMessages;
-    }
+    this.tree = new MessageTree<T>(initialMessages);
   }
 
   // ============================================
-  // Getters
+  // Getters — visible path only
   // ============================================
 
+  /**
+   * Returns the VISIBLE PATH (active branch) — what the UI renders
+   * and what gets sent to the API.
+   *
+   * For all messages across all branches, use getAllMessages().
+   */
   get messages(): T[] {
-    return this._messages;
+    return this.tree.getVisibleMessages();
   }
 
   get status(): ChatStatus {
@@ -62,7 +72,7 @@ export class ReactChatState<
   // ============================================
 
   set messages(value: T[]) {
-    this._messages = value;
+    this.tree.reset(value);
     this.notify();
   }
 
@@ -81,51 +91,102 @@ export class ReactChatState<
   // ============================================
 
   pushMessage(message: T): void {
-    this._messages = [...this._messages, message];
+    this.tree.addMessage(message);
     this.notify();
   }
 
   popMessage(): void {
-    this._messages = this._messages.slice(0, -1);
+    // Remove current leaf from tree
+    const leafId = this.tree.currentLeafId;
+    if (!leafId) return;
+
+    const allMessages = this.tree.getAllMessages().filter((m) => m.id !== leafId);
+    // Walk up to the parent to set it as new leaf
+    const leaf = this.tree.getAllMessages().find((m) => m.id === leafId);
+    const newLeafId =
+      leaf && leaf.parentId !== undefined && leaf.parentId !== null
+        ? leaf.parentId
+        : null;
+
+    this.tree.reset(allMessages);
+    if (newLeafId) {
+      this.tree.setCurrentLeaf(newLeafId);
+    }
     this.notify();
   }
 
   replaceMessage(index: number, message: T): void {
-    this._messages = this._messages.map((m, i) => (i === index ? message : m));
+    // replaceMessage operates on the visible path
+    const visible = this.tree.getVisibleMessages();
+    const target = visible[index];
+    if (!target) return;
+    this.tree.updateMessage(target.id, () => message);
     this.notify();
   }
 
   updateLastMessage(updater: (message: T) => T): void {
-    if (this._messages.length === 0) return;
-
-    const lastIndex = this._messages.length - 1;
-    const lastMessage = this._messages[lastIndex];
-    this._messages = [
-      ...this._messages.slice(0, lastIndex),
-      updater(lastMessage),
-    ];
+    const leafId = this.tree.currentLeafId;
+    if (!leafId) return;
+    this.tree.updateMessage(leafId, updater);
     this.notify();
   }
 
   updateMessageById(id: string, updater: (message: T) => T): boolean {
-    const index = this._messages.findIndex((m) => m.id === id);
-    if (index === -1) return false;
-
-    this._messages = this._messages.map((m, i) =>
-      i === index ? updater(m) : m,
-    );
-    this.notify();
-    return true;
+    const updated = this.tree.updateMessage(id, updater);
+    if (updated) this.notify();
+    return updated;
   }
 
   setMessages(messages: T[]): void {
-    this._messages = messages;
+    this.tree.reset(messages);
     this.notify();
   }
 
   clearMessages(): void {
-    this._messages = [];
+    this.tree.reset([]);
     this.notify();
+  }
+
+  // ============================================
+  // Branching API
+  // ============================================
+
+  /**
+   * Returns ALL messages across all branches.
+   * Use this for persistence (ThreadManager save).
+   */
+  getAllMessages(): T[] {
+    return this.tree.getAllMessages();
+  }
+
+  /**
+   * Get branch navigation info for a message.
+   * Returns null if the message has no siblings.
+   */
+  getBranchInfo(messageId: string): BranchInfo | null {
+    return this.tree.getBranchInfo(messageId);
+  }
+
+  /**
+   * Navigate to a sibling branch.
+   * Triggers re-render via notify().
+   */
+  switchBranch(messageId: string): void {
+    this.tree.switchBranch(messageId);
+    this.notify();
+  }
+
+  /**
+   * Set the current leaf (used by regenerate() to rewind active path).
+   * Triggers re-render via notify().
+   */
+  setCurrentLeaf(leafId: string | null): void {
+    this.tree.setCurrentLeaf(leafId);
+    this.notify();
+  }
+
+  get hasBranches(): boolean {
+    return this.tree.hasBranches;
   }
 
   // ============================================

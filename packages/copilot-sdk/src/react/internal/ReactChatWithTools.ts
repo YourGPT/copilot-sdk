@@ -12,6 +12,7 @@ import {
   type ToolExecution,
 } from "../../chat";
 import { ReactChatState } from "./ReactChatState";
+import type { BranchInfo } from "../../chat/branching";
 
 /**
  * React-specific configuration
@@ -59,6 +60,38 @@ export class ReactChatWithTools extends ChatWithTools {
   subscribe = (callback: () => void): (() => void) => {
     return this.reactState.subscribe(callback);
   };
+
+  // ============================================
+  // Branching API — pass-throughs to ReactChatState
+  // ============================================
+
+  /**
+   * Navigate to a sibling branch.
+   */
+  switchBranch(messageId: string): void {
+    this.reactState.switchBranch(messageId);
+  }
+
+  /**
+   * Get branch navigation info for a message.
+   */
+  getBranchInfo(messageId: string): BranchInfo | null {
+    return this.reactState.getBranchInfo(messageId);
+  }
+
+  /**
+   * Get all messages across all branches (for persistence).
+   */
+  getAllMessages(): UIMessage[] {
+    return this.reactState.getAllMessages();
+  }
+
+  /**
+   * Whether any message has siblings (branching has occurred).
+   */
+  get hasBranches(): boolean {
+    return this.reactState.hasBranches;
+  }
 
   /**
    * Dispose and cleanup

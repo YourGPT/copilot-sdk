@@ -17,6 +17,7 @@ import {
 import { ReactChat, createReactChat, type ReactChatConfig } from "./ReactChat";
 import type { UIMessage, ChatStatus } from "../../chat";
 import type { MessageAttachment } from "../../core";
+import type { BranchInfo } from "../../chat/branching";
 
 /**
  * Hook configuration
@@ -36,7 +37,7 @@ export interface UseChatConfig extends Omit<ReactChatConfig, "callbacks"> {
  * Hook return type
  */
 export interface UseChatReturn {
-  /** All messages */
+  /** All messages (visible path — active branch only) */
   messages: UIMessage[];
   /** Current status */
   status: ChatStatus;
@@ -59,7 +60,7 @@ export interface UseChatReturn {
   clearMessages: () => void;
   /** Set messages directly */
   setMessages: (messages: UIMessage[]) => void;
-  /** Regenerate last response */
+  /** Regenerate last response (branch-aware: preserves original as sibling) */
   regenerate: (messageId?: string) => Promise<void>;
   /** Continue with tool results */
   continueWithToolResults: (
@@ -67,6 +68,35 @@ export interface UseChatReturn {
   ) => Promise<void>;
   /** Reference to the ReactChat instance */
   chatRef: React.RefObject<ReactChat | null>;
+
+  // ============================================
+  // Branching API
+  // ============================================
+
+  /**
+   * Navigate to a sibling branch (← / → navigation).
+   * Only populated when chat is branch-aware.
+   */
+  switchBranch?: (messageId: string) => void;
+
+  /**
+   * Get branch navigation info for a message.
+   * Returns null if the message has no siblings.
+   * Only populated when chat is branch-aware.
+   */
+  getBranchInfo?: (messageId: string) => BranchInfo | null;
+
+  /**
+   * Edit a user message: sends newContent as a new branch from the same
+   * parent as the original message. Preserves the original message in place.
+   * Only populated when chat is branch-aware.
+   */
+  editMessage?: (messageId: string, newContent: string) => Promise<void>;
+
+  /**
+   * Whether any message has siblings (branching has occurred).
+   */
+  hasBranches?: boolean;
 }
 
 /**
@@ -140,6 +170,12 @@ export function useChat(config: UseChatConfig): UseChatReturn {
     () => undefined, // Server snapshot
   );
 
+  const hasBranches = useSyncExternalStore(
+    chatRef.current.subscribe,
+    () => chatRef.current!.hasBranches,
+    () => false,
+  );
+
   // Derived state
   const isLoading = status === "streaming" || status === "submitted";
 
@@ -175,6 +211,28 @@ export function useChat(config: UseChatConfig): UseChatReturn {
     [],
   );
 
+  // Branching actions
+  const switchBranch = useCallback((messageId: string) => {
+    chatRef.current?.switchBranch(messageId);
+  }, []);
+
+  const getBranchInfo = useCallback(
+    (messageId: string): BranchInfo | null => {
+      return chatRef.current?.getBranchInfo(messageId) ?? null;
+    },
+    [],
+  );
+
+  const editMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      await chatRef.current?.sendMessage(newContent, undefined, {
+        editMessageId: messageId,
+      });
+      setInput("");
+    },
+    [],
+  );
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -196,5 +254,10 @@ export function useChat(config: UseChatConfig): UseChatReturn {
     regenerate,
     continueWithToolResults,
     chatRef,
+    // Branching
+    switchBranch,
+    getBranchInfo,
+    editMessage,
+    hasBranches,
   };
 }

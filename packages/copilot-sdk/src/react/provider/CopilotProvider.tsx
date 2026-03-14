@@ -318,6 +318,12 @@ export interface CopilotContextValue {
   setMessages: (messages: UIMessage[]) => void;
   regenerate: (messageId?: string) => Promise<void>;
 
+  // Branching actions
+  switchBranch: (messageId: string) => void;
+  getBranchInfo: (messageId: string) => import("../../chat/branching").BranchInfo | null;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
+  hasBranches: boolean;
+
   // Tool execution
   registerTool: (tool: ToolDefinition) => void;
   unregisterTool: (name: string) => void;
@@ -686,6 +692,30 @@ export function CopilotProvider({
     await chatRef.current?.regenerate(messageId);
   }, []);
 
+  const switchBranch = useCallback((messageId: string) => {
+    chatRef.current?.switchBranch(messageId);
+  }, []);
+
+  const getBranchInfo = useCallback(
+    (messageId: string) => chatRef.current?.getBranchInfo(messageId) ?? null,
+    [],
+  );
+
+  const editMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      await chatRef.current?.sendMessage(newContent, undefined, {
+        editMessageId: messageId,
+      });
+    },
+    [],
+  );
+
+  const hasBranches = useSyncExternalStore(
+    chatRef.current.subscribe,
+    () => chatRef.current!.hasBranches,
+    () => false,
+  );
+
   // ============================================
   // Callbacks
   // ============================================
@@ -741,6 +771,12 @@ export function CopilotProvider({
       setMessages,
       regenerate,
 
+      // Branching
+      switchBranch,
+      getBranchInfo,
+      editMessage,
+      hasBranches,
+
       // Tool execution
       registerTool,
       unregisterTool,
@@ -779,6 +815,10 @@ export function CopilotProvider({
       clearMessages,
       setMessages,
       regenerate,
+      switchBranch,
+      getBranchInfo,
+      editMessage,
+      hasBranches,
       registerTool,
       unregisterTool,
       registeredTools,

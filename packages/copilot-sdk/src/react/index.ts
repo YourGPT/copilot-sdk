@@ -250,3 +250,6 @@ export {
 
 // Re-export ContextUsage for useContextStats consumers
 export type { ContextUsage, ContextUsagePart } from "../core";
+
+// Branching
+export { MessageTree, type BranchInfo } from "../chat/branching";

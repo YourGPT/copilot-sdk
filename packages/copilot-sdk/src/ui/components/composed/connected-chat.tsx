@@ -324,6 +324,9 @@ function CopilotChatBase(
     approveToolExecution,
     rejectToolExecution,
     registeredTools,
+    switchBranch,
+    getBranchInfo,
+    editMessage,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -630,6 +633,10 @@ function CopilotChatBase(
       currentThreadId={threadManager.currentThreadId}
       onSwitchThread={isPersistenceEnabled ? handleSwitchThread : undefined}
       isThreadBusy={isBusy}
+      // Branching (auto-wired from context)
+      getBranchInfo={getBranchInfo}
+      onSwitchBranch={switchBranch}
+      onEditMessage={editMessage}
     >
       {children}
     </Chat>

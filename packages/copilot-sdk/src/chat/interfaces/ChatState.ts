@@ -6,6 +6,7 @@
  */
 
 import type { UIMessage, ChatStatus } from "../types/index";
+import type { BranchInfo } from "../branching";
 
 /**
  * ChatState interface - Framework adapters implement this
@@ -128,6 +129,39 @@ export interface ChatState<T extends UIMessage = UIMessage> {
    * Get error snapshot
    */
   getErrorSnapshot?(): Error | undefined;
+
+  // ============================================
+  // Branching Extensions (optional — only ReactChatState implements these)
+  // ============================================
+
+  /**
+   * Set the current leaf message ID.
+   * Used by regenerate() to rewind the active path before pushing a new response.
+   */
+  setCurrentLeaf?(leafId: string | null): void;
+
+  /**
+   * Get all messages across all branches (for persistence).
+   * The base messages getter returns only the visible path.
+   */
+  getAllMessages?(): T[];
+
+  /**
+   * Get branch navigation info for a message.
+   * Returns null if the message has no siblings.
+   */
+  getBranchInfo?(messageId: string): BranchInfo | null;
+
+  /**
+   * Navigate to a specific message variant (sibling branch).
+   * Updates the active path to go through messageId.
+   */
+  switchBranch?(messageId: string): void;
+
+  /**
+   * Whether any message has siblings (branching has occurred).
+   */
+  readonly hasBranches?: boolean;
 }
 
 /**

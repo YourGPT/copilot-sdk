@@ -3,6 +3,7 @@ import type { ToolExecutionData, ToolApprovalStatus } from "../tools";
 import type { PermissionLevel } from "../../ui/permission-confirmation";
 import type { ToolDefinition } from "../../../../core";
 import type { Thread } from "../../../../core/types/thread";
+import type { BranchInfo } from "../../../../chat/branching";
 
 // ============================================
 // Citation Configuration
@@ -70,6 +71,14 @@ export type ChatMessage = {
   }>;
   /** Additional metadata (citations, etc.) */
   metadata?: Record<string, unknown>;
+  /**
+   * Parent message ID for branching support.
+   * - null = root message (no parent)
+   * - undefined = legacy linear message (no branch awareness)
+   */
+  parent_id?: string | null;
+  /** Direct children IDs for O(1) sibling lookup */
+  children_ids?: string[];
 };
 
 export type { ToolApprovalStatus, PermissionLevel };
@@ -482,4 +491,23 @@ export type ChatProps = {
   onSwitchThread?: (threadId: string) => void;
   /** Whether a thread operation is in progress (disables controls) */
   isThreadBusy?: boolean;
+
+  // === Branching (conversation variants) ===
+  /**
+   * Returns branch navigation info for a message ID.
+   * Provide this to enable the ← N/M → navigator below edited user messages.
+   * Wire from `useChat().getBranchInfo` or `useCopilot().actions.getBranchInfo`.
+   */
+  getBranchInfo?: (messageId: string) => BranchInfo | null;
+  /**
+   * Called when the user clicks ← or → in the branch navigator.
+   * Wire from `useChat().switchBranch` or `useCopilot().actions.switchBranch`.
+   */
+  onSwitchBranch?: (messageId: string) => void;
+  /**
+   * Called when the user submits an edit to a user message.
+   * Creates a new branch from the same parent as the original message.
+   * Wire from `useChat().editMessage` or `useCopilot().actions.editMessage`.
+   */
+  onEditMessage?: (messageId: string, newContent: string) => void;
 };

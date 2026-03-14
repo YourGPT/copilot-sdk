@@ -159,6 +159,12 @@ export {
   type FollowUpProps,
 } from "./components/ui/follow-up";
 
+// Branch navigator (← N/M → variant navigation for branched conversations)
+export {
+  BranchNavigator,
+  type BranchNavigatorProps,
+} from "./components/ui/branch-navigator";
+
 // DevLogger (Development debugging tool)
 export {
   DevLogger,

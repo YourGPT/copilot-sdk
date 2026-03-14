@@ -19,6 +19,7 @@ import type {
   ToolPermission,
 } from "../../core";
 import type { ContextTreeNode } from "../utils/context-tree";
+import type { BranchInfo } from "../../chat/branching";
 
 /**
  * Chat UI state interface (UI-only state, not message data)
@@ -96,7 +97,7 @@ export interface ChatActions {
   stopGeneration: () => void;
   /** Clear all messages */
   clearMessages: () => void;
-  /** Regenerate last response */
+  /** Regenerate last response (branch-aware: preserves original as sibling) */
   regenerate: (messageId?: string) => Promise<void>;
   /** Set messages directly */
   setMessages: (messages: Message[]) => void;
@@ -106,6 +107,22 @@ export interface ChatActions {
    * - Free: converts to base64
    */
   processAttachment: (file: File) => Promise<MessageAttachment>;
+
+  // ============================================
+  // Branching Actions
+  // ============================================
+
+  /** Navigate to a sibling branch (← / → navigation) */
+  switchBranch: (messageId: string) => void;
+  /** Get branch navigation info for a message */
+  getBranchInfo: (messageId: string) => BranchInfo | null;
+  /**
+   * Edit a user message: sends newContent as a new branch from the same
+   * parent as the original message. Preserves the original in place.
+   */
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
+  /** Whether any message has siblings (branching has occurred) */
+  hasBranches: boolean;
 }
 
 /**
