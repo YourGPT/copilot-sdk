@@ -41,6 +41,8 @@ export class MessageTree<T extends UIMessage = UIMessage> {
   private activeChildMap: Map<string, string> = new Map();
   /** Current leaf message ID (tip of the active path) */
   private _currentLeafId: string | null = null;
+  /** Cached visible messages — invalidated on every mutation */
+  private _visibleCache: T[] | null = null;
 
   /** Sentinel key used for root-level messages (parentId === null) */
   static readonly ROOT_KEY = "__root__";
@@ -140,17 +142,26 @@ export class MessageTree<T extends UIMessage = UIMessage> {
    * falls back to insertion order (legacy linear mode).
    */
   getVisibleMessages(): T[] {
-    if (this.nodeMap.size === 0) return [];
+    if (this._visibleCache !== null) return this._visibleCache;
+
+    if (this.nodeMap.size === 0) {
+      this._visibleCache = [];
+      return this._visibleCache;
+    }
 
     // Legacy linear fallback: no parentId on any message
     const hasTreeStructure = Array.from(this.nodeMap.values()).some(
       (m) => m.parentId !== undefined,
     );
-    if (!hasTreeStructure) {
-      return Array.from(this.nodeMap.values());
-    }
+    this._visibleCache = hasTreeStructure
+      ? this._getActivePath().map((id) => this.nodeMap.get(id)!)
+      : Array.from(this.nodeMap.values());
 
-    return this._getActivePath().map((id) => this.nodeMap.get(id)!);
+    return this._visibleCache;
+  }
+
+  private _invalidateCache(): void {
+    this._visibleCache = null;
   }
 
   /**
@@ -221,6 +232,7 @@ export class MessageTree<T extends UIMessage = UIMessage> {
 
     // Update current leaf (walk forward from this message)
     this._currentLeafId = this._walkToLeaf(message.id);
+    this._invalidateCache();
 
     return message;
   }
@@ -236,6 +248,7 @@ export class MessageTree<T extends UIMessage = UIMessage> {
     const parentKey = this._parentKey(msg.parentId);
     this.activeChildMap.set(parentKey, messageId);
     this._currentLeafId = this._walkToLeaf(messageId);
+    this._invalidateCache();
   }
 
   /**
@@ -246,6 +259,7 @@ export class MessageTree<T extends UIMessage = UIMessage> {
     const existing = this.nodeMap.get(id);
     if (!existing) return false;
     this.nodeMap.set(id, updater(existing));
+    this._invalidateCache();
     return true;
   }
 
@@ -270,6 +284,7 @@ export class MessageTree<T extends UIMessage = UIMessage> {
       if (current.parentId == null || current.parentId === undefined) break;
       current = this.nodeMap.get(current.parentId);
     }
+    this._invalidateCache();
   }
 
   /**
@@ -281,6 +296,7 @@ export class MessageTree<T extends UIMessage = UIMessage> {
     this.childrenOf.clear();
     this.activeChildMap.clear();
     this._currentLeafId = null;
+    this._invalidateCache();
 
     if (messages.length > 0) {
       this._buildFromMessages(messages);
