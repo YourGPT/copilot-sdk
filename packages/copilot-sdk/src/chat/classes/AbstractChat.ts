@@ -197,14 +197,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // This prevents Anthropic API errors: "tool_use without tool_result"
       this.resolveUnresolvedToolCalls();
 
-      // Edit flow: branch from the same parent as the edited message
+      // Determine parentId for the new user message
       let newParentId: string | null | undefined;
+      const visibleMessages = this.state.messages;
+
       if (options?.editMessageId && this.state.setCurrentLeaf) {
+        // Edit flow: branch from the same parent as the edited message
         const allMessages =
           this.state.getAllMessages?.() ?? this.state.messages;
-        const target = allMessages.find(
-          (m) => m.id === options.editMessageId,
-        );
+        const target = allMessages.find((m) => m.id === options.editMessageId);
         if (target && target.parentId !== undefined) {
           newParentId = target.parentId;
           // Rewind active path to just before the original message
@@ -212,9 +213,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             typeof target.parentId === "string" ? target.parentId : null,
           );
         }
+      } else if (visibleMessages.length > 0) {
+        // Normal follow-up: new message is a child of the current leaf
+        newParentId = visibleMessages[visibleMessages.length - 1].id;
       }
 
-      // Create user message (with optional parentId for branching)
+      // Create user message with parentId for correct tree placement
       const userMessage = createUserMessage(content, attachments, {
         parentId: newParentId,
       }) as T;
@@ -431,9 +435,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       targetMessage = messages.find((m) => m.id === messageId);
       // Not on visible path — check inactive branches too
       if (!targetMessage) {
-        targetMessage = this.state.getAllMessages?.().find(
-          (m) => m.id === messageId,
-        );
+        targetMessage = this.state
+          .getAllMessages?.()
+          .find((m) => m.id === messageId);
       }
     } else {
       // Find last assistant message in the visible path
@@ -531,7 +535,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     // tool execution and the continuation stream starting).
     let preCreatedMessageId: string | undefined;
     if (this.config.streaming !== false) {
-      const preMsg = createEmptyAssistantMessage() as T;
+      // Use the current leaf (last visible message) as parent so the assistant
+      // message is correctly placed as a child in the branch tree.
+      const visibleMessages = this.state.messages;
+      const currentLeafId =
+        visibleMessages.length > 0
+          ? visibleMessages[visibleMessages.length - 1].id
+          : undefined;
+      const preMsg = createEmptyAssistantMessage(undefined, {
+        parentId: currentLeafId,
+      }) as T;
       this.state.pushMessage(preMsg);
       this.callbacks.onMessagesChange?.(this._allMessages());
       preCreatedMessageId = preMsg.id;
@@ -544,10 +557,28 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     if (this.isAsyncIterable(response)) {
       await this.handleStreamResponse(response, preCreatedMessageId);
     } else {
-      // Non-streaming: remove the pre-pushed placeholder (not needed)
+      // Non-streaming: remove the pre-pushed placeholder (not needed).
+      // Use getAllMessages() so inactive branch messages are preserved when
+      // tree.reset() is called — this.state.messages only returns visible path.
+      // Also capture + restore the intended active path: tree.reset() rebuilds
+      // activeChildMap using "last child at each fork", which would snap back to
+      // the wrong branch if we're mid-edit on an inactive branch.
       if (preCreatedMessageId) {
         const id = preCreatedMessageId;
-        this.state.setMessages(this.state.messages.filter((m) => m.id !== id));
+        // The placeholder is the last visible message; the one before it is the
+        // intended leaf after removal.
+        const visibleMsgs = this.state.messages;
+        const placeholderIdx = visibleMsgs.findIndex((m) => m.id === id);
+        const intendedLeafId =
+          placeholderIdx > 0 ? visibleMsgs[placeholderIdx - 1].id : null;
+
+        const allMsgs = this.state.getAllMessages?.() ?? this.state.messages;
+        this.state.setMessages(allMsgs.filter((m) => m.id !== id));
+
+        // Restore the correct active branch after tree.reset()
+        if (intendedLeafId && this.state.setCurrentLeaf) {
+          this.state.setCurrentLeaf(intendedLeafId);
+        }
       }
       this.handleJsonResponse(response);
     }
@@ -786,7 +817,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
         this.state.updateMessageById(
           this.streamState.messageId,
-          () => turnMessage,
+          (existing) => ({
+            ...turnMessage,
+            ...(existing.parentId !== undefined
+              ? { parentId: existing.parentId }
+              : {}),
+            ...(existing.childrenIds !== undefined
+              ? { childrenIds: existing.childrenIds }
+              : {}),
+          }),
         );
         this.callbacks.onMessageFinish?.(turnMessage);
 
@@ -971,7 +1010,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       const updatedMessage = streamStateToMessage(this.streamState) as T;
       this.state.updateMessageById(
         this.streamState.messageId,
-        () => updatedMessage,
+        // Preserve parentId/childrenIds from the existing placeholder so the
+        // branch tree structure (activeChildMap) is not corrupted when
+        // setCurrentLeaf() walks up the chain later.
+        (existing) => ({
+          ...updatedMessage,
+          ...(existing.parentId !== undefined
+            ? { parentId: existing.parentId }
+            : {}),
+          ...(existing.childrenIds !== undefined
+            ? { childrenIds: existing.childrenIds }
+            : {}),
+        }),
       );
 
       // Notify delta callback
@@ -1178,10 +1228,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           };
       }
 
-      this.state.updateMessageById(
-        this.streamState.messageId,
-        () => finalMessage,
-      );
+      this.state.updateMessageById(this.streamState.messageId, (existing) => ({
+        ...finalMessage,
+        ...(existing.parentId !== undefined
+          ? { parentId: existing.parentId }
+          : {}),
+        ...(existing.childrenIds !== undefined
+          ? { childrenIds: existing.childrenIds }
+          : {}),
+      }));
 
       // Check if we got any content
       if (
@@ -1230,6 +1285,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     }
 
     // Add response messages
+    // Track the current leaf as we insert messages so each message in a
+    // multi-message response is correctly chained (child of the previous).
+    let currentParentId: string | null | undefined =
+      this.state.messages.length > 0
+        ? this.state.messages[this.state.messages.length - 1].id
+        : undefined;
+
     for (const msg of response.messages ?? []) {
       // For assistant messages with tool_calls, add hidden info to metadata
       let metadata: Record<string, unknown> | undefined;
@@ -1259,9 +1321,14 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         toolCallId: msg.tool_call_id,
         createdAt: new Date(),
         metadata,
+        // Preserve branch tree structure: each message is a child of the
+        // current leaf so the tree is not corrupted for non-streaming mode.
+        ...(currentParentId !== undefined ? { parentId: currentParentId } : {}),
       } as T;
 
       this.state.pushMessage(message);
+      // Next message in this batch is a child of the one we just pushed
+      currentParentId = message.id;
     }
 
     this.callbacks.onMessagesChange?.(this._allMessages());

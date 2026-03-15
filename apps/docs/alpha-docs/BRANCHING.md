@@ -59,11 +59,11 @@ Two-panel layout inside a single `CopilotProvider`:
 
 ### Demo source files
 
-| File | Purpose |
-|------|---------|
-| `examples/experimental/app/branching/page.tsx` | Page: `CopilotProvider` + two-panel layout |
-| `examples/experimental/components/branching/BranchTreePanel.tsx` | Live tree visualization component |
-| `examples/experimental/app/api/chat/branching/route.ts` | Anthropic API route (haiku, short replies) |
+| File                                                             | Purpose                                    |
+| ---------------------------------------------------------------- | ------------------------------------------ |
+| `examples/experimental/app/branching/page.tsx`                   | Page: `CopilotProvider` + two-panel layout |
+| `examples/experimental/components/branching/BranchTreePanel.tsx` | Live tree visualization component          |
+| `examples/experimental/app/api/chat/branching/route.ts`          | Anthropic API route (haiku, short replies) |
 
 ### Key code pattern in the demo
 
@@ -86,40 +86,40 @@ const visibleIds = new Set(messages.map(m => m.id)); // active path
 
 ### Core Data Layer
 
-| File | What Changed |
-|------|-------------|
-| `src/chat/branching/MessageTree.ts` | **New.** Pure TypeScript tree utility. Bidirectional flat-map: `parentId` + `childrenIds[]` + `activeChildMap`. No React dependency. |
-| `src/chat/branching/index.ts` | **New.** Barrel export. |
-| `src/chat/types/message.ts` | Added `parentId?: string \| null` and `childrenIds?: string[]` to `UIMessage`. |
-| `src/core/types/message.ts` | Added `parent_id?: string \| null` and `children_ids?: string[]` to `Message` (persistence layer). |
-| `src/chat/interfaces/ChatState.ts` | Added 5 optional branching methods: `setCurrentLeaf`, `getAllMessages`, `getBranchInfo`, `switchBranch`, `hasBranches`. |
-| `src/react/internal/ReactChatState.ts` | Replaced `_messages: T[]` array with `MessageTree<T>`. `messages` getter = visible path only. |
-| `src/chat/classes/AbstractChat.ts` | `regenerate()` rewritten to be branch-aware (creates sibling instead of destroying). `sendMessage()` extended with `options.editMessageId`. `onMessagesChange` callback now passes all branches via `_allMessages()`. |
-| `src/chat/ChatWithTools.ts` | `sendMessage()` passes through `options.editMessageId`. |
+| File                                   | What Changed                                                                                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/chat/branching/MessageTree.ts`    | **New.** Pure TypeScript tree utility. Bidirectional flat-map: `parentId` + `childrenIds[]` + `activeChildMap`. No React dependency.                                                                                  |
+| `src/chat/branching/index.ts`          | **New.** Barrel export.                                                                                                                                                                                               |
+| `src/chat/types/message.ts`            | Added `parentId?: string \| null` and `childrenIds?: string[]` to `UIMessage`.                                                                                                                                        |
+| `src/core/types/message.ts`            | Added `parent_id?: string \| null` and `children_ids?: string[]` to `Message` (persistence layer).                                                                                                                    |
+| `src/chat/interfaces/ChatState.ts`     | Added 5 optional branching methods: `setCurrentLeaf`, `getAllMessages`, `getBranchInfo`, `switchBranch`, `hasBranches`.                                                                                               |
+| `src/react/internal/ReactChatState.ts` | Replaced `_messages: T[]` array with `MessageTree<T>`. `messages` getter = visible path only.                                                                                                                         |
+| `src/chat/classes/AbstractChat.ts`     | `regenerate()` rewritten to be branch-aware (creates sibling instead of destroying). `sendMessage()` extended with `options.editMessageId`. `onMessagesChange` callback now passes all branches via `_allMessages()`. |
+| `src/chat/ChatWithTools.ts`            | `sendMessage()` passes through `options.editMessageId`.                                                                                                                                                               |
 
 ### React Layer
 
-| File | What Changed |
-|------|-------------|
-| `src/react/internal/ReactChat.ts` | Added `switchBranch`, `getBranchInfo`, `getAllMessages`, `hasBranches` pass-throughs. |
-| `src/react/internal/ReactChatWithTools.ts` | Same pass-throughs. |
-| `src/react/internal/useChat.ts` | Added `switchBranch`, `getBranchInfo`, `editMessage`, `hasBranches` to `UseChatReturn`. |
-| `src/react/context/CopilotContext.tsx` | Added branching methods to `ChatActions`. |
-| `src/react/provider/CopilotProvider.tsx` | Wired branching methods into context. `onMessagesChange` effect uses `getAllMessages()`. Added `getAllMessages` to `CopilotContextValue`. |
-| `src/react/index.ts` | Re-exports `MessageTree`, `BranchInfo`. |
-| `src/chat/index.ts` | Re-exports `MessageTree`, `BranchInfo`. |
+| File                                       | What Changed                                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/react/internal/ReactChat.ts`          | Added `switchBranch`, `getBranchInfo`, `getAllMessages`, `hasBranches` pass-throughs.                                                     |
+| `src/react/internal/ReactChatWithTools.ts` | Same pass-throughs.                                                                                                                       |
+| `src/react/internal/useChat.ts`            | Added `switchBranch`, `getBranchInfo`, `editMessage`, `hasBranches` to `UseChatReturn`.                                                   |
+| `src/react/context/CopilotContext.tsx`     | Added branching methods to `ChatActions`.                                                                                                 |
+| `src/react/provider/CopilotProvider.tsx`   | Wired branching methods into context. `onMessagesChange` effect uses `getAllMessages()`. Added `getAllMessages` to `CopilotContextValue`. |
+| `src/react/index.ts`                       | Re-exports `MessageTree`, `BranchInfo`.                                                                                                   |
+| `src/chat/index.ts`                        | Re-exports `MessageTree`, `BranchInfo`.                                                                                                   |
 
 ### UI Layer
 
-| File | What Changed |
-|------|-------------|
-| `src/ui/components/ui/branch-navigator.tsx` | **New.** `← N/M →` purely presentational component. |
-| `src/ui/components/composed/chat/types.ts` | Added `getBranchInfo`, `onSwitchBranch`, `onEditMessage` to `ChatProps`. |
-| `src/ui/components/composed/chat/default-message.tsx` | User messages: pencil edit button on hover, inline textarea edit, `BranchNavigator` shown when siblings exist. |
-| `src/ui/components/composed/chat/chat.tsx` | Passes branch props through to each message. |
-| `src/ui/components/composed/connected-chat.tsx` | Pulls `switchBranch`, `getBranchInfo`, `editMessage` from `useCopilot()` and passes to `<Chat />`. |
-| `src/ui/hooks/useInternalThreadManager.ts` | Save path uses `getAllMessages()`. Load paths restore `parentId`/`childrenIds`. `convertToCore` includes `parent_id`/`children_ids`. |
-| `src/ui/index.ts` | Exports `BranchNavigator`, `BranchNavigatorProps`. |
+| File                                                  | What Changed                                                                                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/ui/components/ui/branch-navigator.tsx`           | **New.** `← N/M →` purely presentational component.                                                                                  |
+| `src/ui/components/composed/chat/types.ts`            | Added `getBranchInfo`, `onSwitchBranch`, `onEditMessage` to `ChatProps`.                                                             |
+| `src/ui/components/composed/chat/default-message.tsx` | User messages: pencil edit button on hover, inline textarea edit, `BranchNavigator` shown when siblings exist.                       |
+| `src/ui/components/composed/chat/chat.tsx`            | Passes branch props through to each message.                                                                                         |
+| `src/ui/components/composed/connected-chat.tsx`       | Pulls `switchBranch`, `getBranchInfo`, `editMessage` from `useCopilot()` and passes to `<Chat />`.                                   |
+| `src/ui/hooks/useInternalThreadManager.ts`            | Save path uses `getAllMessages()`. Load paths restore `parentId`/`childrenIds`. `convertToCore` includes `parent_id`/`children_ids`. |
+| `src/ui/index.ts`                                     | Exports `BranchNavigator`, `BranchNavigatorProps`.                                                                                   |
 
 ---
 
@@ -129,14 +129,14 @@ const visibleIds = new Set(messages.map(m => m.id)); // active path
 
 All new fields and methods are optional. Every existing usage continues to work without modification:
 
-| Scenario | Behavior |
-|----------|----------|
-| Messages with no `parentId` | `getVisibleMessages()` falls back to insertion order (legacy linear) |
-| `regenerate()` called without arguments | Finds last assistant on visible path — identical to before |
-| `sendMessage()` with no third argument | Identical to before |
-| `useChat()` / `useCopilot()` consumers | All branching fields available but optional — no existing destructuring breaks |
-| `onMessagesChange` callback consumers | Now receives all branches instead of visible path only — **payload size may increase** if branches exist, but shape is identical (`Message[]`) |
-| DB rows with no `parent_id` column | Auto-migrated via `fromFlatArray()` on load — no manual migration script needed for existing data |
+| Scenario                                | Behavior                                                                                                                                       |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Messages with no `parentId`             | `getVisibleMessages()` falls back to insertion order (legacy linear)                                                                           |
+| `regenerate()` called without arguments | Finds last assistant on visible path — identical to before                                                                                     |
+| `sendMessage()` with no third argument  | Identical to before                                                                                                                            |
+| `useChat()` / `useCopilot()` consumers  | All branching fields available but optional — no existing destructuring breaks                                                                 |
+| `onMessagesChange` callback consumers   | Now receives all branches instead of visible path only — **payload size may increase** if branches exist, but shape is identical (`Message[]`) |
+| DB rows with no `parent_id` column      | Auto-migrated via `fromFlatArray()` on load — no manual migration script needed for existing data                                              |
 
 > **Note on `onMessagesChange` payload:** If a user has branched the conversation, the callback now receives all messages across all branches (not just the active path). The shape is the same `Message[]` type. If your persistence layer deduplicates by message ID, no change is needed. If it blindly appends, you may want to upsert by ID instead.
 
@@ -148,11 +148,11 @@ All new fields and methods are optional. Every existing usage continues to work 
 
 ```typescript
 const {
-  switchBranch,   // (messageId: string) => void
-  getBranchInfo,  // (messageId: string) => BranchInfo | null
-  editMessage,    // (messageId: string, newContent: string) => Promise<void>
-  hasBranches,    // boolean — true if any fork exists
-  getAllMessages,  // () => UIMessage[] — all branches, not just visible path
+  switchBranch, // (messageId: string) => void
+  getBranchInfo, // (messageId: string) => BranchInfo | null
+  editMessage, // (messageId: string, newContent: string) => Promise<void>
+  hasBranches, // boolean — true if any fork exists
+  getAllMessages, // () => UIMessage[] — all branches, not just visible path
 } = useCopilot();
 ```
 
@@ -181,9 +181,9 @@ const {
 
 ```typescript
 interface BranchInfo {
-  siblingIndex: number;    // 0-based — which variant this is
-  totalSiblings: number;   // how many variants exist at this fork
-  siblingIds: string[];    // ordered oldest-first
+  siblingIndex: number; // 0-based — which variant this is
+  totalSiblings: number; // how many variants exist at this fork
+  siblingIds: string[]; // ordered oldest-first
   hasPrevious: boolean;
   hasNext: boolean;
 }
@@ -192,7 +192,7 @@ interface BranchInfo {
 ### `BranchNavigator` component (UI primitives)
 
 ```tsx
-import { BranchNavigator } from '@yourgpt/copilot-sdk-ui';
+import { BranchNavigator } from "@yourgpt/copilot-sdk-ui";
 
 <BranchNavigator
   siblingIndex={info.siblingIndex}
@@ -201,20 +201,20 @@ import { BranchNavigator } from '@yourgpt/copilot-sdk-ui';
   hasNext={info.hasNext}
   onPrevious={() => switchBranch(info.siblingIds[info.siblingIndex - 1])}
   onNext={() => switchBranch(info.siblingIds[info.siblingIndex + 1])}
-/>
+/>;
 ```
 
 ### `MessageTree` (framework-agnostic)
 
 ```typescript
-import { MessageTree, type BranchInfo } from '@yourgpt/copilot-sdk';
+import { MessageTree, type BranchInfo } from "@yourgpt/copilot-sdk";
 
 const tree = new MessageTree(messages);
-tree.getVisibleMessages();     // active path only
-tree.getAllMessages();          // all branches
+tree.getVisibleMessages(); // active path only
+tree.getAllMessages(); // all branches
 tree.getBranchInfo(messageId); // BranchInfo | null
 tree.switchBranch(messageId);
-tree.hasBranches;              // boolean
+tree.hasBranches; // boolean
 ```
 
 ---
@@ -231,10 +231,10 @@ ALTER TABLE messages
   ADD COLUMN children_ids JSONB DEFAULT '[]';
 ```
 
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `parent_id` | `TEXT` / `VARCHAR` | YES | ID of parent message. `NULL` = root. Missing = legacy linear. |
-| `children_ids` | `JSON` array of strings | YES | Ordered child IDs for O(1) sibling lookup. |
+| Column         | Type                    | Nullable | Description                                                   |
+| -------------- | ----------------------- | -------- | ------------------------------------------------------------- |
+| `parent_id`    | `TEXT` / `VARCHAR`      | YES      | ID of parent message. `NULL` = root. Missing = legacy linear. |
+| `children_ids` | `JSON` array of strings | YES      | Ordered child IDs for O(1) sibling lookup.                    |
 
 > **These columns are optional.** Existing rows without them are auto-migrated to a linear tree on load via `fromFlatArray()`. No data loss. No required migration for existing rows.
 
@@ -320,7 +320,7 @@ If you render messages manually, use `getBranchInfo` + `BranchNavigator`:
 ```tsx
 function MyMessage({ message }) {
   const { switchBranch, getBranchInfo } = useCopilot();
-  const info = message.role === 'user' ? getBranchInfo(message.id) : null;
+  const info = message.role === "user" ? getBranchInfo(message.id) : null;
 
   return (
     <div>
@@ -328,7 +328,9 @@ function MyMessage({ message }) {
       {info && (
         <BranchNavigator
           {...info}
-          onPrevious={() => switchBranch(info.siblingIds[info.siblingIndex - 1])}
+          onPrevious={() =>
+            switchBranch(info.siblingIds[info.siblingIndex - 1])
+          }
           onNext={() => switchBranch(info.siblingIds[info.siblingIndex + 1])}
         />
       )}
@@ -341,14 +343,14 @@ function MyMessage({ message }) {
 
 ```typescript
 // Edit a message (creates new branch from same parent)
-await editMessage('msg-abc', 'Updated question text');
+await editMessage("msg-abc", "Updated question text");
 
 // Navigate between variants
-switchBranch('msg-xyz');
+switchBranch("msg-xyz");
 
 // Check if branches exist
 if (hasBranches) {
-  const info = getBranchInfo('msg-abc');
+  const info = getBranchInfo("msg-abc");
   // info.totalSiblings, info.siblingIndex, etc.
 }
 
@@ -364,7 +366,7 @@ await saveToServer(allMessages);
 All branching primitives are exported from the core package (no React required):
 
 ```typescript
-import { MessageTree, type BranchInfo } from '@yourgpt/copilot-sdk';
+import { MessageTree, type BranchInfo } from "@yourgpt/copilot-sdk";
 
 // Build a tree from saved messages
 const tree = new MessageTree(savedMessages);
@@ -403,11 +405,11 @@ childrenIds: string[]
 
 The `MessageTree` maintains three maps:
 
-| Map | Key | Value | Purpose |
-|-----|-----|-------|---------|
-| `nodeMap` | messageId | Message | O(1) message lookup |
-| `childrenOf` | parentId (or `__root__`) | `string[]` | All children at a fork |
-| `activeChildMap` | parentId | active child ID | Which branch is currently visible |
+| Map              | Key                      | Value           | Purpose                           |
+| ---------------- | ------------------------ | --------------- | --------------------------------- |
+| `nodeMap`        | messageId                | Message         | O(1) message lookup               |
+| `childrenOf`     | parentId (or `__root__`) | `string[]`      | All children at a fork            |
+| `activeChildMap` | parentId                 | active child ID | Which branch is currently visible |
 
 ### Regenerate flow
 

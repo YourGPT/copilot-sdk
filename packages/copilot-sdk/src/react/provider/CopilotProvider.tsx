@@ -320,7 +320,9 @@ export interface CopilotContextValue {
 
   // Branching actions
   switchBranch: (messageId: string) => void;
-  getBranchInfo: (messageId: string) => import("../../chat/branching").BranchInfo | null;
+  getBranchInfo: (
+    messageId: string,
+  ) => import("../../chat/branching").BranchInfo | null;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   hasBranches: boolean;
   /** Get ALL messages across all branches (for persistence). Visible path only when no branches. */
@@ -536,22 +538,33 @@ export function CopilotProvider({
     }
   }, [runtimeUrl, debugLog]);
 
+  // Stable snapshot callbacks for useSyncExternalStore
+  // getServerSnapshot must return a cached/stable value to avoid infinite loops
+  const EMPTY_MESSAGES = useRef<UIMessage[]>([]);
+  const getMessagesSnapshot = useCallback(() => chatRef.current!.messages, []);
+  const getServerMessagesSnapshot = useCallback(
+    () => EMPTY_MESSAGES.current,
+    [],
+  );
+  const getStatusSnapshot = useCallback(() => chatRef.current!.status, []);
+  const getErrorSnapshot = useCallback(() => chatRef.current!.error, []);
+
   // Subscribe to chat state with useSyncExternalStore
   const messages = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.messages,
-    () => chatRef.current!.messages,
+    getMessagesSnapshot,
+    getServerMessagesSnapshot,
   );
 
   const status = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.status,
+    getStatusSnapshot,
     () => "ready" as const,
   );
 
   const errorFromChat = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.error,
+    getErrorSnapshot,
     () => undefined,
   );
   const error = errorFromChat ?? null;
@@ -588,9 +601,14 @@ export function CopilotProvider({
     [],
   );
 
-  const registeredTools = chatRef.current?.tools ?? [];
-  const pendingApprovals = toolExecutions.filter(
-    (e) => e.approvalStatus === "required",
+  const registeredTools = useMemo(
+    () => chatRef.current?.tools ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toolExecutions], // re-derive when tool executions change (tools change alongside)
+  );
+  const pendingApprovals = useMemo(
+    () => toolExecutions.filter((e) => e.approvalStatus === "required"),
+    [toolExecutions],
   );
 
   // ============================================
@@ -712,9 +730,13 @@ export function CopilotProvider({
     [],
   );
 
+  const getHasBranchesSnapshot = useCallback(
+    () => chatRef.current!.hasBranches,
+    [],
+  );
   const hasBranches = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.hasBranches,
+    getHasBranchesSnapshot,
     () => false,
   );
 
