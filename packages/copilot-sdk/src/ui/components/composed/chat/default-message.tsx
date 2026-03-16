@@ -61,7 +61,7 @@ type DefaultMessageProps = {
     | "loading-dots";
   /** Registered tools (for accessing tool's render function) */
   registeredTools?: ToolDefinition[];
-  /** Custom renderers for tool results (Generative UI) - higher priority than tool.render */
+  /** Custom renderers for tool results (Generative UI) - fallback when tool has no render prop */
   toolRenderers?: ToolRenderers;
   /** Catch-all renderer for MCP tools (tools with source: "mcp") */
   mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
@@ -341,9 +341,7 @@ export function DefaultMessage({
       message.attachments && message.attachments.length > 0;
 
     return (
-      <Message
-        className={cn("flex gap-2 group/user-msg justify-end")}
-      >
+      <Message className={cn("flex gap-2 group/user-msg justify-end")}>
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
           {/* Edit mode: inline textarea */}
           {isEditing ? (
@@ -587,34 +585,45 @@ export function DefaultMessage({
               </MessageContent>
             )}
 
-            {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
+            {/* Custom Tool Renderers - Priority: tool.render > fallbackToolRenderer > toolRenderers */}
             {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
               <div className={cn("space-y-2", cleanContent?.trim() && "mt-2")}>
                 {toolsWithCustomRender.map((exec) => {
-                  // PRIORITY 1: toolRenderers (app-level override for specific tool)
-                  const Renderer = toolRenderers?.[exec.name];
-                  if (Renderer) {
-                    return (
-                      <Renderer
-                        key={exec.id}
-                        execution={{
-                          id: exec.id,
-                          name: exec.name,
-                          args: exec.args,
-                          status: exec.status,
-                          result: exec.result,
-                          error: exec.error,
-                          approvalStatus: exec.approvalStatus,
-                          source: exec.source,
-                        }}
-                      />
-                    );
-                  }
-
-                  // PRIORITY 2: mcpToolRenderer (catch-all for MCP tools)
                   const toolDef = registeredTools?.find(
                     (t) => t.name === exec.name,
                   );
+
+                  // PRIORITY 1: tool's own render function (defined in useTool)
+                  if (toolDef?.render) {
+                    let status: ToolRenderProps["status"] = "pending";
+                    if (exec.status === "executing") status = "executing";
+                    else if (exec.status === "completed") status = "completed";
+                    else if (
+                      exec.status === "error" ||
+                      exec.status === "failed" ||
+                      exec.status === "rejected"
+                    )
+                      status = "error";
+
+                    const renderProps: ToolRenderProps = {
+                      status,
+                      args: exec.args,
+                      result: exec.result,
+                      error: exec.error,
+                      toolCallId: exec.id,
+                      toolName: exec.name,
+                    };
+                    const output = toolDef.render(
+                      renderProps,
+                    ) as React.ReactNode;
+                    if (output != null) {
+                      return (
+                        <React.Fragment key={exec.id}>{output}</React.Fragment>
+                      );
+                    }
+                  }
+
+                  // PRIORITY 2: mcpToolRenderer (catch-all for MCP tools)
                   if (
                     mcpToolRenderer &&
                     (exec.source === "mcp" || toolDef?.source === "mcp")
@@ -655,36 +664,23 @@ export function DefaultMessage({
                     );
                   }
 
-                  // PRIORITY 4: tool's own render function
-                  // toolDef already defined above for MCP check
-                  const toolDefForRender =
-                    toolDef ??
-                    registeredTools?.find((t) => t.name === exec.name);
-                  if (toolDefForRender?.render) {
-                    // Map execution status to ToolRenderProps status
-                    let status: ToolRenderProps["status"] = "pending";
-                    if (exec.status === "executing") status = "executing";
-                    else if (exec.status === "completed") status = "completed";
-                    else if (
-                      exec.status === "error" ||
-                      exec.status === "failed" ||
-                      exec.status === "rejected"
-                    )
-                      status = "error";
-
-                    const renderProps: ToolRenderProps = {
-                      status,
-                      args: exec.args,
-                      result: exec.result,
-                      error: exec.error,
-                      toolCallId: exec.id,
-                      toolName: exec.name,
-                    };
-                    const output = toolDefForRender.render(
-                      renderProps,
-                    ) as React.ReactNode;
+                  // PRIORITY 4: toolRenderers map (app-level explicit renderer)
+                  const Renderer = toolRenderers?.[exec.name];
+                  if (Renderer) {
                     return (
-                      <React.Fragment key={exec.id}>{output}</React.Fragment>
+                      <Renderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
+                          approvalStatus: exec.approvalStatus,
+                          source: exec.source,
+                        }}
+                      />
                     );
                   }
 

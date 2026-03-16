@@ -279,10 +279,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         `Adding ${unresolvedIds.length} missing tool results`,
       );
 
-      // Add error result for each unresolved tool_call
+      // Add error result for each unresolved tool_call.
+      // Chain parentId so these messages are placed correctly in the branch tree.
+      const visibleMsgs = this.state.messages;
+      let errorChainParentId: string | undefined =
+        visibleMsgs.length > 0
+          ? visibleMsgs[visibleMsgs.length - 1].id
+          : undefined;
+
       for (const toolCallId of unresolvedIds) {
+        const toolMessageId = generateMessageId();
         const toolMessage = {
-          id: generateMessageId(),
+          id: toolMessageId,
           role: "tool" as const,
           content: JSON.stringify({
             success: false,
@@ -290,9 +298,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           }),
           toolCallId,
           createdAt: new Date(),
+          ...(errorChainParentId !== undefined
+            ? { parentId: errorChainParentId }
+            : {}),
         } as T;
 
         this.state.pushMessage(toolMessage);
+        errorChainParentId = toolMessageId;
       }
 
       this.callbacks.onMessagesChange?.(this._allMessages());
@@ -314,6 +326,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     try {
       // Process results - extract attachments that should be added as user message
       const attachmentsToAdd: MessageAttachment[] = [];
+
+      // Capture current leaf so tool messages are chained under the assistant
+      // message that triggered the tool calls, not placed at tree root.
+      // Without this, MessageTree.addMessage() assigns parentKey = ROOT_KEY,
+      // which hijacks getVisibleMessages() and breaks the conversation path.
+      const visibleMessages = this.state.messages;
+      let chainParentId: string | undefined =
+        visibleMessages.length > 0
+          ? visibleMessages[visibleMessages.length - 1].id
+          : undefined;
 
       for (const { toolCallId, result } of toolResults) {
         // Check if result wants to be added as user message (e.g., screenshot)
@@ -347,15 +369,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             typeof result === "string" ? result : JSON.stringify(result);
         }
 
+        const toolMessageId = generateMessageId();
         const toolMessage = {
-          id: generateMessageId(),
+          id: toolMessageId,
           role: "tool" as const,
           content: messageContent,
           toolCallId,
           createdAt: new Date(),
+          ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
         } as T;
 
         this.state.pushMessage(toolMessage);
+        // Next tool message (if any) chains off this one
+        chainParentId = toolMessageId;
       }
 
       // If there are attachments (e.g., screenshots), add user message so AI can see them
@@ -370,6 +396,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           content: "Here's my screen:",
           attachments: attachmentsToAdd,
           createdAt: new Date(),
+          ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
         } as T;
 
         this.state.pushMessage(userMessage);
