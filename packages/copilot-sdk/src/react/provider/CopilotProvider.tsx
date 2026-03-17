@@ -482,6 +482,8 @@ export function CopilotProvider({
         attachments: m.metadata?.attachments as MessageAttachment[] | undefined,
         toolCalls: m.tool_calls,
         toolCallId: m.tool_call_id,
+        parentId: m.parent_id,
+        childrenIds: m.children_ids,
       }),
     );
 

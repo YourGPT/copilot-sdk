@@ -33,6 +33,13 @@ export interface UseInternalThreadManagerConfig {
   autoRestoreLastThread?: boolean;
   /** Callback when thread changes */
   onThreadChange?: (threadId: string | null) => void;
+  /**
+   * Whether thread management is active.
+   * When false, all sync/restore effects are skipped.
+   * Used by CopilotChat when persistence is disabled to avoid touching the shared singleton.
+   * @default true
+   */
+  enabled?: boolean;
 }
 
 export interface UseInternalThreadManagerReturn {
@@ -60,6 +67,7 @@ export function useInternalThreadManager(
     saveDebounce = 1000,
     autoRestoreLastThread = true,
     onThreadChange,
+    enabled = true,
   } = config;
 
   // Thread management
@@ -81,7 +89,14 @@ export function useInternalThreadManager(
   } = threadManager;
 
   // Get copilot context for setMessages and status
-  const { messages, setMessages, status, isLoading, getAllMessages } = useCopilot();
+  const {
+    messages,
+    setMessages,
+    status,
+    isLoading,
+    getAllMessages,
+    switchBranch,
+  } = useCopilot();
 
   // Track if we're in the middle of loading messages from a thread switch
   const isLoadingMessagesRef = useRef(false);
@@ -145,6 +160,10 @@ export function useInternalThreadManager(
         lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
         savingToThreadRef.current = threadId;
         setMessages(uiMessages);
+        // Restore active branch after tree is rebuilt
+        if (thread.activeLeafId) {
+          switchBranch(thread.activeLeafId);
+        }
       } else {
         lastSavedSnapshotRef.current = "";
         savingToThreadRef.current = threadId;
@@ -159,7 +178,13 @@ export function useInternalThreadManager(
         isLoadingMessagesRef.current = false;
       });
     },
-    [switchThread, setMessages, getMessageSnapshot, onThreadChange],
+    [
+      switchThread,
+      setMessages,
+      switchBranch,
+      getMessageSnapshot,
+      onThreadChange,
+    ],
   );
 
   // Handle new thread - just clear messages, thread is created lazily on first message
@@ -183,6 +208,8 @@ export function useInternalThreadManager(
 
   // Auto-restore: load messages when thread is restored from storage
   useEffect(() => {
+    // Skip if persistence is disabled
+    if (!enabled) return;
     // Skip if already initialized or no thread restored yet
     if (hasInitializedRef.current || !currentThread) {
       return;
@@ -211,6 +238,10 @@ export function useInternalThreadManager(
       lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
       savingToThreadRef.current = currentThread.id;
       setMessages(uiMessages);
+      // Restore active branch after tree is rebuilt
+      if (currentThread.activeLeafId) {
+        switchBranch(currentThread.activeLeafId);
+      }
     } else {
       lastSavedSnapshotRef.current = "";
       savingToThreadRef.current = currentThread.id;
@@ -222,10 +253,20 @@ export function useInternalThreadManager(
     requestAnimationFrame(() => {
       isLoadingMessagesRef.current = false;
     });
-  }, [adapter, currentThread, setMessages, getMessageSnapshot, onThreadChange]);
+  }, [
+    enabled,
+    adapter,
+    currentThread,
+    setMessages,
+    switchBranch,
+    getMessageSnapshot,
+    onThreadChange,
+  ]);
 
   // Sync messages to storage when streaming completes
   useEffect(() => {
+    // Skip if persistence is disabled
+    if (!enabled) return;
     // Skip if we're loading messages from a thread switch
     if (isLoadingMessagesRef.current) {
       return;
@@ -253,11 +294,14 @@ export function useInternalThreadManager(
       allUIMessages.length > 0 ? allUIMessages : messages,
     );
 
+    // Active leaf = last message on the visible path — persisted so reload restores the right branch
+    const activeLeafId = messages[messages.length - 1]?.id;
+
     // If no thread exists, create one with these messages
     if (!currentThreadId && !savingToThreadRef.current) {
       // Set ref immediately to prevent race condition with rapid messages
       savingToThreadRef.current = "creating";
-      createThread({ messages: coreMessages }).then((thread) => {
+      createThread({ messages: coreMessages, activeLeafId }).then((thread) => {
         lastSavedSnapshotRef.current = currentSnapshot;
         savingToThreadRef.current = thread.id;
         onThreadChange?.(thread.id);
@@ -274,9 +318,10 @@ export function useInternalThreadManager(
     }
 
     // Update existing thread
-    updateCurrentThread({ messages: coreMessages });
+    updateCurrentThread({ messages: coreMessages, activeLeafId });
     lastSavedSnapshotRef.current = currentSnapshot;
   }, [
+    enabled,
     adapter,
     messages,
     currentThreadId,

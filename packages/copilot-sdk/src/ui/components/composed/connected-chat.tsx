@@ -307,9 +307,12 @@ function CopilotChatBase(
   // Parse persistence config
   const persistenceConfig = parsePersistenceConfig(persistence, onThreadChange);
 
-  // Use internal thread manager when persistence is enabled
+  // Use internal thread manager when persistence is enabled.
+  // When persistence is disabled, pass enabled:false so no sync/restore effects
+  // fire — prevents the shared singleton from being touched by a no-persistence instance
+  // and avoids stale async createThread calls overwriting messages on navigation.
   const threadManagerResult = useInternalThreadManager(
-    persistenceConfig ?? { autoRestoreLastThread: false },
+    persistenceConfig ?? { autoRestoreLastThread: false, enabled: false },
   );
 
   const isPersistenceEnabled = !!persistence;
