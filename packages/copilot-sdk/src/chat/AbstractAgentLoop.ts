@@ -341,16 +341,23 @@ export class AbstractAgentLoop implements AgentLoopActions {
 
     // Check if approval is needed
     if (tool.needsApproval && !this.config.autoApprove) {
-      // Get approval message (can be string or function)
+      // Get approval title and message (can be string or function)
+      const approvalTitle =
+        typeof tool.approvalTitle === "function"
+          ? tool.approvalTitle(toolCall.args)
+          : tool.approvalTitle;
+
       const approvalMessage =
         typeof tool.approvalMessage === "function"
           ? tool.approvalMessage(toolCall.args)
           : tool.approvalMessage;
 
       execution.approvalStatus = "required";
+      execution.approvalTitle = approvalTitle;
       execution.approvalMessage = approvalMessage;
       this.updateToolExecution(toolCall.id, {
         approvalStatus: "required",
+        approvalTitle,
         approvalMessage,
       });
       this.callbacks.onApprovalRequired?.(execution);

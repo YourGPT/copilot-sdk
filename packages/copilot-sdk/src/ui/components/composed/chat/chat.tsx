@@ -533,6 +533,7 @@ function ChatComponent({
   // Citations/Sources
   citations,
   // Custom rendering
+  messageView,
   renderMessage,
   renderInput,
   renderHeader,
@@ -915,143 +916,151 @@ function ChatComponent({
                   )}
 
                   {/* Messages */}
-                  {messages.map((message, index) => {
-                    const isLastMessage = index === messages.length - 1;
+                  {(() => {
+                    const messageElements = messages.map((message, index) => {
+                      const isLastMessage = index === messages.length - 1;
 
-                    const GROUP_THRESHOLD_MS = 5 * 60 * 1000;
-                    const shouldHideAvatar = (() => {
-                      if (!groupConsecutiveMessages || index === 0)
-                        return false;
-                      let prevIdx = index - 1;
-                      while (prevIdx >= 0) {
-                        const prev = messages[prevIdx];
-                        const isToolMsg = prev.role === "tool";
-                        const isInvisibleSystem =
-                          prev.role === "system" &&
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          (prev.metadata as Record<string, unknown>)?.type !==
-                            "compaction-marker";
-                        if (!isToolMsg && !isInvisibleSystem) break;
-                        prevIdx--;
+                      const GROUP_THRESHOLD_MS = 5 * 60 * 1000;
+                      const shouldHideAvatar = (() => {
+                        if (!groupConsecutiveMessages || index === 0)
+                          return false;
+                        let prevIdx = index - 1;
+                        while (prevIdx >= 0) {
+                          const prev = messages[prevIdx];
+                          const isToolMsg = prev.role === "tool";
+                          const isInvisibleSystem =
+                            prev.role === "system" &&
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            (prev.metadata as Record<string, unknown>)?.type !==
+                              "compaction-marker";
+                          if (!isToolMsg && !isInvisibleSystem) break;
+                          prevIdx--;
+                        }
+                        if (prevIdx < 0) return false;
+                        const prevVisible = messages[prevIdx];
+                        if (prevVisible.role !== message.role) return false;
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const curTs = (message as any).timestamp as
+                          | number
+                          | undefined;
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const prevTs = (prevVisible as any).timestamp as
+                          | number
+                          | undefined;
+                        if (
+                          curTs &&
+                          prevTs &&
+                          curTs - prevTs > GROUP_THRESHOLD_MS
+                        )
+                          return false;
+                        return true;
+                      })();
+
+                      const isEmptyAssistant =
+                        message.role === "assistant" &&
+                        !message.content?.trim();
+
+                      // Check if message has tool_calls or toolExecutions
+                      const hasToolCalls =
+                        message.tool_calls && message.tool_calls.length > 0;
+                      const hasToolExecutions =
+                        message.toolExecutions &&
+                        message.toolExecutions.length > 0;
+
+                      // Check if this message has pending tool approvals
+                      const hasPendingApprovals = message.toolExecutions?.some(
+                        (exec) => exec.approvalStatus === "required",
+                      );
+
+                      // Hide empty assistant messages that aren't loading and have no content to show
+                      if (isEmptyAssistant) {
+                        const shouldShowMessage =
+                          hasToolCalls ||
+                          hasToolExecutions ||
+                          hasPendingApprovals ||
+                          (isLastMessage && (isLoading || isProcessing));
+
+                        if (!shouldShowMessage) {
+                          return null;
+                        }
+                        // Otherwise, continue to render via DefaultMessage
                       }
-                      if (prevIdx < 0) return false;
-                      const prevVisible = messages[prevIdx];
-                      if (prevVisible.role !== message.role) return false;
+
+                      // Check for saved executions in metadata (historical)
                       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      const curTs = (message as any).timestamp as
-                        | number
-                        | undefined;
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      const prevTs = (prevVisible as any).timestamp as
-                        | number
-                        | undefined;
-                      if (
-                        curTs &&
-                        prevTs &&
-                        curTs - prevTs > GROUP_THRESHOLD_MS
-                      )
-                        return false;
-                      return true;
-                    })();
+                      const savedExecutions = (message as any).metadata
+                        ?.toolExecutions as ToolExecutionData[] | undefined;
+                      const messageToolExecutions =
+                        message.toolExecutions || savedExecutions;
 
-                    const isEmptyAssistant =
-                      message.role === "assistant" && !message.content?.trim();
+                      const messageWithExecutions = messageToolExecutions
+                        ? { ...message, toolExecutions: messageToolExecutions }
+                        : message;
 
-                    // Check if message has tool_calls or toolExecutions
-                    const hasToolCalls =
-                      message.tool_calls && message.tool_calls.length > 0;
-                    const hasToolExecutions =
-                      message.toolExecutions &&
-                      message.toolExecutions.length > 0;
-
-                    // Check if this message has pending tool approvals
-                    const hasPendingApprovals = message.toolExecutions?.some(
-                      (exec) => exec.approvalStatus === "required",
-                    );
-
-                    // Hide empty assistant messages that aren't loading and have no content to show
-                    if (isEmptyAssistant) {
-                      const shouldShowMessage =
-                        hasToolCalls ||
-                        hasToolExecutions ||
-                        hasPendingApprovals ||
-                        (isLastMessage && (isLoading || isProcessing));
-
-                      if (!shouldShowMessage) {
-                        return null;
-                      }
-                      // Otherwise, continue to render via DefaultMessage
-                    }
-
-                    // Check for saved executions in metadata (historical)
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const savedExecutions = (message as any).metadata
-                      ?.toolExecutions as ToolExecutionData[] | undefined;
-                    const messageToolExecutions =
-                      message.toolExecutions || savedExecutions;
-
-                    const messageWithExecutions = messageToolExecutions
-                      ? { ...message, toolExecutions: messageToolExecutions }
-                      : message;
-
-                    // Handle follow-up click - use onSendMessage if available
-                    const handleFollowUpClick = (question: string) => {
-                      if (onSuggestionClick) {
-                        onSuggestionClick(question);
-                      } else {
-                        onSendMessage?.(question);
-                      }
-                    };
-
-                    return renderMessage ? (
-                      <React.Fragment key={message.id}>
-                        {renderMessage(messageWithExecutions, index)}
-                      </React.Fragment>
-                    ) : (
-                      <DefaultMessage
-                        key={message.id}
-                        message={messageWithExecutions}
-                        userAvatar={
-                          shouldHideAvatar && message.role === "user"
-                            ? { ...userAvatar, className: "invisible" }
-                            : userAvatar
+                      // Handle follow-up click - use onSendMessage if available
+                      const handleFollowUpClick = (question: string) => {
+                        if (onSuggestionClick) {
+                          onSuggestionClick(question);
+                        } else {
+                          onSendMessage?.(question);
                         }
-                        assistantAvatar={
-                          shouldHideAvatar && message.role === "assistant"
-                            ? { ...assistantAvatar, className: "invisible" }
-                            : assistantAvatar
-                        }
-                        showUserAvatar={showUserAvatar}
-                        userMessageClassName={classNames.userMessage}
-                        assistantMessageClassName={classNames.assistantMessage}
-                        size={fontSize}
-                        isLastMessage={isLastMessage}
-                        isLoading={isLoading}
-                        isProcessing={isProcessing}
-                        loaderVariant={loaderVariant}
-                        registeredTools={registeredTools}
-                        toolRenderers={toolRenderers}
-                        mcpToolRenderer={mcpToolRenderer}
-                        fallbackToolRenderer={fallbackToolRenderer}
-                        onApproveToolExecution={onApproveToolExecution}
-                        onRejectToolExecution={onRejectToolExecution}
-                        showFollowUps={showFollowUps}
-                        onFollowUpClick={handleFollowUpClick}
-                        followUpClassName={followUpClassName}
-                        followUpButtonClassName={followUpButtonClassName}
-                        citations={
-                          citations === false ? { enabled: false } : citations
-                        }
-                        branchInfo={
-                          message.role === "user"
-                            ? getBranchInfo?.(message.id) ?? null
-                            : null
-                        }
-                        onSwitchBranch={onSwitchBranch}
-                        onEditMessage={onEditMessage}
-                      />
-                    );
-                  })}
+                      };
+
+                      return renderMessage ? (
+                        <React.Fragment key={message.id}>
+                          {renderMessage(messageWithExecutions, index)}
+                        </React.Fragment>
+                      ) : (
+                        <DefaultMessage
+                          key={message.id}
+                          message={messageWithExecutions}
+                          userAvatar={
+                            shouldHideAvatar && message.role === "user"
+                              ? { ...userAvatar, className: "invisible" }
+                              : userAvatar
+                          }
+                          assistantAvatar={
+                            shouldHideAvatar && message.role === "assistant"
+                              ? { ...assistantAvatar, className: "invisible" }
+                              : assistantAvatar
+                          }
+                          showUserAvatar={showUserAvatar}
+                          userMessageClassName={classNames.userMessage}
+                          assistantMessageClassName={
+                            classNames.assistantMessage
+                          }
+                          size={fontSize}
+                          isLastMessage={isLastMessage}
+                          isLoading={isLoading}
+                          isProcessing={isProcessing}
+                          loaderVariant={loaderVariant}
+                          registeredTools={registeredTools}
+                          toolRenderers={toolRenderers}
+                          mcpToolRenderer={mcpToolRenderer}
+                          fallbackToolRenderer={fallbackToolRenderer}
+                          onApproveToolExecution={onApproveToolExecution}
+                          onRejectToolExecution={onRejectToolExecution}
+                          showFollowUps={showFollowUps}
+                          onFollowUpClick={handleFollowUpClick}
+                          followUpClassName={followUpClassName}
+                          followUpButtonClassName={followUpButtonClassName}
+                          citations={
+                            citations === false ? { enabled: false } : citations
+                          }
+                          branchInfo={
+                            message.role === "user"
+                              ? (getBranchInfo?.(message.id) ?? null)
+                              : null
+                          }
+                          onSwitchBranch={onSwitchBranch}
+                          onEditMessage={onEditMessage}
+                        />
+                      );
+                    });
+                    return messageView?.children
+                      ? messageView.children({ messages, messageElements })
+                      : messageElements;
+                  })()}
 
                   {/* Loading indicator for non-streaming - when last message is user and no assistant message yet */}
                   {isLoading &&

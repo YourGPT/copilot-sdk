@@ -75,6 +75,8 @@ export interface ToolExecutionData {
   duration?: number;
   /** Approval status for human-in-the-loop tools */
   approvalStatus?: ToolApprovalStatus;
+  /** Title shown in approval UI */
+  approvalTitle?: string;
   /** Message shown in approval UI */
   approvalMessage?: string;
   /** Data passed from user's approval action (e.g., selected item) */

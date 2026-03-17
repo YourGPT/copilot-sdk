@@ -61,6 +61,8 @@ export interface ToolExecution {
   error?: string;
   startedAt?: Date;
   completedAt?: Date;
+  /** Title shown in approval UI (from tool's approvalTitle) */
+  approvalTitle?: string;
   /** Custom approval message from tool definition */
   approvalMessage?: string;
   /** Data passed from user's approval action (e.g., selected supervisor) */

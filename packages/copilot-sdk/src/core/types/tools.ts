@@ -598,6 +598,12 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
 
   /**
+   * Custom title shown in the approval UI.
+   * If not provided, the tool name is used.
+   */
+  approvalTitle?: string | ((params: TParams) => string);
+
+  /**
    * Custom message shown in the approval UI.
    * Can be a string or a function that generates a message from params.
    * If not provided, a default message with the tool name is shown.
@@ -806,6 +812,8 @@ export interface ToolExecution {
 
   /** Approval status for this execution */
   approvalStatus: ToolApprovalStatus;
+  /** Title shown in approval UI (from tool's approvalTitle) */
+  approvalTitle?: string;
   /** Message shown in approval UI (from tool's approvalMessage) */
   approvalMessage?: string;
   /** Timestamp when user responded to approval request */
@@ -935,6 +943,8 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   hidden?: boolean;
   /** Require user approval before execution */
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
+  /** Custom title shown in the approval UI */
+  approvalTitle?: string | ((params: TParams) => string);
   /** Custom message shown in the approval UI */
   approvalMessage?: string | ((params: TParams) => string);
   /** AI response mode for this tool (default: 'full') */

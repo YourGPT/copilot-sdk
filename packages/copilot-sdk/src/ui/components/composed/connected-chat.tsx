@@ -340,6 +340,8 @@ function CopilotChatBase(
       error: exec.error,
       timestamp: exec.startedAt ? exec.startedAt.getTime() : Date.now(),
       approvalStatus: exec.approvalStatus,
+      approvalTitle: exec.approvalTitle,
+      approvalMessage: exec.approvalMessage,
       hidden: exec.hidden,
     }),
   );

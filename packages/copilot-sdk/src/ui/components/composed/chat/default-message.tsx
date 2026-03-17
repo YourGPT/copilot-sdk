@@ -779,7 +779,7 @@ export function DefaultMessage({
                     <PermissionConfirmation
                       key={tool.id}
                       state="pending"
-                      toolName={tool.name}
+                      toolName={tool.approvalTitle ?? tool.name}
                       message={
                         tool.approvalMessage ||
                         `This tool wants to execute. Do you approve?`

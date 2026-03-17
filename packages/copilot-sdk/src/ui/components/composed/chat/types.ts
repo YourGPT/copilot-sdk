@@ -154,6 +154,10 @@ export interface ToolRendererProps {
     error?: string;
     /** Approval status for tools requiring confirmation */
     approvalStatus?: ToolApprovalStatus;
+    /** Title shown in approval UI */
+    approvalTitle?: string;
+    /** Message shown in approval UI */
+    approvalMessage?: string;
     /** Data passed from user's approval action */
     approvalData?: Record<string, unknown>;
     /** Tool source (mcp, native, custom) - useful for MCP tool identification */
@@ -445,6 +449,37 @@ export type ChatProps = {
   ) => void;
 
   // === Custom Rendering ===
+  /**
+   * Custom message list view.
+   * Gives full control over how the message list is rendered.
+   * Receives pre-rendered `messageElements` (default SDK output) and raw `messages`
+   * so you can inject custom UI, reorder, or conditionally replace messages.
+   *
+   * @example
+   * ```tsx
+   * <CopilotChat
+   *   messageView={{
+   *     children: ({ messageElements, messages }) => (
+   *       <>
+   *         {messages.map((msg, i) =>
+   *           msg.metadata?.type === "plan"
+   *             ? <PlanCard key={msg.id} data={msg.metadata} />
+   *             : messageElements[i]
+   *         )}
+   *       </>
+   *     )
+   *   }}
+   * />
+   * ```
+   */
+  messageView?: {
+    children?: (props: {
+      /** Raw messages array */
+      messages: ChatMessage[];
+      /** Pre-rendered message elements (default SDK rendering) */
+      messageElements: React.ReactNode[];
+    }) => React.ReactNode;
+  };
   /** Custom message renderer */
   renderMessage?: (message: ChatMessage, index: number) => React.ReactNode;
   /** Custom input renderer (replaces entire input area) */
