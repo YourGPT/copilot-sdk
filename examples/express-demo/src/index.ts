@@ -218,17 +218,29 @@ Be helpful, concise, and accurate. If the knowledge base doesn't have the answer
 });
 
 // ============================================
-// MINIMAL RUNTIME (No tools, simple prompt)
+// MINIMAL RUNTIMES (No tools, simple prompt)
+// One per model so testers can switch via x-copilot-model header
 // ============================================
 
-const minimalRuntime = createRuntime({
-  // provider: openai,
+const claudeRuntime = createRuntime({
   provider: anthropic,
   model: "claude-haiku-4-5",
-  // model: "gpt-5.4",
   systemPrompt: "You are a helpful AI assistant.",
-  debug: true, // enables logProviderPayload() calls in adapters
+  debug: true,
 });
+
+const gptRuntime = createRuntime({
+  provider: openai,
+  model: "gpt-5.4",
+  systemPrompt: "You are a helpful AI assistant.",
+  debug: true,
+});
+
+function getRuntimeByModel(requestedModel?: string) {
+  if (requestedModel === "gpt-5.4")
+    return { runtime: gptRuntime, modelName: "gpt-5.4" };
+  return { runtime: claudeRuntime, modelName: "claude-haiku-4-5" };
+}
 
 // ============================================
 // PER-REQUEST DEBUG LOG CAPTURE
@@ -336,10 +348,13 @@ function logResponse(result: Record<string, unknown>) {
  * Minimal streaming endpoint - no tools, simple prompt
  */
 app.post("/api/copilot-response", async (req, res) => {
-  logRequest("/api/copilot-response (stream)", req.body);
+  const { runtime, modelName } = getRuntimeByModel(
+    req.headers["x-copilot-model"] as string | undefined,
+  );
+  logRequest(`/api/copilot-response (stream) [${modelName}]`, req.body);
 
   let fullText = "";
-  const stream = minimalRuntime.stream(req.body);
+  const stream = runtime.stream(req.body);
   stream.on("text", (chunk: string) => {
     fullText += chunk;
   });
@@ -349,21 +364,24 @@ app.post("/api/copilot-response", async (req, res) => {
 
   await stream.pipeToResponse(res);
 
-  // Log assembled response after stream completes
   logResponse({ text: fullText });
 });
 
 /**
  * Minimal non-streaming endpoint - no tools, simple prompt
+ * Picks model based on x-copilot-model header (claude-haiku-4-5 | gpt-5.4)
  */
 app.post("/api/copilot-response/chat", async (req, res) => {
-  logRequest("/api/copilot-response/chat", req.body);
+  const { runtime, modelName } = getRuntimeByModel(
+    req.headers["x-copilot-model"] as string | undefined,
+  );
+  logRequest(`/api/copilot-response/chat [${modelName}]`, req.body);
 
-  let result: Awaited<ReturnType<typeof minimalRuntime.chat>>;
+  let result: Awaited<ReturnType<typeof claudeRuntime.chat>>;
   const { tools, messages, systemPrompt, ...restConfig } = req.body;
 
   const providerLogs = await captureProviderLogs(async () => {
-    result = await minimalRuntime.chat(req.body);
+    result = await runtime.chat(req.body);
   });
 
   logResponse(result! as unknown as Record<string, unknown>);
@@ -557,8 +575,9 @@ app.post("/api/raw/generate/full", async (req, res) => {
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
-    provider: process.env.ANTHROPIC_API_KEY ? "anthropic" : "openai",
-    model,
+    availableModels: ["claude-haiku-4-5", "gpt-5.4"],
+    defaultModel: "claude-haiku-4-5",
+    hint: "Pass x-copilot-model header to select model",
     serverTools: serverTools.map((t) => t.name),
     endpoints: {
       copilot: [
