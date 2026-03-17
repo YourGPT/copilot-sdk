@@ -148,14 +148,14 @@ The loading placeholder and scroll anchor remain outside this block and are unaf
 
 ---
 
-## Roadmap — `Chat.*` Primitives
+## `Chat.*` Primitives — Now Shipped
 
-A full headless primitive API is planned as a future non-breaking addition:
+The headless primitive API described here as a roadmap item has shipped in this same alpha. You can use it today:
 
 ```tsx
-// Future API — Chat.* primitives
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+
 <CopilotChat>
-  <Chat.Header />
   <Chat.MessageList>
     {(message) =>
       message.metadata?.type === "plan" ? (
@@ -165,8 +165,9 @@ A full headless primitive API is planned as a future non-breaking addition:
       )
     }
   </Chat.MessageList>
-  <Chat.Input />
-</CopilotChat>
+</CopilotChat>;
 ```
 
-When this ships, `messageView` becomes a convenience wrapper over the primitive API — no migration needed.
+`messageView` remains the simpler option for quick overrides. `Chat.MessageList` is the lower-level primitive when you need full layout control. Both work — no migration needed between them.
+
+→ Full primitives docs: [CHAT-PRIMITIVES.md](./CHAT-PRIMITIVES.md)

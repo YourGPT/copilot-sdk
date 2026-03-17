@@ -24,6 +24,79 @@ import CopilotSDKLogo from "../../icons/copilot-sdk-logo";
 import { SourceGroup, type SourceItem } from "../../ui/source";
 import { BranchNavigator } from "../../ui/branch-navigator";
 import type { BranchInfo } from "../../../../chat/branching";
+import { useMessageActionsContext } from "./message-actions-context";
+import { CheckIcon, CopyIcon } from "./message-actions-compound";
+
+// ─── FloatingActions ──────────────────────────────────────────────────────────
+
+function FloatingActions({
+  message,
+  role,
+  align = "left",
+  onEdit,
+}: {
+  message: ChatMessage;
+  role: "user" | "assistant";
+  align?: "left" | "right";
+  onEdit?: () => void;
+}) {
+  const ctx = useMessageActionsContext();
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+
+  if (!ctx) return null;
+  const actions = ctx.getActions(role);
+  if (actions.length === 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-0.5 mt-1",
+        "opacity-0 group-hover/message:opacity-100 transition-opacity duration-150",
+        align === "right" ? "justify-end" : "justify-start",
+      )}
+    >
+      {actions.map((action) => {
+        const isHidden =
+          typeof action.hidden === "function"
+            ? action.hidden({ message })
+            : action.hidden;
+        if (isHidden) return null;
+
+        const isCopied = copiedId === action.id;
+
+        return (
+          <button
+            key={action.id}
+            type="button"
+            title={action.tooltip}
+            aria-label={action.tooltip}
+            className={cn(
+              "flex items-center justify-center size-6 rounded-md",
+              "text-muted-foreground hover:text-foreground hover:bg-muted",
+              "transition-colors",
+              action.className,
+            )}
+            onClick={() => {
+              if (action.id === "edit" && onEdit) {
+                onEdit();
+                return;
+              }
+              if (action.id === "copy") {
+                navigator.clipboard.writeText(message.content ?? "");
+                setCopiedId("copy");
+                setTimeout(() => setCopiedId(null), 1500);
+                return;
+              }
+              action.onClick({ message });
+            }}
+          >
+            {action.id === "copy" && isCopied ? <CheckIcon /> : action.icon}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 type DefaultMessageProps = {
   message: ChatMessage;
@@ -341,7 +414,9 @@ export function DefaultMessage({
       message.attachments && message.attachments.length > 0;
 
     return (
-      <Message className={cn("flex gap-2 group/user-msg justify-end")}>
+      <Message
+        className={cn("flex gap-2 group/user-msg group/message justify-end")}
+      >
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
           {/* Edit mode: inline textarea */}
           {isEditing ? (
@@ -451,6 +526,13 @@ export function DefaultMessage({
                   className="mt-1"
                 />
               )}
+              {/* Floating actions for user messages */}
+              <FloatingActions
+                message={message}
+                role="user"
+                align="right"
+                onEdit={onEditMessage ? startEdit : undefined}
+              />
             </>
           )}
         </div>
@@ -525,7 +607,7 @@ export function DefaultMessage({
 
   // Assistant message - left aligned with avatar
   return (
-    <Message className="flex gap-2">
+    <Message className="flex gap-2 group/message">
       <MessageAvatar
         src={assistantAvatar.src}
         alt="Assistant"
@@ -834,6 +916,9 @@ export function DefaultMessage({
                 buttonClassName={followUpButtonClassName}
               />
             )}
+
+            {/* Floating actions for assistant messages */}
+            <FloatingActions message={message} role="assistant" align="left" />
           </>
         )}
       </div>
