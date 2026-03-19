@@ -1,0 +1,10 @@
+{
+  "title": "Context Management",
+  "icon": "Lightbulb",
+  "pages": [
+    "index",
+    { "type": "page", "name": "compaction", "badge": "Beta" },
+    { "type": "page", "name": "token-tracking", "badge": "Beta" },
+    { "type": "page", "name": "session", "badge": "Beta" }
+  ]
+}

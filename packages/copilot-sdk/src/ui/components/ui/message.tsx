@@ -85,9 +85,9 @@ const MessageContent = ({
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
-    "csdk-message-content rounded-lg p-2 break-words whitespace-normal max-w-full leading-relaxed overflow-x-auto overflow-y-hidden",
+    "csdk-message-content rounded-lg p-2 break-words whitespace-normal max-w-full  overflow-x-auto overflow-y-hidden",
     // Typography - simple Tailwind utilities (no prose)
-    "[&_p]:my-1 [&_p]:leading-relaxed",
+    "[&_p]:my-1 ",
     "[&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc [&_ul]:list-outside",
     "[&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal [&_ol]:list-outside",
     "[&_li]:my-0.5 [&_li]:pl-0",

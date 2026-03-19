@@ -9,6 +9,7 @@ import type {
   SDKConfig,
   LayoutConfig,
   OpenRouterModelOption,
+  AlphaConfig,
 } from "./types";
 
 // Theme configurations - hoisted outside component to prevent re-renders
@@ -258,6 +259,23 @@ export const INITIAL_SDK_CONFIG: SDKConfig = {
   loaderVariant: "typing",
   fontSize: "sm",
   debug: false,
+};
+
+export const INITIAL_ALPHA_CONFIG: AlphaConfig = {
+  messageActions: {
+    copyEnabled: true,
+    editEnabled: true,
+    feedbackEnabled: false,
+  },
+  branchingEnabled: false,
+  brandVoiceSkill: false,
+  codeReviewSkill: false,
+  compactionStrategy: "none",
+  sessionPersistence: false,
+  contextStats: false,
+  hiddenAnalytics: false,
+  deferredSearch: false,
+  customMessageView: false,
 };
 
 // Loader variant options for the UI selector

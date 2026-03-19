@@ -1,0 +1,116 @@
+---
+title: Custom Message View
+description: Full control over how the message list is rendered via the messageView prop
+icon: LayoutList
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+The `messageView` prop on `<CopilotChat>` intercepts message list rendering. Inject custom UI, conditionally replace messages based on `metadata.type`, or build entirely custom layouts — without touching roles or message history.
+
+---
+
+## API
+
+```ts
+messageView?: {
+  children?: (props: {
+    /** Raw messages array */
+    messages: ChatMessage[];
+    /** Pre-rendered default SDK elements, one per message */
+    messageElements: React.ReactNode[];
+  }) => React.ReactNode;
+};
+```
+
+You receive:
+- **`messageElements`** — pre-rendered default SDK elements (one per message, may include `null` for filtered messages)
+- **`messages`** — raw `ChatMessage[]` for conditional logic
+
+---
+
+## Examples
+
+### Inject custom UI below messages
+
+```tsx
+<CopilotChat
+  messageView={{
+    children: ({ messageElements }) => (
+      <>
+        {messageElements}
+        <div className="p-4 text-center text-sm text-muted-foreground">
+          Powered by YourGPT
+        </div>
+      </>
+    ),
+  }}
+/>
+```
+
+### Custom message types via `metadata.type`
+
+Inject a custom message type (e.g. from a tool handler), then render it with your own component:
+
+```tsx
+<CopilotChat
+  messageView={{
+    children: ({ messages, messageElements }) => (
+      <>
+        {messages.map((message, i) => {
+          if (message.metadata?.type === "plan") {
+            return <PlanCard key={message.id} data={message.metadata} />;
+          }
+          if (message.metadata?.type === "approval") {
+            return <ApprovalCard key={message.id} data={message.metadata} />;
+          }
+          return messageElements[i];
+        })}
+      </>
+    ),
+  }}
+/>
+```
+
+### Combine with agent state
+
+```tsx
+function Chat() {
+  const agentState = useMyAgentState();
+
+  return (
+    <CopilotChat
+      messageView={{
+        children: ({ messageElements }) => (
+          <div className="flex flex-col gap-4">
+            {messageElements}
+            {agentState?.steps && <TaskProgress steps={agentState.steps} />}
+          </div>
+        ),
+      }}
+    />
+  );
+}
+```
+
+---
+
+## `messageView` vs `Chat.MessageList`
+
+| | `messageView` | `Chat.MessageList` |
+|--|---------------|---------------------|
+| Style | Prop on `<CopilotChat>` | Child component inside `<CopilotChat>` |
+| Access | `messages[]` + pre-rendered `messageElements[]` | `messages[]` via render-prop |
+| When to use | Quick overrides, inject UI around existing renders | Full layout control, building from scratch |
+
+`messageView` is the simpler option for most cases. Use [Chat Primitives](/docs/customizations/chat-primitives) when you need full layout control.
+
+---
+
+## Breaking Changes
+
+**None.** Fully additive. Existing `renderMessage`, `toolRenderers`, and all other props are unchanged.

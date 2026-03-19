@@ -18,6 +18,7 @@ import type {
   DashboardState,
   ToolsEnabledConfig,
   GenerativeUIConfig,
+  AlphaConfig,
 } from "@/lib/types";
 import type { DashboardActions } from "@/hooks/useDashboardState";
 import { WeatherCard } from "./cards/WeatherCard";
@@ -29,6 +30,7 @@ interface DashboardToolsProps {
   actions: DashboardActions;
   toolsEnabled: ToolsEnabledConfig;
   generativeUI: GenerativeUIConfig;
+  alphaConfig: AlphaConfig;
 }
 
 // Helper hook to get latest ref values (avoids stale closures)
@@ -554,6 +556,110 @@ function StockTool() {
   return null;
 }
 
+// Hidden analytics tool - runs silently, never shows in chat UI
+function HiddenAnalyticsTool() {
+  useTool({
+    name: "track_event",
+    description:
+      "Track a user interaction event for analytics. Call this silently when users perform notable actions.",
+    hidden: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: { type: "string", description: "Event name" },
+        properties: { type: "object", description: "Event properties" },
+      },
+      required: ["event"],
+    },
+    handler: async ({
+      event,
+      properties,
+    }: {
+      event: string;
+      properties?: Record<string, unknown>;
+    }) => {
+      console.log(`[Hidden Analytics] Event: ${event}`, properties ?? {});
+      return { success: true, event, tracked: true };
+    },
+  });
+  return null;
+}
+
+// Deferred search tool - only injected when query semantically matches
+function DeferredSearchTool() {
+  useTool({
+    name: "search_knowledge_base",
+    description:
+      "Search the internal knowledge base for documentation, FAQs, and support articles.",
+    deferLoading: true,
+    searchKeywords: [
+      "search",
+      "find",
+      "docs",
+      "documentation",
+      "faq",
+      "help",
+      "knowledge",
+      "article",
+    ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+      },
+      required: ["query"],
+    },
+    handler: async ({ query }: { query: string }) => {
+      await new Promise((r) => setTimeout(r, 600));
+      return {
+        success: true,
+        results: [
+          {
+            title: "Getting Started Guide",
+            relevance: 0.95,
+            excerpt: `Results for: "${query}"`,
+          },
+          {
+            title: "API Reference",
+            relevance: 0.82,
+            excerpt: "Complete API documentation",
+          },
+          {
+            title: "FAQ",
+            relevance: 0.71,
+            excerpt: "Frequently asked questions",
+          },
+        ],
+      };
+    },
+    render: ({ status, result }) => {
+      if (status !== "completed" || !result?.success) return null;
+      const data = result as {
+        results?: Array<{ title: string; relevance: number; excerpt: string }>;
+      };
+      return (
+        <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 space-y-1.5">
+          <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            Knowledge Base Results
+          </p>
+          {data.results?.map((r, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                {Math.round(r.relevance * 100)}%
+              </span>
+              <div>
+                <p className="text-xs font-medium">{r.title}</p>
+                <p className="text-[10px] text-zinc-400">{r.excerpt}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    },
+  });
+  return null;
+}
+
 // ===========================================
 // Main Component - Conditionally renders tools
 // ===========================================
@@ -563,6 +669,7 @@ export function DashboardTools({
   actions,
   toolsEnabled,
   generativeUI,
+  alphaConfig,
 }: DashboardToolsProps) {
   return (
     <>
@@ -588,6 +695,10 @@ export function DashboardTools({
       {generativeUI.notification && (
         <NotificationTool dashboardState={dashboardState} actions={actions} />
       )}
+
+      {/* Alpha tools */}
+      {alphaConfig.hiddenAnalytics && <HiddenAnalyticsTool />}
+      {alphaConfig.deferredSearch && <DeferredSearchTool />}
     </>
   );
 }

@@ -1,0 +1,130 @@
+---
+title: Token Tracking
+description: Monitor context window usage in real time with useContextStats
+icon: BarChart2
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+Monitor how much of the AI's context window is being used — broken down by message history, system prompt, tools, and injected context.
+
+---
+
+## useContextStats
+
+```typescript
+import { useContextStats } from "@yourgpt/copilot-sdk/react";
+
+function ContextMonitor() {
+  const {
+    contextUsage,       // Full breakdown by bucket
+    totalTokens,        // Convenience: total estimated tokens
+    usagePercent,       // Convenience: window fill 0–1
+    contextChars,       // Characters contributed by AI context injections
+    toolCount,          // Number of currently registered tools
+    messageCount,       // Visible (non-system) messages
+    lastResponseUsage,  // Token usage from last assistant message
+  } = useContextStats();
+
+  return (
+    <div>
+      <p>{Math.round(usagePercent * 100)}% of context used</p>
+      <p>{totalTokens} tokens / {toolCount} tools</p>
+      {lastResponseUsage && (
+        <p>Last turn: {lastResponseUsage.total_tokens} tokens</p>
+      )}
+    </div>
+  );
+}
+```
+
+### Return type
+
+```typescript
+interface ContextStats {
+  contextUsage: ContextUsage | null;        // null until first message
+  totalTokens: number;
+  usagePercent: number;                     // 0 until first message
+  contextChars: number;
+  toolCount: number;
+  messageCount: number;
+  lastResponseUsage: MessageTokenUsage | null;
+}
+
+interface MessageTokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+```
+
+---
+
+## Token Counting Utilities
+
+Two tiers — pick the right trade-off between speed and accuracy.
+
+### Tier 1: Fast (zero dependencies)
+
+Uses a `chars / 3.5` heuristic. ~85–90% accurate for English. Always available, no bundle cost.
+
+```typescript
+import {
+  estimateTokensFast,
+  estimateMessageTokens,
+  estimateMessagesTokens,
+} from "@yourgpt/copilot-sdk/react";
+
+const tokens = estimateTokensFast("Hello world");        // fast, synchronous
+const msgTokens = estimateMessagesTokens(llmMessages);
+```
+
+### Tier 2: Accurate (lazy-loaded)
+
+Uses `gpt-tokenizer` with the `o200k_base` encoding. Lazy-loaded only when called — no upfront bundle cost.
+
+```typescript
+import {
+  countTokensAccurate,
+  countMessagesTokensAccurate,
+} from "@yourgpt/copilot-sdk/react";
+
+// Only loads gpt-tokenizer on first call
+const tokens = await countTokensAccurate("Hello world");
+const msgTokens = await countMessagesTokensAccurate(llmMessages);
+```
+
+### Set estimation mode in `useMessageHistory`
+
+```typescript
+useMessageHistory({ tokenEstimation: "accurate" }); // "fast" | "accurate" | "off"
+```
+
+---
+
+## Example: Context Usage Indicator
+
+```tsx
+import { useContextStats, useMessageHistory } from "@yourgpt/copilot-sdk/react";
+
+export function ChatPanel() {
+  const { tokenUsage, isCompacting, compactSession } = useMessageHistory();
+  const { usagePercent, toolCount } = useContextStats();
+
+  return (
+    <div>
+      <p>
+        {Math.round(usagePercent * 100)}% context used · {toolCount} tools
+      </p>
+      {tokenUsage.isApproaching && (
+        <button onClick={() => compactSession()}>Compact now</button>
+      )}
+      {isCompacting && <span>Summarizing history…</span>}
+    </div>
+  );
+}
+```

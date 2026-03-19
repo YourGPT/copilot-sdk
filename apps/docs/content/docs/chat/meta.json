@@ -1,0 +1,9 @@
+{
+  "title": "Chat",
+  "icon": "MessageSquare",
+  "pages": [
+    "index",
+    { "type": "page", "name": "branching", "badge": "Beta" },
+    { "type": "page", "name": "message-actions", "badge": "Beta" }
+  ]
+}

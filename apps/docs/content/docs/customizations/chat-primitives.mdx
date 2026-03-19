@@ -1,0 +1,174 @@
+---
+title: Chat Primitives
+description: Headless building blocks for composing fully custom chat UIs
+icon: Layers
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+Low-level building blocks for composing custom chat UIs. The SDK handles all state, streaming, and context — you control the layout.
+
+Two complementary APIs:
+- **`ChatPrimitives`** — named export of individual components, import under any alias
+- **`CopilotChat.*`** — same primitives mounted directly on `CopilotChat` for inline composition
+
+---
+
+## All Primitives
+
+```tsx
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+```
+
+| Primitive | Description |
+|-----------|-------------|
+| `Chat.MessageList` | Render-prop message list — reads `messages` from context |
+| `Chat.DefaultMessage` | Full SDK message bubble — use as fallback in custom lists |
+| `Chat.Header` | Chat header bar |
+| `Chat.Welcome` | Welcome screen shown when there are no messages |
+| `Chat.Input` | Composer / input box |
+| `Chat.ScrollAnchor` | Auto-scroll anchor, place at end of message list |
+| `Chat.Message` | Low-level message row wrapper |
+| `Chat.MessageAvatar` | Avatar with fallback initials |
+| `Chat.MessageContent` | Content bubble — renders markdown, supports streaming |
+| `Chat.MessageActions` | Action bar layout primitive (wraps action buttons) |
+| `Chat.MessageAction` | Single action icon button with tooltip |
+| `Chat.Loader` | Streaming / thinking indicator |
+
+---
+
+## `Chat.MessageList` props
+
+```ts
+interface MessageListProps {
+  children?: (message: ChatMessage, index: number) => React.ReactNode;
+  className?: string;
+}
+```
+
+When `children` is provided, called once per message — return your custom component or fall back to `Chat.DefaultMessage`. When omitted, renders all messages with `DefaultMessage`.
+
+---
+
+## Examples
+
+### Custom message type with fallback
+
+```tsx
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+
+<CopilotChat>
+  <Chat.MessageList>
+    {(message) =>
+      message.metadata?.type === "plan" ? (
+        <PlanCard key={message.id} message={message} />
+      ) : (
+        <Chat.DefaultMessage key={message.id} message={message} />
+      )
+    }
+  </Chat.MessageList>
+</CopilotChat>
+```
+
+### Fully custom layout — compose from scratch
+
+```tsx
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+
+<CopilotChat>
+  <div className="flex flex-col h-full">
+    <Chat.Header />
+    <Chat.Welcome />
+
+    <div className="flex-1 overflow-y-auto px-4">
+      <Chat.MessageList>
+        {(message) => (
+          <Chat.Message key={message.id} message={message}>
+            <Chat.MessageAvatar message={message} />
+            <Chat.MessageContent message={message} />
+          </Chat.Message>
+        )}
+      </Chat.MessageList>
+      <Chat.Loader />
+      <Chat.ScrollAnchor />
+    </div>
+
+    <Chat.Input />
+  </div>
+</CopilotChat>
+```
+
+### Mix primitives with message actions
+
+```tsx
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+
+<CopilotChat>
+  {/* Register floating action buttons */}
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.FeedbackAction onFeedback={(msg, type) => log(msg.id, type)} />
+  </CopilotChat.MessageActions>
+
+  {/* Custom message list */}
+  <Chat.MessageList>
+    {(message) =>
+      message.metadata?.type === "approval" ? (
+        <ApprovalCard key={message.id} message={message} />
+      ) : (
+        <Chat.DefaultMessage key={message.id} message={message} />
+      )
+    }
+  </Chat.MessageList>
+</CopilotChat>
+```
+
+### Per-message action buttons using primitives directly
+
+```tsx
+import { ChatPrimitives as Chat } from "@yourgpt/copilot-sdk/ui";
+
+<Chat.MessageList>
+  {(message) => (
+    <Chat.Message key={message.id} message={message}>
+      <Chat.MessageAvatar message={message} />
+      <div className="flex flex-col gap-1">
+        <Chat.MessageContent message={message} />
+        <Chat.MessageActions>
+          <Chat.MessageAction
+            icon={<CopyIcon />}
+            tooltip="Copy"
+            onClick={() => navigator.clipboard.writeText(message.content ?? "")}
+          />
+        </Chat.MessageActions>
+      </div>
+    </Chat.Message>
+  )}
+</Chat.MessageList>
+```
+
+---
+
+## `messageView` vs `Chat.MessageList`
+
+Two ways to customize message rendering at different abstraction levels:
+
+| | `messageView` prop | `Chat.MessageList` |
+|--|--------------------|--------------------|
+| Style | Prop on `<CopilotChat>` | Child component inside `<CopilotChat>` |
+| Access | `messages[]` + pre-rendered `messageElements[]` | `messages[]` via render-prop |
+| When to use | Quick overrides, inject extra UI around existing renders | Full layout control, building from primitives |
+
+Both are non-breaking and can coexist.
+
+→ See [Custom Message View](/docs/customizations/custom-message-view) for the `messageView` API.
+
+---
+
+## Breaking Changes
+
+**None.** Both are purely additive. Existing `<CopilotChat />` usage is untouched.

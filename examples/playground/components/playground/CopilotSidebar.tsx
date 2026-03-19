@@ -14,6 +14,7 @@ import type {
   ProviderId,
   ApiKeys,
   LoaderVariant,
+  AlphaConfig,
 } from "@/lib/types";
 import type { DashboardActions } from "@/hooks/useDashboardState";
 
@@ -30,6 +31,7 @@ interface CopilotSidebarProps {
   selectedOpenRouterModel: string;
   apiKeys: ApiKeys;
   loaderVariant: LoaderVariant;
+  alphaConfig: AlphaConfig;
 }
 
 export function CopilotSidebar({
@@ -45,6 +47,7 @@ export function CopilotSidebar({
   selectedOpenRouterModel,
   apiKeys,
   loaderVariant,
+  alphaConfig,
 }: CopilotSidebarProps) {
   // Build runtime URL with provider and model selection
   const runtimeUrl = useMemo(() => {
@@ -109,6 +112,7 @@ export function CopilotSidebar({
             toolsEnabled={toolsEnabled}
             generativeUI={generativeUI}
             loaderVariant={loaderVariant}
+            alphaConfig={alphaConfig}
           />
         </CopilotProvider>
       </div>

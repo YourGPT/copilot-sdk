@@ -1,0 +1,205 @@
+---
+title: Message History Compaction
+description: Auto-summarize old messages to keep long conversations within the AI's context window
+icon: Archive
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+Keep long conversations alive without hitting token limits. The SDK maintains two parallel views of message history — a full display layer for the UI, and a compacted layer sent to the model.
+
+---
+
+## How It Works
+
+Every conversation maintains two parallel views:
+
+| Layer | Type | Purpose |
+|-------|------|---------|
+| **Display layer** | `DisplayMessage[]` | Full immutable history. Rendered in the UI. Never shrinks. |
+| **LLM context layer** | `LLMMessage[]` | Compacted/pruned form sent to the model on each request. |
+
+When compaction fires, a `CompactionMarker` is injected into the display layer so users can see where summarization happened — but the full history is never deleted.
+
+---
+
+## useMessageHistory
+
+```typescript
+import { useMessageHistory } from "@yourgpt/copilot-sdk/react";
+
+function MyChat() {
+  const {
+    displayMessages,      // Full UI history
+    llmMessages,          // Compacted LLM context
+    tokenUsage,           // Live token estimate
+    isCompacting,         // true while auto-compaction runs
+    compactionState,      // Metadata & rolling summary
+    compactSession,       // Manual trigger
+    addToWorkingMemory,
+    clearWorkingMemory,
+    resetSession,
+  } = useMessageHistory({
+    strategy: "summary-buffer",
+    maxContextTokens: 128000,
+    compactionThreshold: 0.75,
+    compactionUrl: "/api/compact",
+    persistSession: true,
+  });
+}
+```
+
+---
+
+## Compaction Strategies
+
+### `"none"` (default)
+
+No compaction. Zero-config, 100% backward-compatible.
+
+```typescript
+useMessageHistory({ strategy: "none" });
+```
+
+### `"sliding-window"`
+
+Keeps only the most recent N tokens of history. Oldest messages are dropped when the token budget is exceeded.
+
+```typescript
+useMessageHistory({
+  strategy: "sliding-window",
+  maxContextTokens: 128000,
+  reserveForResponse: 4096,
+  recentBuffer: 10,        // Always keep at least 10 recent messages
+  toolResultMaxChars: 10000, // Truncate large tool results
+});
+```
+
+### `"selective-prune"`
+
+Removes old tool-result messages while keeping the user/assistant conversation skeleton. Lighter than sliding-window — no token counting required.
+
+```typescript
+useMessageHistory({
+  strategy: "selective-prune",
+  recentBuffer: 10,
+});
+```
+
+### `"summary-buffer"`
+
+Summarizes old messages into a rolling summary when usage exceeds `compactionThreshold`. The summary is injected as a system message. Requires a `/api/compact` endpoint.
+
+```typescript
+useMessageHistory({
+  strategy: "summary-buffer",
+  compactionThreshold: 0.75, // Compact at 75% of maxContextTokens
+  compactionUrl: "/api/compact",
+  recentBuffer: 10,
+  onCompaction: (event) => {
+    console.log(`Compacted ${event.messagesSummarized} messages, saved ~${event.tokensSaved} tokens`);
+  },
+});
+```
+
+Custom summarizer (skip the HTTP round-trip):
+
+```typescript
+useMessageHistory({
+  strategy: "summary-buffer",
+  summarizer: async (messages) => {
+    const res = await myLLM.summarize(messages);
+    return res.text;
+  },
+});
+```
+
+---
+
+## Provider-level Config
+
+Set defaults once in `<CopilotProvider>`:
+
+```tsx
+<CopilotProvider
+  messageHistory={{
+    strategy: "summary-buffer",
+    maxContextTokens: 128000,
+    compactionUrl: "/api/compact",
+    persistSession: true,
+  }}
+>
+  <App />
+</CopilotProvider>
+```
+
+---
+
+## Working Memory
+
+Pin facts that survive all future compactions:
+
+```typescript
+const { addToWorkingMemory, clearWorkingMemory } = useMessageHistory({ ... });
+
+// Survives compaction
+addToWorkingMemory("User is on the Pro plan. Account ID: acct_123");
+
+// Remove all pinned facts
+clearWorkingMemory();
+```
+
+---
+
+## Config Reference
+
+```typescript
+interface MessageHistoryConfig {
+  strategy?: "none" | "sliding-window" | "summary-buffer" | "selective-prune";
+  maxContextTokens?: number;       // default: 128000
+  reserveForResponse?: number;     // default: 4096
+  compactionThreshold?: number;    // default: 0.75
+  recentBuffer?: number;           // default: 10
+  toolResultMaxChars?: number;     // default: 10000 (0 = no cap)
+  compactionUrl?: string;          // required for summary-buffer
+  persistSession?: boolean;        // default: false
+  storageKey?: string;             // default: "copilot-session"
+  onCompaction?: (event: CompactionEvent) => void;
+  onTokenUsage?: (usage: TokenUsage) => void;
+}
+```
+
+---
+
+## Server: `/api/compact` Endpoint
+
+The `compactSession` utility powers the compaction endpoint. It calls Claude (defaults to `claude-haiku-4-5`) to produce a structured summary.
+
+```typescript
+// app/api/compact/route.ts
+import { compactSession } from "@yourgpt/copilot-sdk/server";
+
+export async function POST(req: Request) {
+  const { messages, existingSummary, workingMemory } = await req.json();
+
+  const { summary } = await compactSession({
+    messages,
+    existingSummary,  // For rolling summaries on subsequent compactions
+    workingMemory,    // User-pinned facts (addToWorkingMemory)
+    model: "claude-haiku-4-5",
+    maxSummaryTokens: 1024,
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  return Response.json({ summary });
+}
+```
+
+<Callout type="info">
+The summary preserves: user goals, technical decisions, tool call outcomes, errors and resolutions, pending tasks.
+</Callout>

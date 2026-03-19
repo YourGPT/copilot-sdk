@@ -1,0 +1,96 @@
+---
+title: Deferred Tools
+description: Keep large tool registries lean by loading tools only when semantically relevant
+icon: Clock
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+Large tool registries bloat the LLM request payload and consume valuable context tokens. Mark tools with `deferLoading: true` to exclude them from the default request — they are auto-injected only when the user's query semantically matches the tool.
+
+---
+
+## Usage
+
+```typescript
+import { useTool } from "@yourgpt/copilot-sdk/react";
+import { z } from "zod";
+
+useTool({
+  name: "run_sql_query",
+  description: "Execute a SQL query against the database",
+  deferLoading: true,                              // Not sent on every request
+  searchKeywords: ["sql", "query", "database", "table"],
+  inputSchema: z.object({ query: z.string() }),
+  handler: async ({ query }) => db.execute(query),
+});
+```
+
+Auto-detection uses `description` + `searchKeywords` to score relevance against the current message. No configuration required.
+
+---
+
+## `useTools` (ToolSet pattern)
+
+Register multiple tools at once:
+
+```typescript
+import { useTools, tool } from "@yourgpt/copilot-sdk/react";
+
+function MyApp() {
+  useTools({
+    get_weather: tool({
+      description: "Get weather for a location",
+      inputSchema: {
+        type: "object",
+        properties: { location: { type: "string" } },
+        required: ["location"],
+      },
+      handler: async ({ location }) => fetchWeather(location),
+    }),
+    run_sql_query: tool({
+      description: "Execute a SQL query",
+      deferLoading: true,
+      searchKeywords: ["sql", "query", "database"],
+      inputSchema: z.object({ query: z.string() }),
+      handler: async ({ query }) => db.execute(query),
+    }),
+  });
+}
+```
+
+---
+
+## UseToolConfig — Deferred Fields
+
+```typescript
+interface UseToolConfig<TParams> {
+  // ...other fields...
+
+  // Loading strategy
+  deferLoading?: boolean;       // Exclude from default request payload
+  searchKeywords?: string[];    // Extra keywords for relevance matching
+  group?: string;               // Logical group for batch deferred loading
+  category?: string;            // Category tag
+  profiles?: string[];          // Named profiles for conditional activation
+}
+```
+
+---
+
+## When to Use
+
+| Scenario | Use deferred? |
+|----------|---------------|
+| Tools used in every message (e.g. `navigate_to`) | No |
+| Heavy/specialized tools (e.g. `run_sql_query`) | Yes |
+| Tools with large input schemas | Yes |
+| You have 10+ tools registered | Consider it |
+
+<Callout type="info">
+Deferred tools are still available to the AI — they're just not included in the initial request payload. When the user's message matches, they're injected automatically before the request is sent.
+</Callout>

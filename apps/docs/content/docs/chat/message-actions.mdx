@@ -1,0 +1,158 @@
+---
+title: Message Actions
+description: Add floating copy, edit, feedback, and custom action buttons to chat messages
+icon: MousePointerClick
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+A compound component API for registering floating action buttons on chat messages — copy, edit, feedback, or fully custom actions. Actions appear on hover, floating below the message bubble. Declarative, role-based, fully composable.
+
+---
+
+## Quick Start
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.FeedbackAction
+      onFeedback={(message, type) => sendFeedback({ messageId: message.id, type })}
+    />
+  </CopilotChat.MessageActions>
+
+  <CopilotChat.MessageActions role="user">
+    <CopilotChat.EditAction />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+<Callout type="info">
+If no `<CopilotChat.MessageActions>` children are declared, nothing changes — existing chat UI looks and behaves identically.
+</Callout>
+
+---
+
+## Compound Components
+
+| Component | Description |
+|-----------|-------------|
+| `CopilotChat.MessageActions` | Registers actions for a role (`user` or `assistant`) |
+| `CopilotChat.CopyAction` | Copy message to clipboard (with ✓ feedback) |
+| `CopilotChat.EditAction` | Inline edit for user messages (wired to branching) |
+| `CopilotChat.FeedbackAction` | Thumbs up / down |
+| `CopilotChat.Action` | Fully custom action button |
+
+---
+
+## Props Reference
+
+```tsx
+// MessageActions
+role: "user" | "assistant"
+
+// CopyAction
+tooltip?: string
+className?: string
+
+// EditAction
+tooltip?: string
+className?: string
+
+// FeedbackAction
+onFeedback?: (message: ChatMessage, type: "helpful" | "not-helpful") => void
+tooltip?: string
+className?: string
+
+// Action (custom)
+id?: string
+icon: ReactNode
+tooltip: string
+onClick: (props: { message: ChatMessage }) => void
+hidden?: boolean | ((props: { message: ChatMessage }) => boolean)
+className?: string
+```
+
+---
+
+## Examples
+
+### Copy + Feedback on assistant
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.FeedbackAction
+      onFeedback={(message, type) => {
+        sendFeedback({ messageId: message.id, type });
+      }}
+    />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+### Custom action
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.Action
+      icon={<ShareIcon />}
+      tooltip="Share"
+      onClick={({ message }) => share(message.content)}
+    />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+### Conditional action (hide based on message content)
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.Action
+      icon={<FlagIcon />}
+      tooltip="Report"
+      hidden={({ message }) => !message.content}
+      onClick={({ message }) => report(message.id)}
+    />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+### Full setup — both roles
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.FeedbackAction onFeedback={(msg, type) => log(msg.id, type)} />
+    <CopilotChat.Action
+      icon={<BookmarkIcon />}
+      tooltip="Save"
+      onClick={({ message }) => save(message)}
+    />
+  </CopilotChat.MessageActions>
+
+  <CopilotChat.MessageActions role="user">
+    <CopilotChat.EditAction />
+    <CopilotChat.Action
+      icon={<DeleteIcon />}
+      tooltip="Delete"
+      onClick={({ message }) => deleteMessage(message.id)}
+    />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+---
+
+## Breaking Changes
+
+**None.** Purely additive. If no `MessageActions` children are declared, the chat UI is identical to before.

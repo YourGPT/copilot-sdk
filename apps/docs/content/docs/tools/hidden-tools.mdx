@@ -1,0 +1,70 @@
+---
+title: Hidden Tools & Fallback Renderer
+description: Run tools silently without showing them in the chat UI, and catch-all renderers for unregistered tools
+icon: EyeOff
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+---
+
+## Hidden Tools
+
+Register tools that execute silently — they run when called by the AI but are never shown in the tool execution UI.
+
+```typescript
+import { useTool } from "@yourgpt/copilot-sdk/react";
+
+useTool({
+  name: "log_analytics_event",
+  description: "Log a UI analytics event",
+  hidden: true,   // Never rendered in chat UI
+  inputSchema: z.object({ event: z.string(), data: z.record(z.unknown()) }),
+  handler: async ({ event, data }) => {
+    analytics.track(event, data);
+    return {};
+  },
+});
+```
+
+Use hidden tools for:
+- Analytics and logging
+- Background state updates
+- Internal bookkeeping the user doesn't need to see
+
+---
+
+## Fallback Tool Renderer
+
+The `<CopilotChat>` component resolves a renderer for each tool execution using this priority chain:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | `toolRenderers[toolName]` | Per-tool renderer map on `<CopilotChat>` |
+| 2 | `tool.render` | Render function on the `ToolDefinition` |
+| 3 | `mcpToolRenderer` | Catch-all for tools with `source: "mcp"` |
+| 4 | `fallbackToolRenderer` | Catch-all for any unmatched tool |
+| 5 | Built-in default | Generic tool execution card |
+
+```tsx
+<CopilotChat
+  // Highest priority — per-tool
+  toolRenderers={{
+    get_weather: ({ args, result }) => <WeatherCard {...result} />,
+  }}
+  // MCP catch-all
+  mcpToolRenderer={({ toolName, args, result }) => (
+    <MCPCard name={toolName} />
+  )}
+  // Universal catch-all
+  fallbackToolRenderer={({ toolName, args, result }) => (
+    <pre>{JSON.stringify(result, null, 2)}</pre>
+  )}
+/>
+```
+
+The `fallbackToolRenderer` is useful when you have dynamically registered tools or MCP tools whose names you don't know at render time.

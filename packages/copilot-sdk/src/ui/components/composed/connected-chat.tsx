@@ -661,6 +661,12 @@ export const CopilotChat = Object.assign(CopilotChatBase, {
   Suggestions: Chat.Suggestions,
   BackButton: Chat.BackButton, // Navigation: start new chat
   ThreadPicker: Chat.ThreadPicker, // Thread switching
+  // Message actions compound components (alpha)
+  MessageActions: Chat.MessageActions,
+  CopyAction: Chat.CopyAction,
+  EditAction: Chat.EditAction,
+  FeedbackAction: Chat.FeedbackAction,
+  Action: Chat.Action,
 });
 
 // Alias for backwards compatibility

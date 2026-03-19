@@ -1,0 +1,9 @@
+{
+  "title": "Customizations",
+  "icon": "Paintbrush",
+  "pages": [
+    "index",
+    { "type": "page", "name": "chat-primitives", "badge": "Beta" },
+    { "type": "page", "name": "custom-message-view", "badge": "Beta" }
+  ]
+}

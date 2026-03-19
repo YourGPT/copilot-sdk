@@ -1,0 +1,210 @@
+---
+title: Conversation Branching
+description: Edit messages to create parallel conversation paths, just like ChatGPT and Claude.ai
+icon: GitBranch
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+<Callout type="warn">
+**Beta** — This feature is available in `release/alpha`. APIs may change before stable release.
+</Callout>
+
+Edit any user message to create a parallel conversation path, preserving the original. Navigate between variants with `← N/M →` — the same UX as ChatGPT, Claude.ai, and Gemini.
+
+---
+
+## Zero-Config Usage
+
+If you use `<CopilotChat />`, branching is **already active**. No code changes needed.
+
+- Edit button (✏) appears on hover over any user message
+- `← 1/2 →` navigator appears below user messages when variants exist
+- Regenerate creates a new branch instead of overwriting
+
+```tsx
+// Nothing to add — branching works out of the box
+<CopilotChat className="h-[600px]" />
+```
+
+---
+
+## New APIs
+
+### `useCopilot()` / `useCopilotProvider`
+
+```typescript
+const {
+  switchBranch,   // (messageId: string) => void
+  getBranchInfo,  // (messageId: string) => BranchInfo | null
+  editMessage,    // (messageId: string, newContent: string) => Promise<void>
+  hasBranches,    // boolean — true if any fork exists
+  getAllMessages,  // () => UIMessage[] — all branches, not just visible path
+} = useCopilot();
+```
+
+### `BranchInfo` type
+
+```typescript
+interface BranchInfo {
+  siblingIndex: number;    // 0-based — which variant this is
+  totalSiblings: number;   // how many variants exist at this fork
+  siblingIds: string[];    // ordered oldest-first
+  hasPrevious: boolean;
+  hasNext: boolean;
+}
+```
+
+### `BranchNavigator` component
+
+Standalone navigator for custom message renderers:
+
+```tsx
+import { BranchNavigator } from "@yourgpt/copilot-sdk/ui";
+
+<BranchNavigator
+  siblingIndex={info.siblingIndex}
+  totalSiblings={info.totalSiblings}
+  hasPrevious={info.hasPrevious}
+  hasNext={info.hasNext}
+  onPrevious={() => switchBranch(info.siblingIds[info.siblingIndex - 1])}
+  onNext={() => switchBranch(info.siblingIds[info.siblingIndex + 1])}
+/>
+```
+
+### `MessageTree` (framework-agnostic)
+
+```typescript
+import { MessageTree, type BranchInfo } from "@yourgpt/copilot-sdk";
+
+const tree = new MessageTree(messages);
+tree.getVisibleMessages(); // active path only (sent to AI)
+tree.getAllMessages();     // all branches (for persistence)
+tree.getBranchInfo(messageId); // BranchInfo | null
+tree.switchBranch(messageId);
+tree.hasBranches; // boolean
+```
+
+---
+
+## Manual Wiring (`<Chat />` users)
+
+Wire the three props from `useCopilot()`:
+
+```tsx
+function MyChat() {
+  const { switchBranch, getBranchInfo, editMessage } = useCopilot();
+
+  return (
+    <Chat
+      getBranchInfo={getBranchInfo}
+      onSwitchBranch={switchBranch}
+      onEditMessage={editMessage}
+    />
+  );
+}
+```
+
+---
+
+## Custom Message Renderers
+
+Use `getBranchInfo` + `BranchNavigator` in your own message components:
+
+```tsx
+function MyMessage({ message }) {
+  const { switchBranch, getBranchInfo } = useCopilot();
+  const info = message.role === "user" ? getBranchInfo(message.id) : null;
+
+  return (
+    <div>
+      <p>{message.content}</p>
+      {info && (
+        <BranchNavigator
+          {...info}
+          onPrevious={() => switchBranch(info.siblingIds[info.siblingIndex - 1])}
+          onNext={() => switchBranch(info.siblingIds[info.siblingIndex + 1])}
+        />
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+## Programmatic Branching
+
+```typescript
+// Edit a message (creates new branch from same parent)
+await editMessage("msg-abc", "Updated question text");
+
+// Navigate between variants
+switchBranch("msg-xyz");
+
+// Check if branches exist
+if (hasBranches) {
+  const info = getBranchInfo("msg-abc");
+  console.log(info.totalSiblings, info.siblingIndex);
+}
+
+// Persist all branches (not just visible path)
+const allMessages = getAllMessages();
+await saveToServer(allMessages);
+```
+
+---
+
+## Persistence
+
+### New DB columns (optional)
+
+Two new optional columns on your messages table:
+
+```sql
+ALTER TABLE messages
+  ADD COLUMN parent_id TEXT REFERENCES messages(id),
+  ADD COLUMN children_ids JSONB DEFAULT '[]';
+```
+
+<Callout type="info">
+These columns are **optional**. Existing rows without them are auto-migrated to a linear tree on load — no data loss, no required migration script.
+</Callout>
+
+### What gets saved
+
+When `onMessagesChange` fires, the payload now contains **all messages across all branches**. Each message carries:
+
+```json
+{
+  "id": "msg-abc",
+  "role": "assistant",
+  "content": "...",
+  "parent_id": "msg-xyz",
+  "children_ids": []
+}
+```
+
+### Upsert strategy (recommended)
+
+```typescript
+// ✅ Safe for branching — upsert by ID
+await db.messages.upsert({ id: msg.id, ...msg });
+
+// ⚠️ Loses inactive branches
+await db.threads.update({ messages: visibleMessages });
+```
+
+---
+
+## Breaking Changes
+
+**None.** All new fields and methods are optional. Existing usage is untouched.
+
+| Scenario | Behavior |
+|----------|----------|
+| Messages with no `parentId` | Falls back to insertion order (legacy linear) |
+| `regenerate()` with no args | Identical to before |
+| `sendMessage()` with no options | Identical to before |
+| `onMessagesChange` consumers | Payload now includes all branches — shape unchanged |
