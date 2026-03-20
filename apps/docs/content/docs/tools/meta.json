@@ -6,7 +6,7 @@
     "frontend-tools",
     "backend-tools",
     "agentic-loop",
-    { "type": "page", "name": "deferred-tools", "badge": "Beta" },
-    { "type": "page", "name": "hidden-tools", "badge": "Beta" }
+    "deferred-tools",
+    "hidden-tools"
   ]
 }
