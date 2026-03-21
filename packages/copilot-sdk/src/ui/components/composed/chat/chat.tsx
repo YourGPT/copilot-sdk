@@ -546,6 +546,7 @@ function ChatComponent({
   // Custom rendering
   messageView,
   renderMessage,
+  wrapMessage,
   renderInput,
   renderHeader,
   // Avatar grouping
@@ -1027,11 +1028,15 @@ function ChatComponent({
                           }
                         };
 
-                        return renderMessage ? (
-                          <React.Fragment key={message.id}>
-                            {renderMessage(messageWithExecutions, index)}
-                          </React.Fragment>
-                        ) : (
+                        if (renderMessage) {
+                          return (
+                            <React.Fragment key={message.id}>
+                              {renderMessage(messageWithExecutions, index)}
+                            </React.Fragment>
+                          );
+                        }
+
+                        const defaultMsg = (
                           <DefaultMessage
                             key={message.id}
                             message={messageWithExecutions}
@@ -1078,6 +1083,18 @@ function ChatComponent({
                             onSwitchBranch={onSwitchBranch}
                             onEditMessage={onEditMessage}
                           />
+                        );
+
+                        return wrapMessage ? (
+                          <React.Fragment key={message.id}>
+                            {wrapMessage(
+                              defaultMsg,
+                              messageWithExecutions,
+                              index,
+                            )}
+                          </React.Fragment>
+                        ) : (
+                          defaultMsg
                         );
                       });
                       return messageView?.children

@@ -727,26 +727,7 @@ export function DefaultMessage({
                     );
                   }
 
-                  // PRIORITY 3: fallbackToolRenderer (catch-all for any unmatched tool)
-                  if (fallbackToolRenderer) {
-                    const FallbackRenderer = fallbackToolRenderer;
-                    return (
-                      <FallbackRenderer
-                        key={exec.id}
-                        execution={{
-                          id: exec.id,
-                          name: exec.name,
-                          args: exec.args,
-                          status: exec.status,
-                          result: exec.result,
-                          error: exec.error,
-                          source: exec.source,
-                        }}
-                      />
-                    );
-                  }
-
-                  // PRIORITY 4: toolRenderers map (app-level explicit renderer)
+                  // PRIORITY 3: toolRenderers map (app-level explicit renderer — static, always available)
                   const Renderer = toolRenderers?.[exec.name];
                   if (Renderer) {
                     return (
@@ -760,6 +741,25 @@ export function DefaultMessage({
                           result: exec.result,
                           error: exec.error,
                           approvalStatus: exec.approvalStatus,
+                          source: exec.source,
+                        }}
+                      />
+                    );
+                  }
+
+                  // PRIORITY 4: fallbackToolRenderer (catch-all for any unmatched tool)
+                  if (fallbackToolRenderer) {
+                    const FallbackRenderer = fallbackToolRenderer;
+                    return (
+                      <FallbackRenderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
                           source: exec.source,
                         }}
                       />

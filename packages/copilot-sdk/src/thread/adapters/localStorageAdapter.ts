@@ -35,6 +35,8 @@ interface SerializedThreadData {
   updatedAt: string;
   messages: SerializedMessage[];
   sources: unknown[];
+  /** ID of the active leaf message for branch restoration */
+  activeLeafId?: string;
 }
 
 /**
@@ -48,6 +50,10 @@ interface SerializedMessage {
   tool_calls?: unknown;
   tool_call_id?: string;
   metadata?: unknown;
+  /** Parent message ID for branch tree reconstruction */
+  parent_id?: string | null;
+  /** Child message IDs for branch tree reconstruction */
+  children_ids?: string[];
 }
 
 /**
@@ -99,6 +105,7 @@ function serializeThread(thread: ThreadData): SerializedThreadData {
     createdAt: thread.createdAt.toISOString(),
     updatedAt: thread.updatedAt.toISOString(),
     sources: thread.sources || [],
+    activeLeafId: thread.activeLeafId,
     messages: thread.messages.map((m) => ({
       id: m.id,
       role: m.role,
@@ -110,6 +117,8 @@ function serializeThread(thread: ThreadData): SerializedThreadData {
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id,
       metadata: m.metadata,
+      parent_id: m.parent_id,
+      children_ids: m.children_ids,
     })),
   };
 }
@@ -126,6 +135,7 @@ function deserializeThread(data: SerializedThreadData): ThreadData {
     createdAt: new Date(data.createdAt),
     updatedAt: new Date(data.updatedAt),
     sources: (data.sources || []) as ThreadData["sources"],
+    activeLeafId: data.activeLeafId,
     messages: (data.messages || []).map((m) => ({
       id: m.id,
       role: m.role as "user" | "assistant" | "system" | "tool",
@@ -134,6 +144,8 @@ function deserializeThread(data: SerializedThreadData): ThreadData {
       tool_calls: m.tool_calls as ThreadData["messages"][0]["tool_calls"],
       tool_call_id: m.tool_call_id,
       metadata: m.metadata as ThreadData["messages"][0]["metadata"],
+      parent_id: m.parent_id,
+      children_ids: m.children_ids,
     })),
   };
 }
