@@ -203,7 +203,14 @@ function getZodEnumValues(
  */
 export function zodToJsonSchema(schema: unknown): ToolInputSchema {
   const result = _zodToJsonSchemaInternal(schema);
-  // Cast to ToolInputSchema - callers should only pass z.object() schemas for tool inputs
+  // If it's a oneOf/anyOf (discriminated union) without a type, wrap in type:object
+  // so LLMs receive a valid top-level object schema instead of inventing a wrapper property
+  if (!result.type && (result.oneOf || result.anyOf)) {
+    return {
+      type: "object",
+      ...(result.oneOf ? { oneOf: result.oneOf } : { anyOf: result.anyOf }),
+    } as unknown as ToolInputSchema;
+  }
   return result as unknown as ToolInputSchema;
 }
 
@@ -348,8 +355,40 @@ function _zodToJsonSchemaInternal(schema: unknown): JSONSchemaProperty {
       return { type: "string", description };
     }
 
+    case "ZodDiscriminatedUnion": {
+      const obj = schema as Record<string, unknown>;
+      let options: unknown[] | undefined;
+
+      if ("_zod" in obj) {
+        const zod = obj._zod as Record<string, unknown>;
+        const def = zod.def as Record<string, unknown> | undefined;
+        // Zod 4: options may be a Map or array
+        const raw = def?.options;
+        options =
+          raw instanceof Map
+            ? Array.from(raw.values())
+            : (raw as unknown[] | undefined);
+      }
+      if (!options) {
+        const def = obj._def as Record<string, unknown>;
+        const raw = def?.options;
+        options =
+          raw instanceof Map
+            ? Array.from(raw.values())
+            : (raw as unknown[] | undefined);
+      }
+
+      if (options && options.length > 0) {
+        const oneOf = options.map((opt) => _zodToJsonSchemaInternal(opt));
+        const result: JSONSchemaProperty = { oneOf };
+        if (description) result.description = description;
+        return result;
+      }
+      return { type: "object", description };
+    }
+
     case "ZodUnion": {
-      // For unions, we take the first option for simplicity
+      // For unions, generate oneOf with all options
       const obj = schema as Record<string, unknown>;
       let options: unknown[] | undefined;
 
@@ -364,7 +403,10 @@ function _zodToJsonSchemaInternal(schema: unknown): JSONSchemaProperty {
       }
 
       if (options && options.length > 0) {
-        return _zodToJsonSchemaInternal(options[0]);
+        const oneOf = options.map((opt) => _zodToJsonSchemaInternal(opt));
+        const result: JSONSchemaProperty = { oneOf };
+        if (description) result.description = description;
+        return result;
       }
       return { type: "string", description };
     }

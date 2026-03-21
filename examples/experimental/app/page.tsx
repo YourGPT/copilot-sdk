@@ -2,6 +2,11 @@ import Link from "next/link";
 
 const demos = [
   {
+    name: "Generative UI",
+    href: "/generative-ui",
+    description: "LLM renders tables, stats, cards, charts & HTML inline",
+  },
+  {
     name: "Conversation Branching",
     href: "/branching",
     description: "Edit & regenerate to branch — live tree visualization",
