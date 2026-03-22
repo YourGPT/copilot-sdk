@@ -941,7 +941,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Handle message:start after a mid-stream finalization
       if (chunk.type === "message:start" && this.streamState === null) {
         this.debug("message:start after mid-stream end - creating new message");
-        const newMessage = createEmptyAssistantMessage() as T;
+        // Capture the current leaf BEFORE pushing the new message so the
+        // continuation turn is chained as a child in the branch tree.
+        // Without this parentId the new message becomes a ROOT orphan, which
+        // hijacks getVisibleMessages() and wipes the prior conversation from
+        // the active path on every subsequent buildRequest() call.
+        const currentLeaf = this.state.messages;
+        const currentLeafId =
+          currentLeaf.length > 0
+            ? currentLeaf[currentLeaf.length - 1].id
+            : undefined;
+        const newMessage = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
         this.state.pushMessage(newMessage);
         this.streamState = createStreamState(newMessage.id);
         this.callbacks.onMessageStart?.(newMessage.id);
