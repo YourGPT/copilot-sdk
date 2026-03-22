@@ -228,15 +228,32 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.status = "submitted";
       this.state.error = undefined;
 
-      // Notify callbacks
+      // For streaming: push placeholder assistant message NOW (before microtask yield)
+      // so the loader appears immediately with zero blank-state flash between user
+      // message submission and the first stream event arriving.
+      let preCreatedMessageId: string | undefined;
+      if (this.config.streaming !== false) {
+        const visibleMessages = this.state.messages;
+        const currentLeafId =
+          visibleMessages.length > 0
+            ? visibleMessages[visibleMessages.length - 1].id
+            : undefined;
+        const preMsg = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
+        this.state.pushMessage(preMsg);
+        preCreatedMessageId = preMsg.id;
+      }
+
+      // Notify callbacks (single batch: user message + status + optional placeholder)
       this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
       // Yield to allow UI to render loading state (important for non-streaming)
       await Promise.resolve();
 
-      // Send request
-      await this.processRequest();
+      // Send request — pass pre-created ID so processRequest reuses it
+      await this.processRequest({ preCreatedMessageId });
       return true;
     } catch (error) {
       this.handleError(error as Error);
@@ -604,15 +621,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Process a chat request
    */
-  protected async processRequest(): Promise<void> {
+  protected async processRequest(options?: {
+    preCreatedMessageId?: string;
+  }): Promise<void> {
     // Build request
     const request = this.buildRequest();
 
     // For streaming: pre-push an empty assistant message BEFORE the HTTP
     // round-trip so the UI shows a loading bubble immediately (e.g. between
     // tool execution and the continuation stream starting).
-    let preCreatedMessageId: string | undefined;
-    if (this.config.streaming !== false) {
+    // Skip if sendMessage already pushed a placeholder (preCreatedMessageId set).
+    let preCreatedMessageId = options?.preCreatedMessageId;
+    if (this.config.streaming !== false && !preCreatedMessageId) {
       // Use the current leaf (last visible message) as parent so the assistant
       // message is correctly placed as a child in the branch tree.
       const visibleMessages = this.state.messages;
