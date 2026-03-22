@@ -399,7 +399,7 @@ function CopilotChatBase(
                 } catch {
                   return {
                     ...exec,
-                    result: { success: true, message: resultContent },
+                    result: { success: false, message: resultContent },
                   };
                 }
               }
@@ -424,7 +424,7 @@ function CopilotChatBase(
                 try {
                   result = JSON.parse(resultContent);
                 } catch {
-                  result = { success: true, message: resultContent };
+                  result = { success: false, message: resultContent };
                 }
               }
               let args: Record<string, unknown> = {};
@@ -450,7 +450,10 @@ function CopilotChatBase(
                   ? "completed"
                   : "pending") as ToolExecutionData["status"],
                 result,
-                timestamp: Date.now(), // Historical - use current time
+                timestamp:
+                  m.createdAt instanceof Date
+                    ? m.createdAt.getTime()
+                    : Date.now(),
                 hidden,
               };
             },

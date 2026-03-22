@@ -201,11 +201,28 @@ function writeStore(storageKey: string, store: CopilotStore): void {
     const serialized = JSON.stringify(store);
     localStorage.setItem(storageKey, serialized);
   } catch (e) {
-    // Handle quota exceeded
     if (e instanceof DOMException && e.name === "QuotaExceededError") {
-      console.error(
-        "[CopilotSDK] localStorage quota exceeded. Consider clearing old threads.",
-      );
+      // Evict the oldest thread and retry once
+      if (store.threads.length > 1) {
+        const evicted = [...store.threads].sort(
+          (a, b) =>
+            new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+        );
+        const trimmed = { ...store, threads: evicted.slice(1) };
+        console.warn(
+          "[CopilotSDK] localStorage quota exceeded — evicting oldest thread:",
+          evicted[0].id,
+        );
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(trimmed));
+        } catch {
+          console.error("[CopilotSDK] localStorage still full after eviction.");
+        }
+      } else {
+        console.error(
+          "[CopilotSDK] localStorage quota exceeded and only one thread remains. Cannot evict.",
+        );
+      }
     } else {
       console.warn("[CopilotSDK] Failed to write store:", e);
     }
