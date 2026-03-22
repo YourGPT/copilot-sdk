@@ -3,13 +3,13 @@
 # Gitleaks + Lint-Staged Pre-Commit Hook
 #
 
-# Add homebrew to PATH for non-interactive shells
-export PATH="/opt/homebrew/bin:$PATH"
+# Add common install paths for non-interactive shells (macOS + Linux)
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 echo "🔍 Running Gitleaks to check for secrets..."
 
 # Check if gitleaks is installed
-if ! command -v gitleaks &> /dev/null; then
+if ! command -v gitleaks >/dev/null 2>&1; then
     echo ""
     echo "❌ ERROR: Gitleaks is not installed!"
     echo ""

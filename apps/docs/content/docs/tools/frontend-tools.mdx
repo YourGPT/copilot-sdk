@@ -195,6 +195,23 @@ handler: async ({ query }) => {
 }
 ```
 
+### The `success` flag
+
+The `success` field is read by the AI to decide how to continue reasoning after a tool call. Returning `success: false` tells the AI the tool did not accomplish its goal — it can then retry with different parameters, try an alternative tool, or explain the failure to the user.
+
+```tsx
+// ✅ Good — AI understands what went wrong and can adapt
+return {
+  success: false,
+  error: 'No results found for that date range. Try a wider range.',
+};
+
+// ❌ Avoid — throwing an exception stops the agentic loop entirely
+throw new Error('No results found');
+```
+
+Always include a descriptive `error` string alongside `success: false`. The AI uses this message to reason about its next step, so vague errors like `"Unknown error"` reduce its ability to recover gracefully.
+
 ---
 
 ## Best Practices
