@@ -277,9 +277,15 @@ export class ChatWithTools {
           this.agentLoop.maxIterationsReached &&
           toolCallInfos.length > 0
         ) {
-          // Max iterations reached - still need to add tool_result to prevent API errors
-          // Without this, the conversation has tool_use without tool_result
-          this.debug("Max iterations reached, adding blocked tool results");
+          // Max iterations reached — close out the pending tool_use blocks (so the
+          // conversation history stays valid for the next request) but do NOT trigger
+          // another LLM call.  Previously we called continueWithToolResults() here,
+          // which sent the error to the AI and started a new LLM request; the AI
+          // responded "let me retry" + new tool_use blocks → the same limit fired
+          // again → continueWithToolResults again → infinite loop.
+          this.debug(
+            "Max iterations reached, stopping loop without new LLM request",
+          );
 
           const errorMessage =
             this.config.maxIterationsMessage ||
@@ -293,7 +299,9 @@ export class ChatWithTools {
             },
           }));
 
-          await this.chat.continueWithToolResults(blockedResults);
+          // Adds tool_result messages + a final assistant stop-message, then sets
+          // status → "ready".  No new API request is made.
+          await this.chat.addToolResultMessages(blockedResults, errorMessage);
         }
       } catch (error) {
         this.debug("Error executing tools:", error);

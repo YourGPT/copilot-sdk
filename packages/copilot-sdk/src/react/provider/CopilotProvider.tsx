@@ -385,6 +385,9 @@ export interface CopilotContextValue {
     }>,
   ) => void;
 
+  // Agent loop iteration (increments each time the AI calls a tool batch; resets on sendMessage)
+  agentIteration: number;
+
   // Config
   threadId?: string;
   /**
@@ -457,6 +460,7 @@ export function CopilotProvider({
   // Tool Executions State (for React reactivity)
   // ============================================
   const [toolExecutions, setToolExecutions] = useState<ToolExecution[]>([]);
+  const [agentIteration, setAgentIteration] = useState(0);
 
   // ============================================
   // ChatWithTools Instance
@@ -505,6 +509,9 @@ export function CopilotProvider({
         onToolExecutionsChange: (executions) => {
           debugLog("Tool executions changed:", executions.length);
           setToolExecutions(executions);
+          // Sync the agent loop iteration count at the same time — it increments
+          // once per executeToolCalls() call, which is what triggers this callback.
+          setAgentIteration(chatRef.current?.iteration ?? 0);
         },
         onApprovalRequired: (execution) => {
           debugLog("Tool approval required:", execution.name);
@@ -727,6 +734,7 @@ export function CopilotProvider({
   const sendMessage = useCallback(
     async (content: string, attachments?: MessageAttachment[]) => {
       debugLog("Sending message:", content);
+      setAgentIteration(0); // reset before each new user message
       await chatRef.current?.sendMessage(content, attachments);
     },
     [debugLog],
@@ -855,6 +863,7 @@ export function CopilotProvider({
       pendingApprovals,
       approveToolExecution,
       rejectToolExecution,
+      agentIteration,
 
       // Actions
       registerAction,
@@ -900,6 +909,7 @@ export function CopilotProvider({
       pendingApprovals,
       approveToolExecution,
       rejectToolExecution,
+      agentIteration,
       registerAction,
       unregisterAction,
       registeredActions,

@@ -1,6 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import type { ChatMessage } from "./types";
 
 export interface RegisteredAction {
@@ -54,10 +60,13 @@ export function MessageActionsProvider({
     [registry],
   );
 
+  const contextValue = useMemo(
+    () => ({ getActions, registerActions, clearActions }),
+    [getActions, registerActions, clearActions],
+  );
+
   return (
-    <MessageActionsContext.Provider
-      value={{ getActions, registerActions, clearActions }}
-    >
+    <MessageActionsContext.Provider value={contextValue}>
       {children}
     </MessageActionsContext.Provider>
   );

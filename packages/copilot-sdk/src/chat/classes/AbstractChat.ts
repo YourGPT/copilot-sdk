@@ -419,6 +419,57 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Add tool result messages to history and stop — does NOT trigger a new LLM request.
+   *
+   * Use this instead of continueWithToolResults when you want to close out pending
+   * tool_use blocks (so the history stays valid) without letting the AI continue.
+   * Optionally appends a final assistant message (e.g. an iteration-limit notice).
+   */
+  async addToolResultMessages(
+    toolResults: Array<{ toolCallId: string; result: unknown }>,
+    finalAssistantContent?: string,
+  ): Promise<void> {
+    const visibleMessages = this.state.messages;
+    let chainParentId: string | undefined =
+      visibleMessages.length > 0
+        ? visibleMessages[visibleMessages.length - 1].id
+        : undefined;
+
+    for (const { toolCallId, result } of toolResults) {
+      const messageContent =
+        typeof result === "string" ? result : JSON.stringify(result);
+
+      const toolMessageId = generateMessageId();
+      const toolMessage = {
+        id: toolMessageId,
+        role: "tool" as const,
+        content: messageContent,
+        toolCallId,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+
+      this.state.pushMessage(toolMessage);
+      chainParentId = toolMessageId;
+    }
+
+    if (finalAssistantContent) {
+      const assistantMsg = {
+        id: generateMessageId(),
+        role: "assistant" as const,
+        content: finalAssistantContent,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+      this.state.pushMessage(assistantMsg);
+    }
+
+    this.callbacks.onMessagesChange?.(this._allMessages());
+    this.state.status = "ready";
+    this.callbacks.onStatusChange?.("ready");
+  }
+
+  /**
    * Stop generation
    */
   stop(): void {

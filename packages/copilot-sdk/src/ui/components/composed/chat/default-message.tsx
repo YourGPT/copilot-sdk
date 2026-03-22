@@ -415,7 +415,9 @@ export function DefaultMessage({
 
     return (
       <Message
-        className={cn("flex gap-2 group/user-msg group/message justify-end")}
+        className={cn(
+          "csdk-message csdk-user-message flex gap-2 group/user-msg group/message justify-end",
+        )}
       >
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
           {/* Edit mode: inline textarea */}
@@ -607,7 +609,7 @@ export function DefaultMessage({
 
   // Assistant message - left aligned with avatar
   return (
-    <Message className="flex gap-2 group/message">
+    <Message className="csdk-message csdk-assistant-message flex gap-2 group/message">
       <MessageAvatar
         src={assistantAvatar.src}
         alt="Assistant"

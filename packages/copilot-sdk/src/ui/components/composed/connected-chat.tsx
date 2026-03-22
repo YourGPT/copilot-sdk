@@ -187,6 +187,12 @@ export type CopilotChatProps = Omit<
    * Granular class names for sub-components including thread picker
    */
   classNames?: CopilotChatClassNames;
+
+  /**
+   * Allow inline editing of user messages.
+   * @default false
+   */
+  allowEdit?: boolean;
 };
 
 /**
@@ -301,6 +307,7 @@ function CopilotChatBase(
     classNames,
     header,
     children,
+    allowEdit = false,
     ...chatProps
   } = props;
 
@@ -641,7 +648,7 @@ function CopilotChatBase(
       // Branching (auto-wired from context)
       getBranchInfo={getBranchInfo}
       onSwitchBranch={switchBranch}
-      onEditMessage={editMessage}
+      onEditMessage={allowEdit ? editMessage : undefined}
     >
       {children}
     </Chat>

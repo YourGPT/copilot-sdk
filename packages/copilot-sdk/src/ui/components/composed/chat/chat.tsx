@@ -788,6 +788,17 @@ function ChatComponent({
     ChatView,
   );
 
+  // Behavior children: non-layout compound types (MessageActions registrars, custom hook components)
+  // These always mount so their useLayoutEffect registrations run regardless of view state.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layoutTypes: any[] = [HomeView, Home, ChatView, Header, Footer];
+  const behaviorChildren = React.Children.toArray(children).filter(
+    (child) =>
+      React.isValidElement(child) &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      !layoutTypes.includes(child.type as any),
+  ) as React.ReactElement[];
+
   // Check if ChatView has no children or only Header/Footer children (should render default)
   const chatViewElement = findCompoundChild(children, ChatView);
   const chatViewNeedsDefault =
@@ -886,6 +897,9 @@ function ChatComponent({
 
           {/* Root-level custom Header (shows in both views) */}
           {rootHeader}
+
+          {/* Behavior children — always mounted (MessageActions registrars, hook components) */}
+          {behaviorChildren.length > 0 && behaviorChildren}
 
           {/* Custom compound children - view components self-filter based on current view */}
           {hasCustomLayout && viewChildren}

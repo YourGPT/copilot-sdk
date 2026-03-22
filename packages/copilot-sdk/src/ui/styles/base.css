@@ -60,6 +60,24 @@
   }
 }
 
+/* Message entrance animation — fires on React DOM mount via @starting-style.
+   csdk-message: applied to every message row (user + assistant + tool).
+   Consumers can override via .csdk-user-message / .csdk-assistant-message selectors. */
+
+.csdk-message {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.22s cubic-bezier(0, 0, 0.2, 1),
+              transform 0.22s cubic-bezier(0, 0, 0.2, 1);
+}
+
+@starting-style {
+  .csdk-message {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
 /* Confirmation Card Animations */
 /* Uses @starting-style for reliable first-paint entry in React (more robust than @keyframes) */
 
