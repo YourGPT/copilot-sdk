@@ -196,7 +196,7 @@ export function SupportLayout({
       data-csdk-theme={theme === "default" ? undefined : theme}
     >
       <CopilotChat.Root
-        persistence
+        persistence={alphaConfig.sessionPersistence || undefined}
         className="h-full"
         showPoweredBy={false}
         loaderVariant={loaderVariant}
@@ -226,7 +226,8 @@ export function SupportLayout({
             )}
           </CopilotChat.MessageActions>
         )}
-        {alphaConfig.messageActions.editEnabled && (
+        {(alphaConfig.messageActions.editEnabled ||
+          alphaConfig.branchingEnabled) && (
           <CopilotChat.MessageActions role="user">
             <CopilotChat.EditAction tooltip="Edit message" />
           </CopilotChat.MessageActions>

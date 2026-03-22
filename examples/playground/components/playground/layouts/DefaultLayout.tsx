@@ -15,9 +15,11 @@ export function DefaultLayout({
   loaderVariant,
   alphaConfig,
 }: LayoutProps) {
+  const showEdit =
+    alphaConfig.messageActions.editEnabled || alphaConfig.branchingEnabled;
   const hasAnyAction =
     alphaConfig.messageActions.copyEnabled ||
-    alphaConfig.messageActions.editEnabled ||
+    showEdit ||
     alphaConfig.messageActions.feedbackEnabled;
 
   return (
@@ -30,8 +32,8 @@ export function DefaultLayout({
         className="h-full"
         showHeader
         header={{ name: "AI Copilot" }}
-        showThreadPicker
-        persistence
+        showThreadPicker={alphaConfig.sessionPersistence}
+        persistence={alphaConfig.sessionPersistence || undefined}
         loaderVariant={loaderVariant}
         assistantAvatar={{
           src: "https://api.dicebear.com/7.x/bottts/svg?seed=assistant",
@@ -77,7 +79,7 @@ export function DefaultLayout({
                 )}
               </CopilotChat.MessageActions>
             )}
-            {alphaConfig.messageActions.editEnabled && (
+            {showEdit && (
               <CopilotChat.MessageActions role="user">
                 <CopilotChat.EditAction tooltip="Edit message" />
               </CopilotChat.MessageActions>
