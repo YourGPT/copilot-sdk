@@ -1043,10 +1043,26 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                   break;
                 }
               }
+              // Assign parentIds so inserted messages form a proper chain in the
+              // MessageTree. Without this they become orphan root-level children,
+              // which breaks the active-path walk and causes the visible message
+              // count to drop on subsequent turns.
+              const insertParentId =
+                insertIdx > 0 ? currentMessages[insertIdx - 1].id : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the message at insertIdx to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === insertIdx ? { ...m, parentId: lastInsertedId } : m,
+              );
               this.state.setMessages([
-                ...currentMessages.slice(0, insertIdx),
-                ...messagesToInsert,
-                ...currentMessages.slice(insertIdx),
+                ...updatedCurrent.slice(0, insertIdx),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(insertIdx),
               ]);
             }
           }
@@ -1228,12 +1244,40 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               : -1;
 
             if (currentStreamIndex === -1) {
-              this.state.setMessages([...currentMessages, ...messagesToInsert]);
+              // Append at end — chain from the last existing message
+              const appendParentId =
+                currentMessages.length > 0
+                  ? currentMessages[currentMessages.length - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? appendParentId : messagesToInsert[i - 1].id,
+              }));
+              this.state.setMessages([...currentMessages, ...linkedToInsert]);
             } else {
+              // Insert before the current streaming message — chain from the
+              // message immediately before it, then re-parent the streaming
+              // message to chain from the last inserted.
+              const insertParentId =
+                currentStreamIndex > 0
+                  ? currentMessages[currentStreamIndex - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the streaming message to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === currentStreamIndex
+                  ? { ...m, parentId: lastInsertedId }
+                  : m,
+              );
               this.state.setMessages([
-                ...currentMessages.slice(0, currentStreamIndex),
-                ...messagesToInsert,
-                ...currentMessages.slice(currentStreamIndex),
+                ...updatedCurrent.slice(0, currentStreamIndex),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(currentStreamIndex),
               ]);
             }
           }
