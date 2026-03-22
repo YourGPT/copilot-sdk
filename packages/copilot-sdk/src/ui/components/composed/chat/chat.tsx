@@ -874,7 +874,7 @@ function ChatComponent({
         >
           {/* Drag overlay */}
           {isDragging && (
-            <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
+            <div className="csdk-dropzone-overlay absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
               <div className="text-primary font-medium text-lg">
                 Drop files here
               </div>
@@ -1142,7 +1142,7 @@ function ChatComponent({
                   </ChatContainerContent>
 
                   {/* Scroll to bottom button - inside ChatContainerRoot for context, outside ChatContainerContent so it doesn't scroll */}
-                  <div className="absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
+                  <div className="csdk-scroll-btn-layer absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
                     <ScrollButton className="shadow-md pointer-events-auto" />
                   </div>
                 </ChatContainerRoot>
@@ -1197,13 +1197,13 @@ function ChatComponent({
                           )}
                           {/* Loading overlay */}
                           {att.status === "processing" && (
-                            <div className="absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
+                            <div className="csdk-attachment-loading absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
                               <Loader variant="dots" size="sm" />
                             </div>
                           )}
                           {/* Error overlay */}
                           {att.status === "error" && (
-                            <div className="absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
+                            <div className="csdk-attachment-error absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
                               <span className="text-destructive text-xs">
                                 Error
                               </span>

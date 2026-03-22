@@ -93,7 +93,7 @@ export function Confirmation({
         className={cn(
           "csdk-confirm-card",
           "confirmation rounded-2xl overflow-hidden",
-          "border border-amber-200/50 dark:border-amber-900/30",
+          "border border-border/60",
           "bg-card text-card-foreground shadow-sm",
           className,
         )}

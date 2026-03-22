@@ -974,7 +974,7 @@ function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
       {/* Fullscreen modal */}
       {expanded && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          className="csdk-image-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/80"
           onClick={() => setExpanded(false)}
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
@@ -985,7 +985,7 @@ function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
             />
             <button
               type="button"
-              className="absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
+              className="csdk-image-close absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
               onClick={(e) => {
                 e.stopPropagation();
                 setExpanded(false);

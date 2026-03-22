@@ -117,12 +117,12 @@ export function DevLogger({
       {/* Modal Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50"
+          className="csdk-devlogger-backdrop fixed inset-0 z-[10000] flex items-center justify-center bg-black/50"
           onClick={() => setIsOpen(false)}
         >
           {/* Modal Content */}
           <div
-            className="bg-background border rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden"
+            className="csdk-devlogger-modal bg-background border rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
