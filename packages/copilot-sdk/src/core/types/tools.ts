@@ -41,7 +41,7 @@ export type ToolSource = "mcp" | "native" | "custom";
  * JSON Schema property definition
  */
 export interface JSONSchemaProperty {
-  type:
+  type?:
     | "string"
     | "number"
     | "boolean"
@@ -60,16 +60,20 @@ export interface JSONSchemaProperty {
   minimum?: number;
   maximum?: number;
   pattern?: string;
+  oneOf?: JSONSchemaProperty[];
+  anyOf?: JSONSchemaProperty[];
 }
 
 /**
  * JSON Schema for tool input
  */
 export interface ToolInputSchema {
-  type: "object";
-  properties: Record<string, JSONSchemaProperty>;
+  type?: "object";
+  properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   additionalProperties?: boolean;
+  oneOf?: JSONSchemaProperty[];
+  anyOf?: JSONSchemaProperty[];
 }
 
 /**

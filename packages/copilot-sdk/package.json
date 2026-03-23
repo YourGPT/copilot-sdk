@@ -83,6 +83,11 @@
       "types": "./dist/server/index.d.ts",
       "import": "./dist/server/index.js",
       "require": "./dist/server/index.cjs"
+    },
+    "./experimental": {
+      "types": "./dist/experimental/index.d.ts",
+      "import": "./dist/experimental/index.js",
+      "require": "./dist/experimental/index.cjs"
     }
   },
   "files": [
