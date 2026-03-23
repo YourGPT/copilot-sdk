@@ -265,3 +265,30 @@ export type { ContextUsage, ContextUsagePart } from "../core";
 
 // Branching
 export { MessageTree, type BranchInfo } from "../chat/branching";
+
+// ── Headless primitives ───────────────────────────────────────────────────────
+
+/**
+ * useCopilotEvent — subscribe to raw stream chunks as they arrive.
+ * Build any custom real-time UI (thinking steps, tool badges, loop counters)
+ * without depending on built-in SDK components.
+ */
+export { useCopilotEvent } from "./hooks/useCopilotEvent";
+
+/**
+ * useMessageMeta — reactive per-message custom metadata store.
+ * Attach any shape of data to a message ID; all readers react automatically.
+ * Pair with useCopilotEvent to build thinking steps, artifact tracking,
+ * plan state, or any other per-message feature.
+ */
+export {
+  useMessageMeta,
+  type UseMessageMetaReturn,
+} from "./hooks/useMessageMeta";
+
+// Types for advanced consumers building on top of headless primitives
+export type {
+  StreamChunkWithMessageId,
+  StreamEventHandler,
+  MessageMetaStore,
+} from "./provider/CopilotProvider";

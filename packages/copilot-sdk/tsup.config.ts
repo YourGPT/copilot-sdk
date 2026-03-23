@@ -12,6 +12,9 @@ export default defineConfig({
     // Server-only entry (Node.js skills loader)
     "server/index": "src/server/index.ts",
 
+    // Experimental features
+    "experimental/index": "src/experimental/index.ts",
+
     // Tool subpath exports (tree-shakeable)
     "tools/web-search/index": "src/tools/web-search/index.ts",
     "tools/tavily/index": "src/tools/tavily/index.ts",

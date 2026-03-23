@@ -114,6 +114,17 @@ export interface ChatCallbacks<T extends UIMessage = UIMessage> {
   onServerToolEnd?: (
     info: ServerToolInfo & { result?: unknown; error?: string },
   ) => void;
+  /**
+   * Called for every raw stream chunk as it arrives.
+   * Use this to build custom real-time UI on top of the SDK — e.g. thinking
+   * step parsers, tool progress trackers, loop iteration counters.
+   * The `messageId` field is the ID of the assistant message being streamed.
+   */
+  onStreamChunk?: (
+    chunk: import("../interfaces/ChatTransport").StreamChunk & {
+      messageId?: string;
+    },
+  ) => void;
 }
 
 /**

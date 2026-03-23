@@ -1181,6 +1181,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         }),
       );
 
+      // Fire raw stream chunk callback — powers useCopilotEvent hook
+      this.callbacks.onStreamChunk?.({
+        ...chunk,
+        messageId: assistantMessage.id,
+      });
+
       // Notify delta callback
       if (chunk.type === "message:delta") {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);

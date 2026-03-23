@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --sidebar-bg: #3f0e40;
+  --sidebar-active: #1164a3;
+  --sidebar-hover: rgba(255,255,255,0.1);
+  --sidebar-text: rgba(255,255,255,0.7);
+  --sidebar-text-active: #ffffff;
+  --message-hover: #f8f8f8;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Scrollbar styling */
+.slack-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.slack-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.slack-scroll::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}

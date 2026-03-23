@@ -19,6 +19,7 @@
     "server",
     "customizations",
     "generative-ui",
+    "headless",
     "multimodal",
     "---AI---",
     "llm-sdk",

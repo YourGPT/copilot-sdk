@@ -60,6 +60,11 @@
   }
 }
 
+/* Links inside user message bubble — override link color for visibility on primary background */
+.csdk-message-user {
+  --csdk-link-color: hsl(var(--primary-foreground) / 0.9);
+}
+
 /* Message entrance animation — fires on React DOM mount via @starting-style.
    csdk-message: applied to every message row (user + assistant + tool).
    Consumers can override via .csdk-user-message / .csdk-assistant-message selectors. */

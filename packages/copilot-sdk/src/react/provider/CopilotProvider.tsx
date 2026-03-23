@@ -33,7 +33,7 @@ import type { MCPServerConfig } from "../../mcp/types";
 import type { Resolvable } from "../../core/utils/resolvable";
 import { createLogger } from "../../core/utils/logger";
 
-import type { UIMessage, ToolExecution } from "../../chat";
+import type { UIMessage, ToolExecution, StreamChunk } from "../../chat";
 
 import {
   ReactChatWithTools,
@@ -309,6 +309,55 @@ export interface CopilotProviderProps {
   skills?: SkillDefinition[];
 }
 
+// ============================================
+// MessageMetaStore — reactive per-message key-value store
+// ============================================
+
+export type StreamChunkWithMessageId = StreamChunk & { messageId?: string };
+export type StreamEventHandler = (chunk: StreamChunkWithMessageId) => void;
+
+/**
+ * Reactive store for custom per-message metadata.
+ * Powers useMessageMeta() — consumers write any shape they want,
+ * all components reading the same messageId react automatically.
+ */
+export class MessageMetaStore {
+  private store = new Map<string, Record<string, unknown>>();
+  private listeners = new Set<() => void>();
+  // Stable empty object — returned for unknown messageIds so useSyncExternalStore
+  // sees the same reference and doesn't trigger infinite re-renders.
+  private static readonly EMPTY: Record<string, unknown> = {};
+
+  subscribe = (cb: () => void): (() => void) => {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  };
+
+  getSnapshot = (): Map<string, Record<string, unknown>> => this.store;
+
+  getMeta = (messageId: string): Record<string, unknown> =>
+    this.store.get(messageId) ?? MessageMetaStore.EMPTY;
+
+  setMeta = (messageId: string, meta: Record<string, unknown>): void => {
+    this.store.set(messageId, meta);
+    this.listeners.forEach((cb) => cb());
+  };
+
+  updateMeta = (
+    messageId: string,
+    updater: (prev: Record<string, unknown>) => Record<string, unknown>,
+  ): void => {
+    const prev = this.store.get(messageId) ?? {};
+    this.store.set(messageId, updater(prev));
+    this.listeners.forEach((cb) => cb());
+  };
+
+  clear = (): void => {
+    this.store.clear();
+    this.listeners.forEach((cb) => cb());
+  };
+}
+
 export interface CopilotContextValue {
   // Chat state
   messages: UIMessage[];
@@ -396,6 +445,28 @@ export interface CopilotContextValue {
    */
   runtimeUrl: Resolvable<string>;
   toolsConfig?: ToolsConfig;
+
+  // ── Headless primitives ──────────────────────────────────────────────────
+
+  /**
+   * Subscribe to raw stream chunks as they arrive.
+   * Returns an unsubscribe function. Use useCopilotEvent() for the hook API.
+   *
+   * @example
+   * ```ts
+   * const unsub = subscribeToStreamEvents((chunk) => {
+   *   if (chunk.type === 'thinking:delta') { ... }
+   * })
+   * return unsub // cleanup
+   * ```
+   */
+  subscribeToStreamEvents: (handler: StreamEventHandler) => () => void;
+
+  /**
+   * Reactive per-message metadata store.
+   * Use useMessageMeta(messageId) for the hook API.
+   */
+  messageMeta: MessageMetaStore;
 }
 
 // ============================================
@@ -436,6 +507,22 @@ export function CopilotProvider({
   messageHistory,
   skills,
 }: CopilotProviderProps) {
+  // ── Headless primitives ──────────────────────────────────────────────────
+
+  // Stream event listeners — Set of handlers subscribed via useCopilotEvent()
+  const streamListenersRef = useRef<Set<StreamEventHandler>>(new Set());
+
+  const subscribeToStreamEvents = useCallback(
+    (handler: StreamEventHandler): (() => void) => {
+      streamListenersRef.current.add(handler);
+      return () => streamListenersRef.current.delete(handler);
+    },
+    [],
+  );
+
+  // Per-message metadata store — stable instance, never re-created
+  const messageMetaStoreRef = useRef<MessageMetaStore>(new MessageMetaStore());
+
   // Debug logger — scoped to "provider" namespace
   const debugLog = useCallback(
     (action: string, data?: unknown) => {
@@ -521,6 +608,14 @@ export function CopilotProvider({
         },
         onError: (error) => {
           if (error) onError?.(error);
+        },
+        onStreamChunk: (chunk) => {
+          // Broadcast to all useCopilotEvent() subscribers
+          if (streamListenersRef.current.size > 0) {
+            for (const handler of streamListenersRef.current) {
+              handler(chunk);
+            }
+          }
         },
       },
     );
@@ -886,6 +981,10 @@ export function CopilotProvider({
       threadId,
       runtimeUrl,
       toolsConfig,
+
+      // Headless primitives
+      subscribeToStreamEvents,
+      messageMeta: messageMetaStoreRef.current,
     }),
     [
       messages,
