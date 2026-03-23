@@ -1,8 +1,8 @@
-import type { Message } from "@yourgpt/copilot-sdk/react";
+import type { UIMessage } from "@yourgpt/copilot-sdk/react";
 
 const PREFIX = "slack-demo:";
 
-export function loadMessages(channelId: string): Message[] {
+export function loadMessages(channelId: string): UIMessage[] {
   try {
     const raw = localStorage.getItem(`${PREFIX}${channelId}`);
     return raw ? JSON.parse(raw) : [];
@@ -11,7 +11,7 @@ export function loadMessages(channelId: string): Message[] {
   }
 }
 
-export function saveMessages(channelId: string, messages: Message[]): void {
+export function saveMessages(channelId: string, messages: UIMessage[]): void {
   try {
     localStorage.setItem(`${PREFIX}${channelId}`, JSON.stringify(messages));
   } catch {}

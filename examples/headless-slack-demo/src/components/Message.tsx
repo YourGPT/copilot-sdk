@@ -39,7 +39,7 @@ interface MessageProps {
   };
 }
 
-interface MyMeta {
+interface MyMeta extends Record<string, unknown> {
   thinking?: string;
   isThinking?: boolean;
   tools?: Record<string, "running" | "done" | "error">;
