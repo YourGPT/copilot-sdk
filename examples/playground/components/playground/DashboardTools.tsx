@@ -41,6 +41,116 @@ function useLatest<T>(value: T) {
 }
 
 // ===========================================
+// Stable schema constants (module-level so references never change between renders)
+// Inline objects inside useTool() create new references every render → infinite loop
+// ===========================================
+
+const COUNTER_SCHEMA = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["increment", "decrement", "reset"],
+      description:
+        "The action to perform: increment adds 1, decrement subtracts 1, reset sets to 0",
+    },
+  },
+  required: ["action"],
+} as const;
+
+const PREFERENCE_SCHEMA = {
+  type: "object",
+  properties: {
+    preference: {
+      type: "string",
+      enum: ["dark", "light", "system"],
+      description: "The theme preference: dark, light, or system",
+    },
+  },
+  required: ["preference"],
+} as const;
+
+const NOTIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    message: {
+      type: "string",
+      description: "The notification message to display",
+    },
+  },
+  required: ["message"],
+} as const;
+
+const CART_SCHEMA = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["add", "remove", "clear"],
+      description:
+        "The cart action: add increases count, remove decreases count, clear empties cart",
+    },
+    count: {
+      type: "number",
+      description:
+        "Number of items to add or remove (defaults to 1 if not specified)",
+    },
+  },
+  required: ["action"],
+} as const;
+
+const NAVIGATION_SCHEMA = {
+  type: "object",
+  properties: {
+    section: {
+      type: "string",
+      enum: ["counter", "cart", "settings", "tools"],
+      description: "The dashboard section to navigate to",
+    },
+  },
+  required: ["section"],
+} as const;
+
+const WEATHER_SCHEMA = {
+  type: "object",
+  properties: {
+    location: {
+      type: "string",
+      description: "City name or location (e.g., 'San Francisco', 'New York')",
+    },
+  },
+  required: ["location"],
+} as const;
+
+const STOCK_SCHEMA = {
+  type: "object",
+  properties: {
+    symbol: {
+      type: "string",
+      description: "Stock ticker symbol (e.g., 'AAPL', 'GOOGL', 'TSLA')",
+    },
+  },
+  required: ["symbol"],
+} as const;
+
+const ANALYTICS_SCHEMA = {
+  type: "object",
+  properties: {
+    event: { type: "string", description: "Event name" },
+    properties: { type: "object", description: "Event properties" },
+  },
+  required: ["event"],
+} as const;
+
+const SEARCH_SCHEMA = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Search query" },
+  },
+  required: ["query"],
+} as const;
+
+// ===========================================
 // Individual Tool Components
 // When these unmount, useTool cleanup runs
 // and the tool is unregistered from the AI
@@ -60,18 +170,7 @@ function CounterTool({
     name: "updateCounter",
     description:
       "Update the dashboard counter. Use this to increment, decrement, or reset the counter value.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["increment", "decrement", "reset"],
-          description:
-            "The action to perform: increment adds 1, decrement subtracts 1, reset sets to 0",
-        },
-      },
-      required: ["action"],
-    },
+    inputSchema: COUNTER_SCHEMA,
     handler: async ({
       action,
     }: {
@@ -148,17 +247,7 @@ function PreferenceTool({ actions }: { actions: DashboardActions }) {
     name: "updatePreference",
     description:
       "Update the app theme/preference. Use 'dark' for dark mode, 'light' for light mode, or 'system' for system preference.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        preference: {
-          type: "string",
-          enum: ["dark", "light", "system"],
-          description: "The theme preference: dark, light, or system",
-        },
-      },
-      required: ["preference"],
-    },
+    inputSchema: PREFERENCE_SCHEMA,
     handler: async ({ preference }: { preference: string }) => {
       // Update dashboard state
       actionsRef.current.setPreference(preference);
@@ -214,16 +303,7 @@ function NotificationTool({
     name: "addNotification",
     description:
       "Add a notification message to the dashboard notification queue.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        message: {
-          type: "string",
-          description: "The notification message to display",
-        },
-      },
-      required: ["message"],
-    },
+    inputSchema: NOTIFICATION_SCHEMA,
     handler: async ({ message }: { message: string }) => {
       const queueSize = dashboardStateRef.current.notifications.length + 1;
       actionsRef.current.addNotification(message);
@@ -263,23 +343,7 @@ function CartTool({
     name: "updateCart",
     description:
       "Update shopping cart items. Can add items, remove items, or clear the entire cart.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["add", "remove", "clear"],
-          description:
-            "The cart action: add increases count, remove decreases count, clear empties cart",
-        },
-        count: {
-          type: "number",
-          description:
-            "Number of items to add or remove (defaults to 1 if not specified)",
-        },
-      },
-      required: ["action"],
-    },
+    inputSchema: CART_SCHEMA,
     handler: async ({
       action,
       count,
@@ -383,17 +447,7 @@ function NavigationTool() {
     description:
       "Navigate to a page section on the dashboard. Use this to help users find features.",
     // hidden: true, // This tool won't show in the chat UI
-    inputSchema: {
-      type: "object",
-      properties: {
-        section: {
-          type: "string",
-          enum: ["counter", "cart", "settings", "tools"],
-          description: "The dashboard section to navigate to",
-        },
-      },
-      required: ["section"],
-    },
+    inputSchema: NAVIGATION_SCHEMA,
     handler: async ({ section }: { section: string }) => {
       // In a real app, this would scroll to or highlight the section
       console.log(`[Hidden Tool] Navigating to: ${section}`);
@@ -435,17 +489,7 @@ function WeatherTool() {
     name: "getWeather",
     description:
       "Get current weather information for a location. Returns temperature, conditions, and forecast.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        location: {
-          type: "string",
-          description:
-            "City name or location (e.g., 'San Francisco', 'New York')",
-        },
-      },
-      required: ["location"],
-    },
+    inputSchema: WEATHER_SCHEMA,
     handler: async ({ location }: { location: string }) => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       const conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Rainy", "Clear"];
@@ -492,16 +536,7 @@ function StockTool() {
   useTool({
     name: "getStockPrice",
     description: "Get current stock price and market data for a ticker symbol.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: {
-          type: "string",
-          description: "Stock ticker symbol (e.g., 'AAPL', 'GOOGL', 'TSLA')",
-        },
-      },
-      required: ["symbol"],
-    },
+    inputSchema: STOCK_SCHEMA,
     handler: async ({ symbol }: { symbol: string }) => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       const basePrice =
@@ -563,14 +598,7 @@ function HiddenAnalyticsTool() {
     description:
       "Track a user interaction event for analytics. Call this silently when users perform notable actions.",
     hidden: true,
-    inputSchema: {
-      type: "object",
-      properties: {
-        event: { type: "string", description: "Event name" },
-        properties: { type: "object", description: "Event properties" },
-      },
-      required: ["event"],
-    },
+    inputSchema: ANALYTICS_SCHEMA,
     handler: async ({
       event,
       properties,
@@ -602,13 +630,7 @@ function DeferredSearchTool() {
       "knowledge",
       "article",
     ],
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search query" },
-      },
-      required: ["query"],
-    },
+    inputSchema: SEARCH_SCHEMA,
     handler: async ({ query }: { query: string }) => {
       await new Promise((r) => setTimeout(r, 600));
       return {

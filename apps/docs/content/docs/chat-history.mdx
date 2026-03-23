@@ -25,6 +25,25 @@ For simple browser-level persistence without server setup:
 
 Data is stored in localStorage (~5MB limit, single device only).
 
+### Storage quota and auto-eviction
+
+When the browser's localStorage quota is exceeded (typically after many long conversations), the SDK automatically evicts the oldest threads to make room for new ones. The most recent threads are always preserved.
+
+This eviction happens silently — users won't see an error. If you need to monitor or control this behavior, you can listen to the `onStorageEviction` callback:
+
+```tsx
+<CopilotChat
+  persistence={true}
+  onStorageEviction={(evictedThreadIds) => {
+    console.log('Evicted old threads:', evictedThreadIds);
+  }}
+/>
+```
+
+<Callout type="info">
+  Auto-eviction only applies to browser localStorage. Server persistence has no such limit — use it when conversation history must be retained long-term.
+</Callout>
+
 ---
 
 ## Server Persistence

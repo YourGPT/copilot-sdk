@@ -3,6 +3,7 @@
 import React, {
   useLayoutEffect,
   useMemo,
+  useRef,
   createContext,
   useContext,
 } from "react";
@@ -202,6 +203,11 @@ export interface MessageActionsProps {
  */
 export function MessageActions({ role, children }: MessageActionsProps) {
   const ctx = useMessageActionsContext();
+  // Use ref so ctx is never a useLayoutEffect dependency — prevents infinite
+  // loop when setRegistry fires → context value changes → useLayoutEffect
+  // cleanup runs → clearActions → setRegistry → repeat.
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
 
   // Extract action definitions from declarative children
   const actions = useMemo<RegisteredAction[]>(() => {
@@ -279,10 +285,14 @@ export function MessageActions({ role, children }: MessageActionsProps) {
   }, [children]);
 
   useLayoutEffect(() => {
-    if (!ctx) return;
-    ctx.registerActions(role, actions);
-    return () => ctx.clearActions(role);
-  }, [ctx, role, actions]);
+    const c = ctxRef.current;
+    if (!c) return;
+    c.registerActions(role, actions);
+    return () => c.clearActions(role);
+    // ctx accessed via ref — NOT in deps — to prevent the setState→re-render→
+    // new ctx ref→useLayoutEffect→clearActions→setState infinite loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, actions]);
 
   return null;
 }

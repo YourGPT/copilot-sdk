@@ -1,0 +1,306 @@
+---
+title: CSS Class Reference
+description: Complete list of all csdk-* CSS classes exposed by the SDK for targeting and customization
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Every structural element in the SDK has a `csdk-*` class. Target any of them in your own CSS to override colors, spacing, borders, animations, or layout — no specificity hacks needed.
+
+<Callout type="info">
+All `csdk-*` classes are **additive only** — they never carry layout-breaking styles on their own. The SDK's visual defaults come from Tailwind utility classes alongside them, which you can override freely.
+</Callout>
+
+---
+
+## Messages
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-message` | Every message row (user + assistant + tool) | Entry animation, row spacing |
+| `csdk-user-message` | User message row wrapper | Row-level alignment |
+| `csdk-assistant-message` | Assistant message row wrapper | Row-level alignment |
+| `csdk-message-user` | User message bubble | Background, border radius, padding |
+| `csdk-message-assistant` | Assistant message bubble | Background, border, padding |
+| `csdk-message-content` | Text content inside a bubble | Font size, line height, color |
+| `csdk-message-actions` | Hover-reveal action button bar | Positioning, visibility timing |
+
+```css
+/* Example: custom user bubble */
+.csdk-message-user {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+}
+
+/* Example: tighten row spacing */
+.csdk-message {
+  margin-bottom: 0.25rem;
+}
+```
+
+---
+
+## Avatars
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-avatar` | Avatar container (user & assistant) | Size, border, shadow |
+| `csdk-avatar-fallback` | Fallback initials shown when no image | Color, font |
+
+```css
+.csdk-avatar {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--primary);
+}
+```
+
+---
+
+## Input
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-input` | Input container (the whole bar) | Border, background, border-radius |
+| `csdk-input-textarea` | The `<textarea>` inside the input | Font size, color, placeholder style |
+| `csdk-button` | All buttons in the chat | Base button reset |
+| `csdk-button-send` | Send message button | Color, size, icon |
+| `csdk-button-stop` | Stop generation button | Color, icon |
+| `csdk-button-attach` | Attachment picker button | Color, icon |
+| `csdk-compound-input` | Compound input wrapper | Outer border, padding |
+| `csdk-compound-suggestions` | Suggestions dropdown inside compound input | Background, shadow, border |
+
+```css
+/* Example: pill-shaped input */
+.csdk-input {
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+}
+
+/* Example: custom send button color */
+.csdk-button-send {
+  background: #10b981;
+  color: white;
+}
+```
+
+---
+
+## Inline Edit
+
+These appear when a user edits a sent message.
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-edit-btn` | Edit trigger button (hover-reveal, left of message) | Position, opacity timing |
+| `csdk-edit-textarea` | Textarea shown during edit mode | Border, background |
+| `csdk-edit-cancel` | Cancel edit button | Color, border |
+| `csdk-edit-submit` | Submit edit button | Color, background |
+
+```css
+/* Always show edit button instead of hover-only */
+.csdk-edit-btn {
+  opacity: 1 !important;
+}
+```
+
+---
+
+## Confirmation Card
+
+Used for tool approval prompts (`PermissionConfirmation`, `SimpleConfirmation`).
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-confirm-card` | The pending confirmation card | Border, background, border-radius |
+| `csdk-confirm-btn` | Deny / Allow buttons | Padding, border-radius, hover state |
+| `csdk-confirm-result` | Approved / Rejected result pill | Background, border, color |
+
+```css
+/* Example: match your brand on the Allow button */
+.csdk-confirm-btn:last-child {
+  background: #6366f1;
+}
+
+/* Example: custom approved pill */
+.csdk-confirm-result {
+  border-radius: 0.375rem;
+}
+```
+
+---
+
+## Layout
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-chat-header` | Chat view header bar | Height, background, border |
+| `csdk-chat-footer` | Chat view footer area | Background, padding, border |
+| `csdk-chat-home-view` | Home/welcome view container | Background, padding |
+| `csdk-chat-view` | Active conversation view container | Background |
+| `csdk-back-button` | Back / New chat button in header | Size, icon color |
+| `csdk-scroll-btn-layer` | Invisible layer that positions the scroll-to-bottom button | `pointer-events: none` layer — adjust padding to reposition button |
+
+```css
+/* Example: transparent footer */
+.csdk-chat-footer {
+  background: transparent;
+  border-top: none;
+}
+```
+
+---
+
+## Overlays
+
+These are absolutely or fixed-positioned layers. Target them to change colors, z-index, or backdrop styles.
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-image-backdrop` | Fullscreen backdrop behind expanded image | Background color, z-index |
+| `csdk-image-close` | Close button inside the image lightbox | Position, background, size |
+| `csdk-dropzone-overlay` | Drag-and-drop overlay shown while dragging files | Border color, background tint |
+| `csdk-attachment-loading` | Loading overlay on attachment thumbnail | Background opacity |
+| `csdk-attachment-error` | Error overlay on failed attachment | Background tint |
+| `csdk-mcp-loading` | Loading overlay inside an MCP UI frame | Background, z-index |
+
+```css
+/* Example: darker image backdrop */
+.csdk-image-backdrop {
+  background: rgba(0, 0, 0, 0.92);
+}
+
+/* Example: brand-colored drop zone */
+.csdk-dropzone-overlay {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border-color: var(--primary);
+}
+```
+
+---
+
+## Follow-up Suggestions
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-followup` | Follow-up suggestions container | Layout, spacing, max-width |
+| `csdk-followup-button` | Individual suggestion chip buttons | Color, border, hover state |
+
+```css
+.csdk-followup-button {
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+```
+
+---
+
+## Navigation
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-branch-navigator` | Branch/version navigator between message variants | Visibility, sizing |
+
+---
+
+## Model Selector
+
+| Class | Element | Example override |
+|---|---|---|
+| `csdk-model-dropdown` | Dropdown list shown when picking a model | Width, max-height, shadow, border |
+
+```css
+.csdk-model-dropdown {
+  border-radius: 0.75rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+```
+
+---
+
+## Dev Tools
+
+These classes are on the `DevLogger` component, which is only rendered in development mode.
+
+| Class | Element |
+|---|---|
+| `csdk-devlogger-backdrop` | Modal backdrop overlay |
+| `csdk-devlogger-modal` | Modal content panel |
+
+---
+
+## CSS Custom Properties
+
+A few SDK-specific CSS variables complement the standard shadcn/ui variables:
+
+| Variable | Default | Used for |
+|---|---|---|
+| `--csdk-link-color` | `#2563eb` (light) / `#60a5fa` (dark) | Hyperlink color inside message content |
+| `--csdk-dialog-foreground` | Inherited from `--foreground` | Text color inside SDK-rendered dialogs |
+| `--csdk-dialog-muted-foreground` | Inherited from `--muted-foreground` | Muted text inside SDK-rendered dialogs |
+
+```css
+:root {
+  --csdk-link-color: #7c3aed; /* purple links */
+}
+```
+
+---
+
+## Animation Classes (Internal)
+
+These classes are applied internally for loader animations. You can target them to adjust timing or disable animations, but they are not intended as customization hooks.
+
+`csdk-spinner-fade` · `csdk-thin-pulse` · `csdk-pulse-dot` · `csdk-bounce-dots` · `csdk-typing` · `csdk-wave` · `csdk-blink` · `csdk-text-blink` · `csdk-shimmer` · `csdk-loading-dots`
+
+```css
+/* Example: disable all SDK loader animations for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  [class*="csdk-loader"] {
+    animation: none;
+  }
+}
+```
+
+---
+
+## Full Theme Example
+
+Combining CSS variables + class overrides to create a fully custom look:
+
+```css title="themes/my-brand.css"
+[data-csdk-theme="mybrand"] {
+  --primary: hsl(258 90% 60%);
+  --primary-foreground: hsl(0 0% 100%);
+  --background: hsl(258 20% 98%);
+  --border: hsl(258 20% 88%);
+  --radius: 0.75rem;
+  --csdk-link-color: hsl(258 90% 55%);
+}
+
+/* Pill-shaped input */
+[data-csdk-theme="mybrand"] .csdk-input {
+  border-radius: 999px;
+}
+
+/* Gradient user bubbles */
+[data-csdk-theme="mybrand"] .csdk-message-user {
+  background: linear-gradient(135deg, hsl(258 90% 60%), hsl(280 80% 60%));
+  color: white;
+}
+
+/* Rounded suggestion chips */
+[data-csdk-theme="mybrand"] .csdk-followup-button {
+  border-radius: 999px;
+  border-color: hsl(258 60% 80%);
+  color: hsl(258 90% 50%);
+}
+```
+
+```tsx
+import "./themes/my-brand.css";
+
+<div data-csdk-theme="mybrand">
+  <CopilotChat />
+</div>
+```

@@ -228,15 +228,32 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.status = "submitted";
       this.state.error = undefined;
 
-      // Notify callbacks
+      // For streaming: push placeholder assistant message NOW (before microtask yield)
+      // so the loader appears immediately with zero blank-state flash between user
+      // message submission and the first stream event arriving.
+      let preCreatedMessageId: string | undefined;
+      if (this.config.streaming !== false) {
+        const visibleMessages = this.state.messages;
+        const currentLeafId =
+          visibleMessages.length > 0
+            ? visibleMessages[visibleMessages.length - 1].id
+            : undefined;
+        const preMsg = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
+        this.state.pushMessage(preMsg);
+        preCreatedMessageId = preMsg.id;
+      }
+
+      // Notify callbacks (single batch: user message + status + optional placeholder)
       this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
       // Yield to allow UI to render loading state (important for non-streaming)
       await Promise.resolve();
 
-      // Send request
-      await this.processRequest();
+      // Send request — pass pre-created ID so processRequest reuses it
+      await this.processRequest({ preCreatedMessageId });
       return true;
     } catch (error) {
       this.handleError(error as Error);
@@ -419,6 +436,57 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Add tool result messages to history and stop — does NOT trigger a new LLM request.
+   *
+   * Use this instead of continueWithToolResults when you want to close out pending
+   * tool_use blocks (so the history stays valid) without letting the AI continue.
+   * Optionally appends a final assistant message (e.g. an iteration-limit notice).
+   */
+  async addToolResultMessages(
+    toolResults: Array<{ toolCallId: string; result: unknown }>,
+    finalAssistantContent?: string,
+  ): Promise<void> {
+    const visibleMessages = this.state.messages;
+    let chainParentId: string | undefined =
+      visibleMessages.length > 0
+        ? visibleMessages[visibleMessages.length - 1].id
+        : undefined;
+
+    for (const { toolCallId, result } of toolResults) {
+      const messageContent =
+        typeof result === "string" ? result : JSON.stringify(result);
+
+      const toolMessageId = generateMessageId();
+      const toolMessage = {
+        id: toolMessageId,
+        role: "tool" as const,
+        content: messageContent,
+        toolCallId,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+
+      this.state.pushMessage(toolMessage);
+      chainParentId = toolMessageId;
+    }
+
+    if (finalAssistantContent) {
+      const assistantMsg = {
+        id: generateMessageId(),
+        role: "assistant" as const,
+        content: finalAssistantContent,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+      this.state.pushMessage(assistantMsg);
+    }
+
+    this.callbacks.onMessagesChange?.(this._allMessages());
+    this.state.status = "ready";
+    this.callbacks.onStatusChange?.("ready");
+  }
+
+  /**
    * Stop generation
    */
   stop(): void {
@@ -553,15 +621,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Process a chat request
    */
-  protected async processRequest(): Promise<void> {
+  protected async processRequest(options?: {
+    preCreatedMessageId?: string;
+  }): Promise<void> {
     // Build request
     const request = this.buildRequest();
 
     // For streaming: pre-push an empty assistant message BEFORE the HTTP
     // round-trip so the UI shows a loading bubble immediately (e.g. between
     // tool execution and the continuation stream starting).
-    let preCreatedMessageId: string | undefined;
-    if (this.config.streaming !== false) {
+    // Skip if sendMessage already pushed a placeholder (preCreatedMessageId set).
+    let preCreatedMessageId = options?.preCreatedMessageId;
+    if (this.config.streaming !== false && !preCreatedMessageId) {
       // Use the current leaf (last visible message) as parent so the assistant
       // message is correctly placed as a child in the branch tree.
       const visibleMessages = this.state.messages;
@@ -880,13 +951,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Handle message:start when streamState is null (shouldn't happen in
       // normal flow, but handle gracefully by creating a new message).
       if (chunk.type === "message:start" && this.streamState === null) {
-        this.debug(
-          "message:start with null streamState - creating new message",
-        );
-        const visibleMessages = this.state.messages;
+        this.debug("message:start after mid-stream end - creating new message");
+        // Capture the current leaf BEFORE pushing the new message so the
+        // continuation turn is chained as a child in the branch tree.
+        // Without this parentId the new message becomes a ROOT orphan, which
+        // hijacks getVisibleMessages() and wipes the prior conversation from
+        // the active path on every subsequent buildRequest() call.
+        const currentLeaf = this.state.messages;
         const currentLeafId =
-          visibleMessages.length > 0
-            ? visibleMessages[visibleMessages.length - 1].id
+          currentLeaf.length > 0
+            ? currentLeaf[currentLeaf.length - 1].id
             : undefined;
         const newMessage = createEmptyAssistantMessage(undefined, {
           parentId: currentLeafId,
@@ -1006,10 +1080,26 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                   break;
                 }
               }
+              // Assign parentIds so inserted messages form a proper chain in the
+              // MessageTree. Without this they become orphan root-level children,
+              // which breaks the active-path walk and causes the visible message
+              // count to drop on subsequent turns.
+              const insertParentId =
+                insertIdx > 0 ? currentMessages[insertIdx - 1].id : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the message at insertIdx to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === insertIdx ? { ...m, parentId: lastInsertedId } : m,
+              );
               this.state.setMessages([
-                ...currentMessages.slice(0, insertIdx),
-                ...messagesToInsert,
-                ...currentMessages.slice(insertIdx),
+                ...updatedCurrent.slice(0, insertIdx),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(insertIdx),
               ]);
             }
           }
@@ -1211,12 +1301,40 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               : -1;
 
             if (currentStreamIndex === -1) {
-              this.state.setMessages([...currentMessages, ...messagesToInsert]);
+              // Append at end — chain from the last existing message
+              const appendParentId =
+                currentMessages.length > 0
+                  ? currentMessages[currentMessages.length - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? appendParentId : messagesToInsert[i - 1].id,
+              }));
+              this.state.setMessages([...currentMessages, ...linkedToInsert]);
             } else {
+              // Insert before the current streaming message — chain from the
+              // message immediately before it, then re-parent the streaming
+              // message to chain from the last inserted.
+              const insertParentId =
+                currentStreamIndex > 0
+                  ? currentMessages[currentStreamIndex - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the streaming message to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === currentStreamIndex
+                  ? { ...m, parentId: lastInsertedId }
+                  : m,
+              );
               this.state.setMessages([
-                ...currentMessages.slice(0, currentStreamIndex),
-                ...messagesToInsert,
-                ...currentMessages.slice(currentStreamIndex),
+                ...updatedCurrent.slice(0, currentStreamIndex),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(currentStreamIndex),
               ]);
             }
           }

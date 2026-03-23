@@ -546,6 +546,7 @@ function ChatComponent({
   // Custom rendering
   messageView,
   renderMessage,
+  wrapMessage,
   renderInput,
   renderHeader,
   // Avatar grouping
@@ -787,6 +788,17 @@ function ChatComponent({
     ChatView,
   );
 
+  // Behavior children: non-layout compound types (MessageActions registrars, custom hook components)
+  // These always mount so their useLayoutEffect registrations run regardless of view state.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layoutTypes: any[] = [HomeView, Home, ChatView, Header, Footer];
+  const behaviorChildren = React.Children.toArray(children).filter(
+    (child) =>
+      React.isValidElement(child) &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      !layoutTypes.includes(child.type as any),
+  ) as React.ReactElement[];
+
   // Check if ChatView has no children or only Header/Footer children (should render default)
   const chatViewElement = findCompoundChild(children, ChatView);
   const chatViewNeedsDefault =
@@ -862,7 +874,7 @@ function ChatComponent({
         >
           {/* Drag overlay */}
           {isDragging && (
-            <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
+            <div className="csdk-dropzone-overlay absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
               <div className="text-primary font-medium text-lg">
                 Drop files here
               </div>
@@ -885,6 +897,9 @@ function ChatComponent({
 
           {/* Root-level custom Header (shows in both views) */}
           {rootHeader}
+
+          {/* Behavior children — always mounted (MessageActions registrars, hook components) */}
+          {behaviorChildren.length > 0 && behaviorChildren}
 
           {/* Custom compound children - view components self-filter based on current view */}
           {hasCustomLayout && viewChildren}
@@ -1027,11 +1042,15 @@ function ChatComponent({
                           }
                         };
 
-                        return renderMessage ? (
-                          <React.Fragment key={message.id}>
-                            {renderMessage(messageWithExecutions, index)}
-                          </React.Fragment>
-                        ) : (
+                        if (renderMessage) {
+                          return (
+                            <React.Fragment key={message.id}>
+                              {renderMessage(messageWithExecutions, index)}
+                            </React.Fragment>
+                          );
+                        }
+
+                        const defaultMsg = (
                           <DefaultMessage
                             key={message.id}
                             message={messageWithExecutions}
@@ -1079,6 +1098,18 @@ function ChatComponent({
                             onEditMessage={onEditMessage}
                           />
                         );
+
+                        return wrapMessage ? (
+                          <React.Fragment key={message.id}>
+                            {wrapMessage(
+                              defaultMsg,
+                              messageWithExecutions,
+                              index,
+                            )}
+                          </React.Fragment>
+                        ) : (
+                          defaultMsg
+                        );
                       });
                       return messageView?.children
                         ? messageView.children({ messages, messageElements })
@@ -1111,7 +1142,7 @@ function ChatComponent({
                   </ChatContainerContent>
 
                   {/* Scroll to bottom button - inside ChatContainerRoot for context, outside ChatContainerContent so it doesn't scroll */}
-                  <div className="absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
+                  <div className="csdk-scroll-btn-layer absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
                     <ScrollButton className="shadow-md pointer-events-auto" />
                   </div>
                 </ChatContainerRoot>
@@ -1166,13 +1197,13 @@ function ChatComponent({
                           )}
                           {/* Loading overlay */}
                           {att.status === "processing" && (
-                            <div className="absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
+                            <div className="csdk-attachment-loading absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
                               <Loader variant="dots" size="sm" />
                             </div>
                           )}
                           {/* Error overlay */}
                           {att.status === "error" && (
-                            <div className="absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
+                            <div className="csdk-attachment-error absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
                               <span className="text-destructive text-xs">
                                 Error
                               </span>

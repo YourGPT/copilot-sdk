@@ -156,6 +156,9 @@ export function useInternalThreadManager(
           parentId: m.parent_id,
           childrenIds: m.children_ids,
           attachments: m.metadata?.attachments,
+          thinking: m.metadata?.thinking as string | undefined,
+          // Preserve full metadata including citations, toolCallsHidden, toolExecutions, etc.
+          metadata: m.metadata,
         }));
         lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
         savingToThreadRef.current = threadId;

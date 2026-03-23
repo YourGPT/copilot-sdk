@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { cn } from "../../lib/utils";
-import { Button } from "./button";
 import { CheckIcon, XIcon, AlertTriangleIcon } from "../icons";
 
 // ============================================
@@ -92,7 +91,10 @@ export function Confirmation({
     >
       <div
         className={cn(
-          "confirmation rounded-lg border bg-card text-card-foreground",
+          "csdk-confirm-card",
+          "confirmation rounded-2xl overflow-hidden",
+          "border border-border/60",
+          "bg-card text-card-foreground shadow-sm",
           className,
         )}
       >
@@ -121,7 +123,7 @@ export function ConfirmationPending({
   const { state } = useConfirmationContext();
   if (state !== "pending") return null;
 
-  return <div className={cn("p-4", className)}>{children}</div>;
+  return <div className={cn("pl-5 pr-4 pt-4 pb-3", className)}>{children}</div>;
 }
 
 export interface ConfirmationApprovedProps {
@@ -142,11 +144,14 @@ export function ConfirmationApproved({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-4 py-2 text-sm text-green-600 dark:text-green-400",
+        "csdk-confirm-result",
+        "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium",
+        "rounded-2xl border border-green-200/60 dark:border-green-800/40",
+        "bg-green-50/80 dark:bg-green-950/20 text-green-700 dark:text-green-400",
         className,
       )}
     >
-      <CheckIcon className="h-4 w-4" />
+      <CheckIcon className="h-3.5 w-3.5 shrink-0" />
       {children || <span>Approved</span>}
     </div>
   );
@@ -170,11 +175,14 @@ export function ConfirmationRejected({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400",
+        "csdk-confirm-result",
+        "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium",
+        "rounded-2xl border border-red-200/60 dark:border-red-800/40",
+        "bg-red-50/80 dark:bg-red-950/20 text-red-700 dark:text-red-400",
         className,
       )}
     >
-      <XIcon className="h-4 w-4" />
+      <XIcon className="h-3.5 w-3.5 shrink-0" />
       {children || <span>Rejected</span>}
     </div>
   );
@@ -200,8 +208,10 @@ export function ConfirmationMessage({
 
   return (
     <div className={cn("flex items-start gap-3", className)}>
-      <AlertTriangleIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
-      <p className="text-sm text-foreground">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/50 ring-1 ring-amber-200/60 dark:ring-amber-800/40">
+        <AlertTriangleIcon className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+      </div>
+      <p className="flex-1 min-w-0 pt-0.5 text-sm text-foreground leading-snug">
         {children || message || "This action requires your approval."}
       </p>
     </div>
@@ -238,14 +248,36 @@ export function ConfirmationActions({
   }
 
   return (
-    <div className={cn("mt-3 flex justify-end gap-2", className)}>
-      <Button variant="outline" size="sm" onClick={onReject}>
-        {rejectLabel}
-      </Button>
-      <Button variant="default" size="sm" onClick={onApprove}>
-        {approveLabel}
-      </Button>
-    </div>
+    <>
+      <div className="mx-0 border-t border-border/40 mt-3" />
+      <div className={cn("flex justify-end gap-2 pt-3", className)}>
+        <button
+          type="button"
+          onClick={onReject}
+          className={cn(
+            "csdk-confirm-btn",
+            "px-4 py-1.5 text-sm font-medium rounded-xl",
+            "border border-border/80 bg-transparent text-muted-foreground",
+            "hover:bg-muted/80 hover:text-foreground hover:border-border",
+          )}
+        >
+          {rejectLabel}
+        </button>
+        <button
+          type="button"
+          onClick={onApprove}
+          className={cn(
+            "csdk-confirm-btn",
+            "px-4 py-1.5 text-sm font-medium rounded-xl",
+            "bg-primary text-primary-foreground",
+            "hover:bg-primary/90",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+          )}
+        >
+          {approveLabel}
+        </button>
+      </div>
+    </>
   );
 }
 

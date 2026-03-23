@@ -62,9 +62,10 @@ export class MessageTree<T extends UIMessage = UIMessage> {
    *
    * Rules:
    * - Tool messages get parentId = the owning assistant message's id
-   *   (matched via toolCallId → toolCall.id).
-   * - All other messages get parentId of the previous non-tool message
-   *   (or null for the first message).
+   *   (matched via toolCallId → toolCall.id), chained in sequence.
+   * - All other messages get parentId = the previous message in the linear
+   *   chain (including tool messages, so the next non-tool after tool results
+   *   is a child of the last tool result, not a sibling).
    *
    * Returns a new array with parentId/childrenIds filled in.
    * Does NOT mutate the original messages.
@@ -77,8 +78,9 @@ export class MessageTree<T extends UIMessage = UIMessage> {
     if (alreadyLinked) return messages;
 
     const result: T[] = [];
-    // Track linear parent chain (skip tool messages for parent tracking)
-    let prevNonToolId: string | null = null;
+    // Track the previous message id for linear chain (includes tool messages
+    // so that the next non-tool message becomes a child of the last tool result)
+    let prevId: string | null = null;
 
     // Build assistant id → assistant message map for tool pairing
     const assistantById = new Map<string, T>();
@@ -87,6 +89,10 @@ export class MessageTree<T extends UIMessage = UIMessage> {
         assistantById.set(msg.id, msg);
       }
     }
+
+    // Track the last tool message id per owning assistant, so consecutive tool
+    // results from the same turn are chained (tool_result_1 → tool_result_2).
+    const lastToolIdByAssistant = new Map<string, string>();
 
     for (const msg of messages) {
       if (msg.role === "tool" && msg.toolCallId) {
@@ -98,18 +104,27 @@ export class MessageTree<T extends UIMessage = UIMessage> {
             break;
           }
         }
+        // Chain multiple tool results for the same assistant turn
+        const chainParent = ownerAssistantId
+          ? (lastToolIdByAssistant.get(ownerAssistantId) ?? ownerAssistantId)
+          : (prevId ?? null);
         result.push({
           ...msg,
-          parentId: ownerAssistantId ?? prevNonToolId,
+          parentId: chainParent,
           childrenIds: [],
         });
+        if (ownerAssistantId) {
+          lastToolIdByAssistant.set(ownerAssistantId, msg.id);
+        }
+        // Advance prevId so the next non-tool message is a child of this result
+        prevId = msg.id;
       } else {
         result.push({
           ...msg,
-          parentId: prevNonToolId,
+          parentId: prevId,
           childrenIds: [],
         });
-        prevNonToolId = msg.id;
+        prevId = msg.id;
       }
     }
 

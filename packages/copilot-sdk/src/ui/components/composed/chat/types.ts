@@ -482,6 +482,13 @@ export type ChatProps = {
   };
   /** Custom message renderer */
   renderMessage?: (message: ChatMessage, index: number) => React.ReactNode;
+  /** Wrap each DefaultMessage in a custom container — for animations, hover effects, etc.
+   *  Unlike renderMessage, this preserves all SDK defaults (toolRenderers, loading, avatars, approval). */
+  wrapMessage?: (
+    content: React.ReactNode,
+    message: ChatMessage,
+    index: number,
+  ) => React.ReactNode;
   /** Custom input renderer (replaces entire input area) */
   renderInput?: () => React.ReactNode;
   /** Custom header renderer (replaces entire header) */

@@ -107,3 +107,10 @@ export {
 // Skills Hooks
 export { useSkill } from "./useSkill";
 export { useSkillStatus, type UseSkillStatusReturn } from "./useSkillStatus";
+
+// Message Checkpoints (undo / restore to before a user message)
+export {
+  useMessageCheckpoints,
+  type MessageCheckpoint,
+  type UseMessageCheckpointsReturn,
+} from "./useMessageCheckpoints";

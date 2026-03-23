@@ -1,5 +1,5 @@
 {
   "title": "Customizations",
   "icon": "Paintbrush",
-  "pages": ["index", "chat-primitives", "custom-message-view"]
+  "pages": ["css-classes", "chat-primitives", "custom-message-view"]
 }

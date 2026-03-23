@@ -96,7 +96,7 @@ export function SaasLayout({ theme, loaderVariant, alphaConfig }: LayoutProps) {
   return (
     <div className="h-full" data-csdk-theme={effectiveTheme}>
       <CopilotChat.Root
-        persistence
+        persistence={alphaConfig.sessionPersistence || undefined}
         className="h-full"
         showPoweredBy={false}
         loaderVariant={loaderVariant}
@@ -126,7 +126,8 @@ export function SaasLayout({ theme, loaderVariant, alphaConfig }: LayoutProps) {
             )}
           </CopilotChat.MessageActions>
         )}
-        {alphaConfig.messageActions.editEnabled && (
+        {(alphaConfig.messageActions.editEnabled ||
+          alphaConfig.branchingEnabled) && (
           <CopilotChat.MessageActions role="user">
             <CopilotChat.EditAction />
           </CopilotChat.MessageActions>

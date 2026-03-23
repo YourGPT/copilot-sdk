@@ -206,7 +206,7 @@ export function MCPUIFrame({
 
       {/* Loading overlay */}
       {showLoading && isLoading && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80">
+        <div className="csdk-mcp-loading absolute inset-0 z-10 flex items-center justify-center bg-background/80">
           <Loader variant="dots" size="md" />
         </div>
       )}

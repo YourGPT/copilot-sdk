@@ -376,13 +376,13 @@ export function ChatWelcome({
                 )}
                 {/* Loading overlay */}
                 {att.status === "processing" && (
-                  <div className="absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
+                  <div className="csdk-attachment-loading absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
                     <Loader variant="dots" size="sm" />
                   </div>
                 )}
                 {/* Error overlay */}
                 {att.status === "error" && (
-                  <div className="absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
+                  <div className="csdk-attachment-error absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
                     <span className="text-destructive text-xs">Error</span>
                   </div>
                 )}

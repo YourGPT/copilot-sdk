@@ -160,6 +160,13 @@ export {
   type UseMCPUIIntentsReturn,
 } from "./hooks";
 
+// Message Checkpoints — undo / restore conversation to before any user message
+export {
+  useMessageCheckpoints,
+  type MessageCheckpoint,
+  type UseMessageCheckpointsReturn,
+} from "./hooks";
+
 // Re-export core types for convenience
 export type {
   Message,

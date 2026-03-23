@@ -415,7 +415,9 @@ export function DefaultMessage({
 
     return (
       <Message
-        className={cn("flex gap-2 group/user-msg group/message justify-end")}
+        className={cn(
+          "csdk-message csdk-user-message flex gap-2 group/user-msg group/message justify-end",
+        )}
       >
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
           {/* Edit mode: inline textarea */}
@@ -607,7 +609,7 @@ export function DefaultMessage({
 
   // Assistant message - left aligned with avatar
   return (
-    <Message className="flex gap-2 group/message">
+    <Message className="csdk-message csdk-assistant-message flex gap-2 group/message">
       <MessageAvatar
         src={assistantAvatar.src}
         alt="Assistant"
@@ -727,26 +729,7 @@ export function DefaultMessage({
                     );
                   }
 
-                  // PRIORITY 3: fallbackToolRenderer (catch-all for any unmatched tool)
-                  if (fallbackToolRenderer) {
-                    const FallbackRenderer = fallbackToolRenderer;
-                    return (
-                      <FallbackRenderer
-                        key={exec.id}
-                        execution={{
-                          id: exec.id,
-                          name: exec.name,
-                          args: exec.args,
-                          status: exec.status,
-                          result: exec.result,
-                          error: exec.error,
-                          source: exec.source,
-                        }}
-                      />
-                    );
-                  }
-
-                  // PRIORITY 4: toolRenderers map (app-level explicit renderer)
+                  // PRIORITY 3: toolRenderers map (app-level explicit renderer — static, always available)
                   const Renderer = toolRenderers?.[exec.name];
                   if (Renderer) {
                     return (
@@ -760,6 +743,25 @@ export function DefaultMessage({
                           result: exec.result,
                           error: exec.error,
                           approvalStatus: exec.approvalStatus,
+                          source: exec.source,
+                        }}
+                      />
+                    );
+                  }
+
+                  // PRIORITY 4: fallbackToolRenderer (catch-all for any unmatched tool)
+                  if (fallbackToolRenderer) {
+                    const FallbackRenderer = fallbackToolRenderer;
+                    return (
+                      <FallbackRenderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
                           source: exec.source,
                         }}
                       />
@@ -972,7 +974,7 @@ function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
       {/* Fullscreen modal */}
       {expanded && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          className="csdk-image-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/80"
           onClick={() => setExpanded(false)}
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
@@ -983,7 +985,7 @@ function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
             />
             <button
               type="button"
-              className="absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
+              className="csdk-image-close absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
               onClick={(e) => {
                 e.stopPropagation();
                 setExpanded(false);

@@ -187,6 +187,12 @@ export type CopilotChatProps = Omit<
    * Granular class names for sub-components including thread picker
    */
   classNames?: CopilotChatClassNames;
+
+  /**
+   * Allow inline editing of user messages.
+   * @default false
+   */
+  allowEdit?: boolean;
 };
 
 /**
@@ -301,6 +307,7 @@ function CopilotChatBase(
     classNames,
     header,
     children,
+    allowEdit = false,
     ...chatProps
   } = props;
 
@@ -392,7 +399,7 @@ function CopilotChatBase(
                 } catch {
                   return {
                     ...exec,
-                    result: { success: true, message: resultContent },
+                    result: { success: false, message: resultContent },
                   };
                 }
               }
@@ -417,7 +424,7 @@ function CopilotChatBase(
                 try {
                   result = JSON.parse(resultContent);
                 } catch {
-                  result = { success: true, message: resultContent };
+                  result = { success: false, message: resultContent };
                 }
               }
               let args: Record<string, unknown> = {};
@@ -443,7 +450,10 @@ function CopilotChatBase(
                   ? "completed"
                   : "pending") as ToolExecutionData["status"],
                 result,
-                timestamp: Date.now(), // Historical - use current time
+                timestamp:
+                  m.createdAt instanceof Date
+                    ? m.createdAt.getTime()
+                    : Date.now(),
                 hidden,
               };
             },
@@ -641,7 +651,7 @@ function CopilotChatBase(
       // Branching (auto-wired from context)
       getBranchInfo={getBranchInfo}
       onSwitchBranch={switchBranch}
-      onEditMessage={editMessage}
+      onEditMessage={allowEdit ? editMessage : undefined}
     >
       {children}
     </Chat>

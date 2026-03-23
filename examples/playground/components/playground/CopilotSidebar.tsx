@@ -102,6 +102,11 @@ export function CopilotSidebar({
           systemPrompt={systemPrompt}
           maxIterations={5}
           onError={handleError}
+          messageHistory={
+            alphaConfig.compactionStrategy !== "none"
+              ? { strategy: alphaConfig.compactionStrategy }
+              : undefined
+          }
         >
           <CopilotPanel
             theme={copilotTheme}
