@@ -30,9 +30,19 @@ export default function MessageList() {
 
   return (
     <div className="flex-1 overflow-y-auto py-4 slack-scroll">
-      {messages.map((m) => (
-        <Message key={m.id} message={m} />
-      ))}
+      {messages
+        .filter((m) => m.role !== "tool")
+        .filter(
+          (m) =>
+            !(
+              m.role === "assistant" &&
+              !m.content &&
+              !(m as any).metadata?.toolExecutions?.length
+            ),
+        )
+        .map((m) => (
+          <Message key={m.id} message={m} />
+        ))}
       {status === "streaming" &&
         messages[messages.length - 1]?.role !== "assistant" && (
           <div className="px-4 py-1.5">

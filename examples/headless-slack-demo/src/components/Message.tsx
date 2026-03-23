@@ -7,13 +7,35 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
+import {
+  WeatherCard,
+  SearchCard,
+  PollCard,
+  CalculatorCard,
+  TimeCard,
+} from "./ToolCards";
+import type {
+  WeatherData,
+  SearchData,
+  PollData,
+  CalcData,
+  TimeData,
+} from "./ToolCards";
+
+interface ToolExecution {
+  id: string;
+  name: string;
+  status: string;
+  result?: { success: boolean; data?: unknown };
+}
 
 interface MessageProps {
   message: {
     id: string;
-    role: "user" | "assistant";
+    role: string;
     content: string;
     createdAt?: Date;
+    metadata?: { toolExecutions?: ToolExecution[] };
   };
 }
 
@@ -21,6 +43,7 @@ interface MyMeta {
   thinking?: string;
   isThinking?: boolean;
   tools?: Record<string, "running" | "done" | "error">;
+  toolResults?: Record<string, { success: boolean; data?: unknown }>;
 }
 
 function formatTime(date?: Date) {
@@ -114,6 +137,33 @@ export default function Message({ message }: MessageProps) {
           </div>
         ))}
 
+        {/* Tool result cards — read from message.metadata (persistent across remounts) */}
+        {(message.metadata?.toolExecutions ?? [])
+          .filter(
+            (t) =>
+              t.status === "completed" && t.result?.success && t.result?.data,
+          )
+          .map((t) => {
+            const data = t.result!.data as Record<string, unknown>;
+            if (t.name === "get_weather")
+              return (
+                <WeatherCard key={t.id} data={data as unknown as WeatherData} />
+              );
+            if (t.name === "search_web")
+              return (
+                <SearchCard key={t.id} data={data as unknown as SearchData} />
+              );
+            if (t.name === "create_poll")
+              return <PollCard key={t.id} data={data as unknown as PollData} />;
+            if (t.name === "calculate")
+              return (
+                <CalculatorCard key={t.id} data={data as unknown as CalcData} />
+              );
+            if (t.name === "get_time")
+              return <TimeCard key={t.id} data={data as unknown as TimeData} />;
+            return null;
+          })}
+
         {/* Message text */}
         {message.content && (
           <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
@@ -121,23 +171,26 @@ export default function Message({ message }: MessageProps) {
           </p>
         )}
 
-        {/* Streaming placeholder */}
-        {!message.content && !meta.isThinking && isAssistant && (
-          <div className="flex gap-1 items-center h-5">
-            <span
-              className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
-              style={{ animationDelay: "0ms" }}
-            />
-            <span
-              className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
-              style={{ animationDelay: "150ms" }}
-            />
-            <span
-              className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
-              style={{ animationDelay: "300ms" }}
-            />
-          </div>
-        )}
+        {/* Streaming placeholder — only when no tool cards to show */}
+        {!message.content &&
+          !meta.isThinking &&
+          isAssistant &&
+          !message.metadata?.toolExecutions?.length && (
+            <div className="flex gap-1 items-center h-5">
+              <span
+                className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
+                style={{ animationDelay: "0ms" }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
+                style={{ animationDelay: "150ms" }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"
+                style={{ animationDelay: "300ms" }}
+              />
+            </div>
+          )}
       </div>
     </div>
   );
