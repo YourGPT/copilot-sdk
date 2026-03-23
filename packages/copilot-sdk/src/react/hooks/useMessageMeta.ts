@@ -46,6 +46,9 @@
 import { useSyncExternalStore, useCallback } from "react";
 import { useCopilot } from "../provider/CopilotProvider";
 
+// Stable empty object for messageId=undefined — avoids new reference each render
+const EMPTY_META: Record<string, unknown> = {};
+
 export interface UseMessageMetaReturn<T extends Record<string, unknown>> {
   /** Current metadata for this message. Empty object if nothing set yet. */
   meta: T;
@@ -74,8 +77,9 @@ export function useMessageMeta<
   // Subscribe to store changes — only re-render when this messageId's data changes
   const meta = useSyncExternalStore(
     messageMeta.subscribe,
-    () => (messageId ? (messageMeta.getMeta(messageId) as T) : ({} as T)),
-    () => ({}) as T,
+    () =>
+      messageId ? (messageMeta.getMeta(messageId) as T) : (EMPTY_META as T),
+    () => EMPTY_META as T,
   );
 
   const setMeta = useCallback(

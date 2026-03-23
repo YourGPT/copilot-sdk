@@ -324,6 +324,9 @@ export type StreamEventHandler = (chunk: StreamChunkWithMessageId) => void;
 export class MessageMetaStore {
   private store = new Map<string, Record<string, unknown>>();
   private listeners = new Set<() => void>();
+  // Stable empty object — returned for unknown messageIds so useSyncExternalStore
+  // sees the same reference and doesn't trigger infinite re-renders.
+  private static readonly EMPTY: Record<string, unknown> = {};
 
   subscribe = (cb: () => void): (() => void) => {
     this.listeners.add(cb);
@@ -333,7 +336,7 @@ export class MessageMetaStore {
   getSnapshot = (): Map<string, Record<string, unknown>> => this.store;
 
   getMeta = (messageId: string): Record<string, unknown> =>
-    this.store.get(messageId) ?? {};
+    this.store.get(messageId) ?? MessageMetaStore.EMPTY;
 
   setMeta = (messageId: string, meta: Record<string, unknown>): void => {
     this.store.set(messageId, meta);
