@@ -3,7 +3,7 @@
 import { useCopilot } from "@yourgpt/copilot-sdk/react";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "@yourgpt/copilot-sdk/react";
-import type { BranchInfo } from "@yourgpt/copilot-sdk";
+import type { BranchInfo } from "@yourgpt/copilot-sdk/react";
 
 // ============================================
 // BranchTreePanel

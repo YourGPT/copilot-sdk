@@ -268,7 +268,7 @@ export interface CopilotProviderProps {
   /** Thread ID for conversation persistence */
   threadId?: string;
   /** Initial messages to populate the chat */
-  initialMessages?: Message[];
+  initialMessages?: UIMessage[];
   /** Callback when messages change */
   onMessagesChange?: (messages: Message[]) => void;
   /** Callback when an error occurs */
@@ -563,20 +563,7 @@ export function CopilotProvider({
   }
 
   if (chatRef.current === null) {
-    // Convert initial messages to UIMessage format
-    const uiInitialMessages: UIMessage[] | undefined = initialMessages?.map(
-      (m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content ?? "",
-        createdAt: m.created_at ?? new Date(),
-        attachments: m.metadata?.attachments as MessageAttachment[] | undefined,
-        toolCalls: m.tool_calls,
-        toolCallId: m.tool_call_id,
-        parentId: m.parent_id,
-        childrenIds: m.children_ids,
-      }),
-    );
+    const uiInitialMessages = initialMessages;
 
     chatRef.current = new ReactChatWithTools(
       {

@@ -1,4 +1,6 @@
-import { Hash, ChevronDown, Plus, Bell } from "lucide-react";
+import { Hash, ChevronDown, Plus, Bell, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { clearMessages, loadMessages } from "../lib/storage";
 
 interface Channel {
   id: string;
@@ -8,14 +10,11 @@ interface Channel {
 interface SidebarProps {
   channels: Channel[];
   activeChannel: string;
-  onChannelSelect: (id: string) => void;
 }
 
-export default function Sidebar({
-  channels,
-  activeChannel,
-  onChannelSelect,
-}: SidebarProps) {
+export default function Sidebar({ channels, activeChannel }: SidebarProps) {
+  const navigate = useNavigate();
+
   return (
     <div
       className="w-64 shrink-0 flex flex-col overflow-hidden"
@@ -39,16 +38,19 @@ export default function Sidebar({
 
       {/* Scrollable area */}
       <div className="flex-1 overflow-y-auto py-2 slack-scroll">
-        {/* Browsed channels */}
+        {/* Channels */}
         <div className="mb-1">
           <SidebarSection label="Channels" />
           {channels.map((ch) => (
-            <SidebarItem
+            <ChannelItem
               key={ch.id}
-              icon={<Hash size={15} />}
-              label={ch.name}
+              channel={ch}
               active={ch.id === activeChannel}
-              onClick={() => onChannelSelect(ch.id)}
+              onClick={() => navigate(`/channel/${ch.id}`)}
+              onClear={() => {
+                clearMessages(ch.id);
+                window.location.reload();
+              }}
             />
           ))}
           <button
@@ -93,6 +95,65 @@ export default function Sidebar({
           className="text-white/50 hover:text-white cursor-pointer"
         />
       </div>
+    </div>
+  );
+}
+
+function ChannelItem({
+  channel,
+  active,
+  onClick,
+  onClear,
+}: {
+  channel: Channel;
+  active: boolean;
+  onClick: () => void;
+  onClear: () => void;
+}) {
+  const hasMessages = loadMessages(channel.id).length > 0;
+
+  return (
+    <div className="group/item relative mx-1">
+      <button
+        onClick={onClick}
+        className="flex items-center gap-2 w-full px-3 py-1 rounded text-sm transition-colors"
+        style={{
+          color: active ? "var(--sidebar-text-active)" : "var(--sidebar-text)",
+          backgroundColor: active ? "var(--sidebar-active)" : "transparent",
+        }}
+        onMouseEnter={(e) => {
+          if (!active)
+            (e.currentTarget as HTMLElement).style.backgroundColor =
+              "var(--sidebar-hover)";
+        }}
+        onMouseLeave={(e) => {
+          if (!active)
+            (e.currentTarget as HTMLElement).style.backgroundColor =
+              "transparent";
+        }}
+      >
+        <span className="shrink-0">
+          <Hash size={15} />
+        </span>
+        <span className="truncate flex-1 text-left">{channel.name}</span>
+        {hasMessages && (
+          <span
+            className="w-2 h-2 rounded-full bg-green-400 shrink-0"
+            title="Has saved messages"
+          />
+        )}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClear();
+        }}
+        title="Clear history"
+        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity p-0.5 rounded hover:bg-white/20"
+        style={{ color: "var(--sidebar-text)" }}
+      >
+        <Trash2 size={13} />
+      </button>
     </div>
   );
 }
