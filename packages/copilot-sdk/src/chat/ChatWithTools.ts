@@ -265,6 +265,12 @@ export class ChatWithTools {
         const results = await this.agentLoop.executeToolCalls(toolCallInfos);
         this.debug("Tool results:", results);
 
+        // If stop() was called while tools were executing, don't restart the loop
+        if (this.agentLoop.isCancelled) {
+          this.debug("Skipping continueWithToolResults — loop was cancelled");
+          return;
+        }
+
         // Continue chat with tool results
         if (results.length > 0) {
           const toolResults = results.map((r) => ({

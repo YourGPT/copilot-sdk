@@ -428,6 +428,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // is not enough for React 18 to render the loading state.
       await new Promise((resolve) => setTimeout(resolve, 0));
 
+      // If stop() was called during the macrotask yield, status will have been
+      // reset to "ready" — don't restart the loop in that case.
+      if (this.status === "ready" || this.status === "error") {
+        this.debug(
+          "Skipping processRequest — status reset during yield (stop was called)",
+        );
+        return;
+      }
+
       // Continue request
       await this.processRequest();
     } catch (error) {
