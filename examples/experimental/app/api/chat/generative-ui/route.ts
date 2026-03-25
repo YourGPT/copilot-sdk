@@ -22,12 +22,12 @@ function resolveProvider() {
   );
 }
 
-const { provider, model, providerName } = resolveProvider();
-
-const runtime = createRuntime({
-  provider,
-  model,
-  systemPrompt: `You are a data-rich assistant that always renders visual UI components instead of plain text.
+function getRuntime() {
+  const { provider, model } = resolveProvider();
+  return createRuntime({
+    provider,
+    model,
+    systemPrompt: `You are a data-rich assistant that always renders visual UI components instead of plain text.
 
 You have a render_ui tool. Use it proactively based on the request:
 
@@ -67,14 +67,16 @@ new Chart(document.getElementById('c'), {
 Use html when asked for dashboards, interactive layouts, shadcn-style components, or anything combining charts + stats + cards in one view.
 For html, set the "height" field to fit the content — e.g. "600px" for dashboards, "320px" for a small card.
 Always prefer a structured type (table, stat, card) over html when the data fits a single type.`,
-  maxIterations: 3,
-});
+    maxIterations: 3,
+  });
+}
 
 export async function POST(request: Request) {
-  return runtime.handleRequest(request);
+  return getRuntime().handleRequest(request);
 }
 
 export async function GET() {
+  const { providerName, model } = resolveProvider();
   return Response.json({
     status: "ok",
     provider: providerName,

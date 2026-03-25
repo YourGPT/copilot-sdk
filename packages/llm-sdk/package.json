@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/llm-sdk",
-  "version": "2.1.4-alpha.0",
+  "version": "2.1.4-alpha.1",
   "description": "AI SDK for building AI Agents with any LLM",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

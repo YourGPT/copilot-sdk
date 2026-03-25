@@ -316,6 +316,8 @@ export type ChatProps = {
     fallback?: string;
     /** Custom avatar component - when provided, replaces the default avatar */
     component?: React.ReactNode;
+    /** Additional className applied to the avatar wrapper (e.g. "!bg-transparent") */
+    className?: string;
   };
   /** Loader variant for typing indicator */
   loaderVariant?:
