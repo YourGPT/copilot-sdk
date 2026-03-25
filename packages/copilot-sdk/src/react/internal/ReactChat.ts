@@ -14,6 +14,7 @@ import {
   type UIMessage,
   type ChatInit,
   type ChatEventHandler,
+  type YourGPTConfig,
 } from "../../chat";
 import { ReactChatState } from "./ReactChatState";
 import type { BranchInfo } from "../../chat/branching";
@@ -35,6 +36,10 @@ export interface ReactChatConfig {
   llm?: ChatConfig["llm"];
   /** Thread ID */
   threadId?: string;
+  /** Called once before first message to obtain a session/thread ID */
+  onCreateSession?: () => string | Promise<string>;
+  /** YourGPT config — enables automatic session creation */
+  yourgptConfig?: YourGPTConfig;
   /** Enable streaming (default: true) */
   streaming?: boolean;
   /** Request headers */
@@ -76,6 +81,8 @@ export class ReactChat extends AbstractChat<UIMessage> {
       systemPrompt: config.systemPrompt,
       llm: config.llm,
       threadId: config.threadId,
+      onCreateSession: config.onCreateSession,
+      yourgptConfig: config.yourgptConfig,
       streaming: config.streaming ?? true,
       headers: config.headers,
       initialMessages: config.initialMessages,

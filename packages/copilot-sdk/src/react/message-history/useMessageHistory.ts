@@ -86,18 +86,16 @@ export function useMessageHistory(
     [messages],
   );
 
-  // Restore persisted display messages on cold start (async)
+  // Restore persisted display messages on cold start
   const restoredRef = useRef(false);
   useEffect(() => {
     if (!config.persistSession || restoredRef.current) return;
     restoredRef.current = true;
-    loadDisplayMessages(storageKey).then((saved) => {
-      if (saved?.length && messages.length === 0) {
-        // Only restore if current session is empty
-        // (useCopilot().setMessages would be called here in a real integration)
-        // For now: restored messages are available via displayMessages after setMessages
-      }
-    });
+    const saved = loadDisplayMessages(storageKey);
+    if (saved?.length && messages.length === 0) {
+      // Only restore if current session is empty
+      // (useCopilot().setMessages would be called here in a real integration)
+    }
   }, [config.persistSession, storageKey, messages.length]);
 
   // Persist display messages when they change
@@ -295,10 +293,10 @@ export function useMessageHistory(
     setCompactionState((prev) => ({ ...prev, workingMemory: [] }));
   }, []);
 
-  const resetSession = useCallback(async () => {
+  const resetSession = useCallback(() => {
     setCompactionState(DEFAULT_COMPACTION_STATE);
     if (config.persistSession) {
-      await clearSession(storageKey);
+      clearSession(storageKey);
     }
   }, [config.persistSession, storageKey]);
 

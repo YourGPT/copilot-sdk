@@ -21,7 +21,7 @@ import type { Resolvable } from "../core/utils/resolvable";
 import { createLogger } from "../core/utils/logger";
 import { AbstractChat } from "./classes/AbstractChat";
 import { AbstractAgentLoop } from "./AbstractAgentLoop";
-import type { ChatConfig, ChatCallbacks } from "./types";
+import type { ChatConfig, ChatCallbacks, YourGPTConfig } from "./types";
 import type { UIMessage } from "./types/message";
 import type { ToolExecution, AgentLoopCallbacks } from "./types/tool";
 import type { ChatState } from "./interfaces/ChatState";
@@ -48,6 +48,13 @@ export interface ChatWithToolsConfig {
   body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
+  /**
+   * Called once before the first message on a new thread to create a session.
+   * The returned value IS the thread ID. Only called when threadId is not set.
+   */
+  onCreateSession?: () => string | Promise<string>;
+  /** YourGPT config — enables automatic session creation */
+  yourgptConfig?: YourGPTConfig;
   /** Enable debug logging */
   debug?: boolean;
   /** Initial messages */
@@ -140,6 +147,8 @@ export class ChatWithTools {
       body: config.body,
       optimization: config.optimization,
       threadId: config.threadId,
+      onCreateSession: config.onCreateSession,
+      yourgptConfig: config.yourgptConfig,
       debug: config.debug,
       initialMessages: config.initialMessages,
       state: config.state,
@@ -154,6 +163,8 @@ export class ChatWithTools {
         onToolCalls: callbacks.onToolCalls,
         onFinish: callbacks.onFinish,
         onContextUsageChange: callbacks.onContextUsageChange,
+        onThreadChange: callbacks.onThreadChange,
+        onSessionStatusChange: callbacks.onSessionStatusChange,
         // Server-side tool callbacks - track in agentLoop for UI display
         // IMPORTANT: Only track tools that are NOT registered client-side
         // Client-side tools are tracked via executeToolCalls() path
@@ -472,6 +483,29 @@ export class ChatWithTools {
    */
   setContext(context: string): void {
     this.chat.setContext(context);
+  }
+
+  /**
+   * Switch to a different thread (or start a new one).
+   * Pass the session/thread ID from persistence to reuse it, or null to start fresh.
+   */
+  setActiveThread(id: string | null): void {
+    this.chat.setActiveThread(id);
+  }
+
+  /**
+   * Force a new session on the next sendMessage.
+   * Call this when the current session has expired or credits are exhausted.
+   */
+  renewSession(): void {
+    this.chat.renewSession();
+  }
+
+  /**
+   * Current session creation status.
+   */
+  getSessionStatus(): "idle" | "creating" | "ready" | "error" {
+    return this.chat.getSessionStatus();
   }
 
   /**

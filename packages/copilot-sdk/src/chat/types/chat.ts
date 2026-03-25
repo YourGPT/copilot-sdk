@@ -20,6 +20,18 @@ import type { UIMessage } from "./message";
 export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
 
 /**
+ * YourGPT configuration for automatic session management
+ */
+export interface YourGPTConfig {
+  /** YourGPT API key (sent as api-key header) */
+  apiKey: string;
+  /** Widget UID to scope sessions to */
+  widgetUid: string;
+  /** API base URL (default: https://api.yourgpt.ai) */
+  endpoint?: string;
+}
+
+/**
  * Chat configuration
  *
  * Supports both static values and getter functions for dynamic configuration.
@@ -54,6 +66,37 @@ export interface ChatConfig {
   body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
+  /**
+   * Called once before the first message on a new thread to obtain a session/thread ID.
+   * The returned value IS the thread ID — session and thread are the same identity.
+   *
+   * Only called when `config.threadId` is not set (new thread).
+   * If `threadId` is already provided, this is skipped entirely.
+   * Takes priority over `yourgptConfig` when both are provided.
+   *
+   * @example Async server session
+   * ```ts
+   * onCreateSession={async () => {
+   *   const res = await fetch('/api/sessions', { method: 'POST' })
+   *   return (await res.json()).id
+   * }}
+   * ```
+   */
+  onCreateSession?: () => string | Promise<string>;
+  /**
+   * YourGPT config — enables automatic session creation with zero boilerplate.
+   * When provided, the SDK calls YourGPT's createSession API before the first
+   * message and uses the returned session_uid as `threadId`.
+   *
+   * @example
+   * ```tsx
+   * yourgptConfig={{
+   *   apiKey: process.env.YOURGPT_API_KEY,
+   *   widgetUid: widgetUid,
+   * }}
+   * ```
+   */
+  yourgptConfig?: YourGPTConfig;
   /** Enable debug logging */
   debug?: boolean;
   /** Available tools (passed to LLM) */
@@ -106,6 +149,19 @@ export interface ChatCallbacks<T extends UIMessage = UIMessage> {
   onFinish?: (messages: T[]) => void;
   /** Called when prompt context usage changes */
   onContextUsageChange?: (usage: ContextUsage) => void;
+  /**
+   * Called once when a new session/thread ID is assigned (null → sessionId transition).
+   * Use this to persist the session ID in your storage layer.
+   * The returned ID is the same as the threadId that will be used for all subsequent requests.
+   */
+  onThreadChange?: (id: string) => void;
+  /**
+   * Called when the session creation status changes.
+   * Use this to show/hide a spinner while the session is being created.
+   */
+  onSessionStatusChange?: (
+    status: "idle" | "creating" | "ready" | "error",
+  ) => void;
   /** Called when a server-side tool starts executing (action:start event) */
   onServerToolStart?: (info: ServerToolInfo) => void;
   /** Called when a server-side tool receives args (action:args event) */

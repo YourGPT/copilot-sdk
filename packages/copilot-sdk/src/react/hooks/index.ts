@@ -75,6 +75,9 @@ export {
   type UseThreadManagerReturn,
 } from "./useThreadManager";
 
+// Thread/Session hook
+export { useThread, type UseThreadReturn } from "./useThread";
+
 // MCP (Model Context Protocol) Hooks
 export {
   useMCPClient,

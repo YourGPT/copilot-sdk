@@ -122,6 +122,17 @@ export interface UseChatReturn {
 export function useChat(config: UseChatConfig): UseChatReturn {
   // Create and store ReactChat instance
   const chatRef = useRef<ReactChat | null>(null);
+  const isThreadIdControlled = Object.prototype.hasOwnProperty.call(
+    config,
+    "threadId",
+  );
+  const lastControlledThreadIdRef = useRef<{
+    controlled: boolean;
+    value: string | undefined;
+  }>({
+    controlled: isThreadIdControlled,
+    value: config.threadId,
+  });
 
   // Local input state (UI concern)
   const [input, setInput] = useState("");
@@ -138,6 +149,8 @@ export function useChat(config: UseChatConfig): UseChatReturn {
       systemPrompt: config.systemPrompt,
       llm: config.llm,
       threadId: config.threadId,
+      onCreateSession: config.onCreateSession,
+      yourgptConfig: config.yourgptConfig,
       streaming: config.streaming,
       headers: config.headers,
       initialMessages: config.initialMessages,
@@ -150,6 +163,28 @@ export function useChat(config: UseChatConfig): UseChatReturn {
       },
     });
   }
+
+  // Keep the chat instance aligned with controlled threadId prop changes.
+  useEffect(() => {
+    const prev = lastControlledThreadIdRef.current;
+    const controlChanged = prev.controlled !== isThreadIdControlled;
+    const valueChanged = prev.value !== config.threadId;
+
+    if (!controlChanged && !valueChanged) {
+      return;
+    }
+
+    lastControlledThreadIdRef.current = {
+      controlled: isThreadIdControlled,
+      value: config.threadId,
+    };
+
+    if (!isThreadIdControlled) {
+      return;
+    }
+
+    chatRef.current?.setActiveThread(config.threadId ?? null);
+  }, [config.threadId, isThreadIdControlled]);
 
   // Subscribe to all state changes with useSyncExternalStore
   const messages = useSyncExternalStore(
@@ -216,12 +251,9 @@ export function useChat(config: UseChatConfig): UseChatReturn {
     chatRef.current?.switchBranch(messageId);
   }, []);
 
-  const getBranchInfo = useCallback(
-    (messageId: string): BranchInfo | null => {
-      return chatRef.current?.getBranchInfo(messageId) ?? null;
-    },
-    [],
-  );
+  const getBranchInfo = useCallback((messageId: string): BranchInfo | null => {
+    return chatRef.current?.getBranchInfo(messageId) ?? null;
+  }, []);
 
   const editMessage = useCallback(
     async (messageId: string, newContent: string) => {

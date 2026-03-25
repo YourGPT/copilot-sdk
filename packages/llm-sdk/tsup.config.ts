@@ -16,6 +16,9 @@ export default defineConfig({
 
     // Legacy adapters
     "adapters/index": "src/adapters/index.ts",
+
+    // YourGPT storage adapter
+    "yourgpt/index": "src/yourgpt/index.ts",
   },
   format: ["cjs", "esm"],
   dts: true,

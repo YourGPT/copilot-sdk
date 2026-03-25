@@ -33,7 +33,12 @@ import type { MCPServerConfig } from "../../mcp/types";
 import type { Resolvable } from "../../core/utils/resolvable";
 import { createLogger } from "../../core/utils/logger";
 
-import type { UIMessage, ToolExecution, StreamChunk } from "../../chat";
+import type {
+  UIMessage,
+  ToolExecution,
+  StreamChunk,
+  YourGPTConfig,
+} from "../../chat";
 
 import {
   ReactChatWithTools,
@@ -267,6 +272,37 @@ export interface CopilotProviderProps {
   tools?: ToolsConfig;
   /** Thread ID for conversation persistence */
   threadId?: string;
+  /**
+   * Called once before the first message on a new thread to create a session.
+   * The returned value IS the thread ID — session and thread are the same identity.
+   * Only called when `threadId` is not set. If `threadId` is provided, this is skipped.
+   * Takes priority over `yourgptConfig`.
+   *
+   * @example
+   * ```tsx
+   * onCreateSession={async () => {
+   *   const res = await fetch('/api/sessions', { method: 'POST', headers })
+   *   return (await res.json()).id
+   * }}
+   * ```
+   */
+  onCreateSession?: () => string | Promise<string>;
+  /**
+   * Called when a new session/thread ID is assigned (new thread created).
+   * Use this to persist the session ID in your storage layer.
+   */
+  onThreadChange?: (id: string) => void;
+  /**
+   * YourGPT config — enables automatic session creation with zero boilerplate.
+   * The SDK calls YourGPT's createSession API before the first message and
+   * uses the returned session_uid as `threadId`.
+   *
+   * @example
+   * ```tsx
+   * yourgptConfig={{ apiKey: "your-api-key", widgetUid: widgetUid }}
+   * ```
+   */
+  yourgptConfig?: YourGPTConfig;
   /** Initial messages to populate the chat */
   initialMessages?: UIMessage[];
   /** Callback when messages change */
@@ -440,6 +476,19 @@ export interface CopilotContextValue {
   // Config
   threadId?: string;
   /**
+   * Switch to a different thread (or start a new one).
+   * Pass the session/thread ID from persistence to reuse it (no new session call),
+   * or null to start a fresh thread (new session created on first sendMessage).
+   */
+  setActiveThread: (id: string | null) => void;
+  /**
+   * Force a new session to be created on the next sendMessage.
+   * Call when the current session has expired or credits are exhausted.
+   */
+  renewSession: () => void;
+  /** Current session creation status */
+  sessionStatus: "idle" | "creating" | "ready" | "error";
+  /**
    * Runtime URL configuration.
    * Can be a static string or getter function (matches what was passed to provider).
    */
@@ -487,26 +536,35 @@ export function useCopilot(): CopilotContextValue {
 // Provider Component
 // ============================================
 
-export function CopilotProvider({
-  children,
-  runtimeUrl,
-  systemPrompt,
-  tools: toolsConfig,
-  threadId,
-  initialMessages,
-  onMessagesChange,
-  onError,
-  streaming,
-  headers,
-  body,
-  debug = false,
-  maxIterations,
-  maxIterationsMessage,
-  mcpServers,
-  optimization,
-  messageHistory,
-  skills,
-}: CopilotProviderProps) {
+export function CopilotProvider(props: CopilotProviderProps) {
+  const {
+    children,
+    runtimeUrl,
+    systemPrompt,
+    tools: toolsConfig,
+    threadId,
+    onCreateSession,
+    onThreadChange,
+    yourgptConfig,
+    initialMessages,
+    onMessagesChange,
+    onError,
+    streaming,
+    headers,
+    body,
+    debug = false,
+    maxIterations,
+    maxIterationsMessage,
+    mcpServers,
+    optimization,
+    messageHistory,
+    skills,
+  } = props;
+  const isThreadIdControlled = Object.prototype.hasOwnProperty.call(
+    props,
+    "threadId",
+  );
+
   // ── Headless primitives ──────────────────────────────────────────────────
 
   // Stream event listeners — Set of handlers subscribed via useCopilotEvent()
@@ -547,7 +605,23 @@ export function CopilotProvider({
   // Tool Executions State (for React reactivity)
   // ============================================
   const [toolExecutions, setToolExecutions] = useState<ToolExecution[]>([]);
+  const [sessionStatus, setSessionStatus] = useState<
+    "idle" | "creating" | "ready" | "error"
+  >(() => (threadId ? "ready" : "idle"));
   const [agentIteration, setAgentIteration] = useState(0);
+  // Track the ACTUAL thread/session ID assigned by the chat instance.
+  // This is different from the `threadId` prop — it updates reactively when
+  // onCreateSession fires and a new session ID is assigned.
+  const [actualThreadId, setActualThreadId] = useState<string | undefined>(
+    threadId,
+  );
+  const lastControlledThreadIdRef = useRef<{
+    controlled: boolean;
+    value: string | undefined;
+  }>({
+    controlled: isThreadIdControlled,
+    value: threadId,
+  });
 
   // ============================================
   // ChatWithTools Instance
@@ -570,6 +644,8 @@ export function CopilotProvider({
         runtimeUrl,
         systemPrompt,
         threadId,
+        onCreateSession,
+        yourgptConfig,
         initialMessages: uiInitialMessages,
         streaming,
         headers,
@@ -595,6 +671,15 @@ export function CopilotProvider({
         },
         onError: (error) => {
           if (error) onError?.(error);
+        },
+        onThreadChange: (id) => {
+          debugLog("Thread/session ID assigned:", id);
+          setActualThreadId(id);
+          onThreadChange?.(id);
+        },
+        onSessionStatusChange: (status) => {
+          debugLog("Session status:", status);
+          setSessionStatus(status);
         },
         onStreamChunk: (chunk) => {
           // Broadcast to all useCopilotEvent() subscribers
@@ -648,6 +733,31 @@ export function CopilotProvider({
     }
   }, [runtimeUrl, debugLog]);
 
+  // Keep the chat instance aligned with controlled threadId prop changes.
+  useEffect(() => {
+    const prev = lastControlledThreadIdRef.current;
+    const controlChanged = prev.controlled !== isThreadIdControlled;
+    const valueChanged = prev.value !== threadId;
+
+    if (!controlChanged && !valueChanged) {
+      return;
+    }
+
+    lastControlledThreadIdRef.current = {
+      controlled: isThreadIdControlled,
+      value: threadId,
+    };
+
+    if (!isThreadIdControlled) {
+      return;
+    }
+
+    chatRef.current?.setActiveThread(threadId ?? null);
+    setActualThreadId(threadId);
+    setSessionStatus(threadId ? "ready" : "idle");
+    debugLog("Thread/session synced from prop", { threadId });
+  }, [debugLog, isThreadIdControlled, threadId]);
+
   // Stable snapshot callbacks for useSyncExternalStore
   // getServerSnapshot must return a cached/stable value to avoid infinite loops
   const EMPTY_MESSAGES = useRef<UIMessage[]>([]);
@@ -684,6 +794,18 @@ export function CopilotProvider({
   // ============================================
   // Actions
   // ============================================
+
+  const setActiveThread = useCallback((id: string | null) => {
+    chatRef.current?.setActiveThread(id);
+    // Sync React state: known ID → expose it; null (new thread) → clear until onThreadChange fires
+    setActualThreadId(id ?? undefined);
+  }, []);
+
+  const renewSession = useCallback(() => {
+    chatRef.current?.renewSession();
+    setActualThreadId(undefined);
+    setSessionStatus("idle");
+  }, []);
 
   const registerTool = useCallback((tool: ToolDefinition) => {
     chatRef.current?.registerTool(tool);
@@ -965,7 +1087,10 @@ export function CopilotProvider({
       setInlineSkills,
 
       // Config
-      threadId,
+      threadId: actualThreadId,
+      setActiveThread,
+      renewSession,
+      sessionStatus,
       runtimeUrl,
       toolsConfig,
 
@@ -1005,7 +1130,10 @@ export function CopilotProvider({
       contextUsage,
       setSystemPrompt,
       setInlineSkills,
-      threadId,
+      actualThreadId,
+      setActiveThread,
+      renewSession,
+      sessionStatus,
       runtimeUrl,
       toolsConfig,
     ],
