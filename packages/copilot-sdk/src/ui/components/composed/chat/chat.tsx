@@ -519,7 +519,8 @@ function ChatComponent({
   allowedFileTypes = DEFAULT_ALLOWED_TYPES,
   attachmentsEnabled = true,
   attachmentsDisabledTooltip = "Attachments not supported by this model",
-  processAttachment: processAttachmentProp,
+  upload: uploadProp,
+  processAttachment: deprecatedProcessAttachment,
   // Suggestions
   suggestions = [],
   onSuggestionClick,
@@ -642,9 +643,43 @@ function ChatComponent({
             filename?: string;
           };
 
-          if (processAttachmentProp) {
-            // Use provided processor (e.g., cloud storage upload)
-            attachment = await processAttachmentProp(file);
+          // Resolve upload handler: upload prop > deprecated processAttachment > base64 fallback
+          const uploader = uploadProp ?? deprecatedProcessAttachment;
+
+          if (typeof uploader === "function") {
+            // Function — full custom handler
+            attachment = await uploader(file);
+          } else if (uploader) {
+            // String or object — server upload endpoint
+            const config =
+              typeof uploader === "string" ? { url: uploader } : uploader;
+            const extraHeaders =
+              typeof config.headers === "function"
+                ? config.headers()
+                : config.headers;
+            const extraBody =
+              typeof config.body === "function" ? config.body() : config.body;
+            const data = await fileToBase64(file);
+            const res = await fetch(config.url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...extraHeaders },
+              body: JSON.stringify({
+                data,
+                mimeType: file.type,
+                filename: file.name,
+                ...extraBody,
+              }),
+            });
+            if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+            const result = await res.json();
+            const url = result.url ?? result.data?.url;
+            if (!url) throw new Error("Upload returned no URL");
+            attachment = {
+              type: getAttachmentType(file.type),
+              url,
+              mimeType: file.type,
+              filename: file.name,
+            };
           } else {
             // Default: convert to base64
             const data = await fileToBase64(file);
@@ -678,7 +713,13 @@ function ChatComponent({
         }
       }
     },
-    [attachmentsEnabled, maxFileSize, isFileTypeAllowed, processAttachmentProp],
+    [
+      attachmentsEnabled,
+      maxFileSize,
+      isFileTypeAllowed,
+      uploadProp,
+      deprecatedProcessAttachment,
+    ],
   );
 
   // Handle file input change
@@ -923,7 +964,11 @@ function ChatComponent({
               attachmentsDisabledTooltip={attachmentsDisabledTooltip}
               maxFileSize={maxFileSize}
               allowedFileTypes={allowedFileTypes}
-              processAttachment={processAttachmentProp}
+              processAttachment={
+                typeof uploadProp === "function"
+                  ? uploadProp
+                  : deprecatedProcessAttachment
+              }
             />
           ) : null}
 

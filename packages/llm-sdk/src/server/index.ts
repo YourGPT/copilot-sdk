@@ -62,3 +62,6 @@ export {
   buildProviderToolOptions,
 } from "./tool-selection";
 export type { ToolSearchMatch } from "./tool-selection";
+
+// Storage helpers (used internally by Runtime, exposed for custom server setups)
+export { extractInputMessages, mapOutputMessages } from "./storage-helpers";

@@ -286,19 +286,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.config.threadId = await this.sessionInitPromise;
         this.debug("sendMessage", { threadId: this.config.threadId });
       }
-      // No session config and no threadId — generate a local ID (no network call).
-      // Skip this when onCreateSession/yourgptConfig is provided: if we reach here
-      // without a threadId it means session creation was not triggered (threadId was
-      // just cleared by setActiveThread) — proceed without one and let the next
-      // sendMessage pick it up after the session is assigned.
-      if (
-        !this.config.threadId &&
-        !this.onCreateSession &&
-        !this.config.yourgptConfig
-      ) {
-        this.config.threadId = generateThreadId();
-        this.setSessionStatus("ready");
-      }
+      // No threadId at this point — that's OK.
+      // If the server has a storage adapter, it will create a session and return
+      // the threadId in the response. The SDK adopts it automatically via
+      // handleJsonResponse / handleStreamResponse.
+      // Local thread IDs for CopilotChat persistence are managed independently
+      // by useInternalThreadManager.
 
       // Yield to allow UI to render loading state (important for non-streaming)
       await Promise.resolve();
@@ -1342,6 +1335,23 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           chunkCount,
         });
 
+        // Adopt threadId from server storage adapter (if present)
+        if (
+          chunk.type === "done" &&
+          (chunk as { threadId?: string }).threadId
+        ) {
+          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+          if (
+            !this.config.threadId ||
+            this.config.threadId !== serverThreadId
+          ) {
+            this.config.threadId = serverThreadId;
+            this.sessionInitPromise = null;
+            this.setSessionStatus("ready");
+            this.callbacks.onThreadChange?.(serverThreadId);
+          }
+        }
+
         // CRITICAL: Process messages from done event (server-side tool results)
         // Without this, tool_call_id is lost and causes Anthropic API errors
         if (chunk.type === "done" && chunk.messages?.length) {
@@ -1602,6 +1612,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    * Handle JSON (non-streaming) response
    */
   protected handleJsonResponse(response: ChatResponse): void {
+    // Adopt threadId from server storage adapter (if present)
+    if (
+      response.threadId &&
+      (!this.config.threadId || this.config.threadId !== response.threadId)
+    ) {
+      this.config.threadId = response.threadId;
+      this.sessionInitPromise = null;
+      this.setSessionStatus("ready");
+      this.callbacks.onThreadChange?.(response.threadId);
+    }
+
     // Build a map of tool call hidden flags from response.toolCalls
     const toolCallHiddenMap = new Map<string, boolean>();
     if (response.toolCalls) {

@@ -412,3 +412,70 @@ export interface ResponseOptions {
   /** Response status (default: 200) */
   status?: number;
 }
+
+// ============================================
+// Storage Adapter
+// ============================================
+
+/**
+ * Message format for storage adapters.
+ * Intentionally simpler than LLM-specific formats — adapters convert as needed.
+ */
+export interface StorageMessage {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  toolCalls?: unknown[];
+  toolCallId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Generic storage adapter interface for session + message persistence.
+ *
+ * `createYourGPT()` is the default implementation for YourGPT platform.
+ * Third-party developers can implement this interface for custom backends.
+ *
+ * @example
+ * ```ts
+ * import { createRuntime } from '@yourgpt/llm-sdk'
+ * import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt'
+ *
+ * const runtime = createRuntime({
+ *   provider: anthropic,
+ *   model: 'claude-haiku-4-5',
+ *   storage: createYourGPT({ apiKey, widgetUid }),
+ * })
+ * // runtime.chat() and runtime.stream() now auto-persist messages
+ * ```
+ */
+export interface StorageAdapter {
+  /** Create a new session. Returns session ID to use as threadId. */
+  createSession(data?: {
+    title?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ id: string }>;
+  /** Append messages to a session (called sequentially — input before output). */
+  saveMessages(sessionId: string, messages: StorageMessage[]): Promise<void>;
+  /** List sessions (optional — used for thread picker sync in future). */
+  getSessions?(): Promise<{ id: string; title?: string; updatedAt?: Date }[]>;
+  /** Get messages for a session (optional — used for thread restore in future). */
+  getMessages?(sessionId: string): Promise<StorageMessage[]>;
+  /**
+   * Upload a file to storage. Returns a URL the LLM can reference.
+   * When present, the server exposes a /upload endpoint and the client
+   * uses it instead of embedding base64 in the message body.
+   */
+  uploadFile?(file: StorageFile): Promise<{ url: string }>;
+}
+
+/**
+ * File data for upload via StorageAdapter.uploadFile()
+ */
+export interface StorageFile {
+  /** Base64-encoded file data (with or without data URI prefix) */
+  data: string;
+  /** MIME type (e.g., "image/png", "application/pdf") */
+  mimeType: string;
+  /** Original filename */
+  filename?: string;
+}

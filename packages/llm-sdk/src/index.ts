@@ -77,6 +77,10 @@ export type {
   TokenUsage,
   FinishReason,
   ResponseOptions,
+  // Storage
+  StorageAdapter,
+  StorageMessage,
+  StorageFile,
 } from "./core/types";
 
 export { DEFAULT_CAPABILITIES } from "./core/types";
@@ -107,6 +111,9 @@ export {
   type StreamResultOptions,
   type CollectedResult,
 } from "./server";
+
+// Storage helpers
+export { extractInputMessages, mapOutputMessages } from "./server";
 
 // GenerateResult (Non-streaming)
 export {

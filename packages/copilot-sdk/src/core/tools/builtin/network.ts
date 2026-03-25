@@ -13,6 +13,14 @@ import {
   startNetworkCapture,
 } from "../network";
 
+// Auto-start network capture when this module is imported
+// This ensures requests are captured from the beginning of the app lifecycle
+const isBrowser = typeof window !== "undefined" && typeof fetch !== "undefined";
+
+if (isBrowser && !isNetworkCaptureActive()) {
+  startNetworkCapture();
+}
+
 /**
  * Network requests tool - retrieves browser network activity
  *

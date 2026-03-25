@@ -56,6 +56,8 @@ export interface ChatResponse {
     /** Tool call ID for tool result messages */
     tool_call_id?: string;
   }>;
+  /** Session ID — present when server storage adapter created/resolved a session */
+  threadId?: string;
   /** Whether client needs to execute tools */
   requiresAction?: boolean;
   /** Tool calls with metadata (includes hidden flag for server-side tools) */
@@ -115,6 +117,8 @@ export type StreamChunk =
         tool_call_id?: string;
       }>;
       requiresAction?: boolean;
+      /** Session ID from server storage adapter */
+      threadId?: string;
     }
   // Tool action events (from llm-sdk agent-loop)
   | { type: "action:start"; id: string; name: string; hidden?: boolean }

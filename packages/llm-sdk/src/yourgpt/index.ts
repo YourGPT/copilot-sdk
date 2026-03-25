@@ -1,26 +1,31 @@
 /**
  * @yourgpt/llm-sdk/yourgpt
  *
- * Server-side YourGPT session & message persistence adapter.
- * Use this in your backend alongside createRuntime.
+ * YourGPT platform integration — session & message persistence.
+ * Implements the generic StorageAdapter interface.
  *
  * @example
  * ```ts
- * import { createYourGPTAdapter } from '@yourgpt/llm-sdk/yourgpt'
+ * import { createRuntime } from '@yourgpt/llm-sdk'
+ * import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt'
  *
- * const storage = createYourGPTAdapter({ apiKey, widgetUid })
+ * const yourgpt = createYourGPT({ apiKey, widgetUid })
+ * const runtime = createRuntime({ provider, model, storage: yourgpt })
  *
- * const session = await storage.createSession({ title: 'New chat' })
- * await storage.saveMessages(session.id, [userMessage])
- * stream.on('done', async (result) => {
- *   await storage.saveMessages(session.id, [{ role: 'assistant', content: result.text }])
- * })
+ * // That's it — runtime auto-creates sessions and persists messages.
+ * app.post('/api/copilot/chat', runtime.expressHandler())
  * ```
  */
 
+import type {
+  StorageAdapter,
+  StorageMessage,
+  StorageFile,
+} from "../core/types";
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-export interface YourGPTAdapterConfig {
+export interface YourGPTConfig {
   /** Your YourGPT API key — server-side only, never expose to browser */
   apiKey: string;
   /** Widget UID — scopes all sessions to this project */
@@ -28,6 +33,9 @@ export interface YourGPTAdapterConfig {
   /** Override API base URL. Defaults to https://api.yourgpt.ai */
   endpoint?: string;
 }
+
+/** @deprecated Use `YourGPTConfig` instead */
+export type YourGPTAdapterConfig = YourGPTConfig;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,33 +47,32 @@ export interface YourGPTSession {
   updatedAt: Date;
 }
 
-export interface NewYourGPTMessage {
-  role: "user" | "assistant" | "system" | "tool";
-  content: string;
-  toolCalls?: unknown[];
-  toolCallId?: string;
-  metadata?: Record<string, unknown>;
-}
+/** @deprecated Use `StorageMessage` from `@yourgpt/llm-sdk` instead */
+export type NewYourGPTMessage = StorageMessage;
 
 export interface CreateSessionData {
   title?: string;
   metadata?: Record<string, unknown>;
 }
 
-// ─── Adapter ──────────────────────────────────────────────────────────────────
+// ─── YourGPT interface ───────────────────────────────────────────────────────
 
-export interface YourGPTAdapter {
-  /** Create a new session. Returns session_uid — store as threadId on frontend. */
+/**
+ * YourGPT platform adapter.
+ * Extends StorageAdapter with richer session return type.
+ */
+export interface YourGPT extends StorageAdapter {
   createSession(data?: CreateSessionData): Promise<YourGPTSession>;
-  /** Append messages to a session */
-  saveMessages(sessionId: string, messages: NewYourGPTMessage[]): Promise<void>;
+  saveMessages(sessionId: string, messages: StorageMessage[]): Promise<void>;
+  uploadFile(file: StorageFile): Promise<{ url: string }>;
 }
 
-// ─── Factory ──────────────────────────────────────────────────────────────────
+/** @deprecated Use `YourGPT` instead */
+export type YourGPTAdapter = YourGPT;
 
-export function createYourGPTAdapter(
-  config: YourGPTAdapterConfig,
-): YourGPTAdapter {
+// ─── Factory ─────────────────────────────────────────────────────────────────
+
+export function createYourGPT(config: YourGPTConfig): YourGPT {
   const base = (config.endpoint ?? "https://api.yourgpt.ai").replace(/\/$/, "");
   const headers = {
     "Content-Type": "application/json",
@@ -77,7 +84,6 @@ export function createYourGPTAdapter(
     body: object = {},
   ): Promise<T> {
     const payload = { widget_uid: config.widgetUid, ...body };
-    console.log(`[yourgpt] POST ${base}${path}`, JSON.stringify(payload));
     const res = await fetch(`${base}${path}`, {
       method: "POST",
       headers,
@@ -174,5 +180,27 @@ export function createYourGPTAdapter(
         // system messages are skipped — not stored
       }
     },
+
+    async uploadFile(file: StorageFile) {
+      // Strip data URI prefix if present (e.g., "data:image/png;base64,...")
+      let rawData = file.data;
+      const dataUriMatch = rawData.match(/^data:[^;]+;base64,(.+)$/);
+      if (dataUriMatch) rawData = dataUriMatch[1];
+
+      const raw = await call<any>("/chatbot/v1/copilot-sdk/uploadMedia", {
+        file_data: rawData,
+        mime_type: file.mimeType,
+        filename: file.filename,
+      });
+      const url = raw.data?.url ?? raw.url;
+      if (!url)
+        throw new Error(
+          "uploadFile failed: no URL in response — " + JSON.stringify(raw),
+        );
+      return { url };
+    },
   };
 }
+
+/** @deprecated Use `createYourGPT` instead */
+export const createYourGPTAdapter = createYourGPT;

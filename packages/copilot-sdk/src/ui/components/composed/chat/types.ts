@@ -341,11 +341,41 @@ export type ChatProps = {
   /** Tooltip text when attachments are disabled */
   attachmentsDisabledTooltip?: string;
   /**
-   * Custom attachment processor (e.g., for cloud storage upload)
-   * If provided, uses this instead of default base64 conversion.
-   * @param file - The file to process
-   * @returns Promise<MessageAttachment> - The processed attachment (URL-based or base64)
+   * File upload handler. Determines how attachments are uploaded.
+   *
+   * - `string` — Server upload URL. Files are POSTed as JSON `{ data, mimeType, filename }`.
+   * - `object` — URL + headers/body options for the upload request.
+   * - `function` — Full custom handler. Receives `File`, returns `MessageAttachment`.
+   * - `undefined` — Falls back to base64 (embedded in message, no upload).
+   *
+   * @example
+   * ```tsx
+   * // Simple — just a URL:
+   * <CopilotChat upload="/api/copilot/upload" />
+   *
+   * // With auth headers:
+   * <CopilotChat upload={{
+   *   url: "/api/copilot/upload",
+   *   headers: () => ({ Authorization: `Bearer ${token}` }),
+   * }} />
+   *
+   * // Full custom:
+   * <CopilotChat upload={async (file) => {
+   *   const url = await myS3Upload(file);
+   *   return { type: 'image', url, mimeType: file.type, filename: file.name };
+   * }} />
+   * ```
    */
+  upload?:
+    | string
+    | {
+        url: string;
+        headers?: Record<string, string> | (() => Record<string, string>);
+        body?: Record<string, unknown> | (() => Record<string, unknown>);
+      }
+    | ((file: File) => Promise<MessageAttachment>);
+
+  /** @deprecated Use `upload` instead */
   processAttachment?: (file: File) => Promise<MessageAttachment>;
 
   // === Suggestions ===
