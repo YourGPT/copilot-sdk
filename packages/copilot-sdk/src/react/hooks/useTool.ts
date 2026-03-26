@@ -240,8 +240,11 @@ export function useTools(tools: ToolSet): void {
   // Update ref when tools change
   toolsRef.current = tools;
 
-  // Create a stable key from tool names to detect actual changes
-  const toolsKey = Object.keys(tools).sort().join(",");
+  // Create a stable key from tool names + availability flags to detect actual changes
+  const toolsKey = Object.entries(tools)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, def]) => `${name}:${def.available ?? true}`)
+    .join(",");
 
   useEffect(() => {
     const currentTools = toolsRef.current;

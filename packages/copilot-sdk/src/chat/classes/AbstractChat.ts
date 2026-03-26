@@ -474,6 +474,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // is not enough for React 18 to render the loading state.
       await new Promise((resolve) => setTimeout(resolve, 0));
 
+      // If stop() was called during the macrotask yield, status will have been
+      // reset to "ready" — don't restart the loop in that case.
+      if (
+        (this.state.status as string) === "ready" ||
+        (this.state.status as string) === "error"
+      ) {
+        this.debug("Skipping processRequest — stop was called during yield");
+        return;
+      }
+
       // Continue request
       await this.processRequest();
     } catch (error) {
@@ -1055,11 +1065,26 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       if (existing) {
         assistantMessage = existing;
       } else {
-        assistantMessage = createEmptyAssistantMessage() as T;
+        // Capture current leaf for correct parentId in branch tree
+        const visibleMsgs = this.state.messages;
+        const leafId =
+          visibleMsgs.length > 0
+            ? visibleMsgs[visibleMsgs.length - 1].id
+            : undefined;
+        assistantMessage = createEmptyAssistantMessage(undefined, {
+          parentId: leafId,
+        }) as T;
         this.state.pushMessage(assistantMessage);
       }
     } else {
-      assistantMessage = createEmptyAssistantMessage() as T;
+      const visibleMsgs = this.state.messages;
+      const leafId =
+        visibleMsgs.length > 0
+          ? visibleMsgs[visibleMsgs.length - 1].id
+          : undefined;
+      assistantMessage = createEmptyAssistantMessage(undefined, {
+        parentId: leafId,
+      }) as T;
       this.state.pushMessage(assistantMessage);
     }
 
@@ -1204,6 +1229,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             const messagesToInsert: T[] = [];
             let clientAssistantToolCalls: unknown[] | undefined;
 
+            // Track parent chain so inserted messages aren't orphans
+            const lastVisibleMsgs = this.state.messages;
+            let insertParentId: string | undefined =
+              lastVisibleMsgs.length > 0
+                ? lastVisibleMsgs[lastVisibleMsgs.length - 1].id
+                : undefined;
+
             for (const msg of chunk.messages) {
               // This is the client-tool assistant message already in state
               // (finalized by message:end but without toolCalls).
@@ -1222,14 +1254,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
               // Everything else (server tool results) needs inserting
-              messagesToInsert.push({
+              const inserted = {
                 id: generateMessageId(),
                 role: msg.role as T["role"],
                 content: msg.content ?? "",
                 toolCalls: msg.tool_calls as T["toolCalls"],
                 toolCallId: msg.tool_call_id,
                 createdAt: new Date(),
-              } as T);
+                ...(insertParentId ? { parentId: insertParentId } : {}),
+              } as T;
+              insertParentId = inserted.id;
+              messagesToInsert.push(inserted);
             }
 
             // Merge OpenAI-format tool_calls into the existing last assistant message
@@ -1251,35 +1286,39 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             }
 
             if (messagesToInsert.length > 0) {
-              // Insert server tool results before the last assistant message
-              const currentMessages = this.state.messages;
-              let insertIdx = currentMessages.length;
-              for (let i = currentMessages.length - 1; i >= 0; i--) {
-                if (currentMessages[i].role === "assistant") {
+              // Use visible path for index, full array for setMessages (preserve branches)
+              const visibleMsgs = this.state.messages;
+              const allMsgs = this._allMessages();
+              let insertIdx = visibleMsgs.length;
+              let insertMsgId: string | undefined;
+              for (let i = visibleMsgs.length - 1; i >= 0; i--) {
+                if (visibleMsgs[i].role === "assistant") {
                   insertIdx = i;
+                  insertMsgId = visibleMsgs[i].id;
                   break;
                 }
               }
-              // Assign parentIds so inserted messages form a proper chain in the
-              // MessageTree. Without this they become orphan root-level children,
-              // which breaks the active-path walk and causes the visible message
-              // count to drop on subsequent turns.
               const insertParentId =
-                insertIdx > 0 ? currentMessages[insertIdx - 1].id : undefined;
+                insertIdx > 0 ? visibleMsgs[insertIdx - 1].id : undefined;
               const linkedToInsert = messagesToInsert.map((msg, i) => ({
                 ...msg,
                 parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
               }));
               const lastInsertedId =
                 linkedToInsert[linkedToInsert.length - 1].id;
-              // Re-parent the message at insertIdx to chain from the last inserted
-              const updatedCurrent = currentMessages.map((m, idx) =>
-                idx === insertIdx ? { ...m, parentId: lastInsertedId } : m,
+              // Re-parent + splice in the full array to preserve inactive branches
+              const allInsertIdx = insertMsgId
+                ? allMsgs.findIndex((m) => m.id === insertMsgId)
+                : allMsgs.length;
+              const spliceAt =
+                allInsertIdx !== -1 ? allInsertIdx : allMsgs.length;
+              const updatedAll = allMsgs.map((m) =>
+                m.id === insertMsgId ? { ...m, parentId: lastInsertedId } : m,
               );
               this.state.setMessages([
-                ...updatedCurrent.slice(0, insertIdx),
+                ...updatedAll.slice(0, spliceAt),
                 ...linkedToInsert,
-                ...updatedCurrent.slice(insertIdx),
+                ...updatedAll.slice(spliceAt),
               ]);
             }
           }
@@ -1413,9 +1452,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             ),
           });
 
-          const currentStreamToolCallIds = new Set(
-            this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
-          );
+          const currentStreamToolCallIds = new Set([
+            ...(this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ??
+              []),
+            // Also include IDs from toolResults (populated by action:start/args/end
+            // chunks for server-side tools). Without this, assistant messages with
+            // tool_calls from done.messages are treated as "new" and inserted as
+            // duplicates even though the tools were already executed in-stream.
+            ...(this.streamState?.toolResults
+              ? Array.from(this.streamState.toolResults.keys())
+              : []),
+          ]);
           const messagesToInsert: T[] = [];
 
           // Build hidden map from stream state's toolResults
@@ -1427,6 +1474,10 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
             }
           }
+
+          // Track parent chain for inserted messages to prevent orphans
+          let insertChainParentId: string | undefined =
+            this.streamState?.messageId;
 
           for (const msg of chunk.messages) {
             // Skip plain assistant text messages because they are already represented
@@ -1470,37 +1521,48 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               toolCallId: msg.tool_call_id,
               createdAt: new Date(),
               metadata,
+              ...(insertChainParentId ? { parentId: insertChainParentId } : {}),
             } as T;
+            insertChainParentId = message.id;
 
             messagesToInsert.push(message);
           }
 
           if (messagesToInsert.length > 0) {
-            const currentMessages = this.state.messages;
+            // Use visible path for index calculation, but allMessages for the
+            // full array to preserve inactive branches during setMessages/reset.
+            const visibleMessages = this.state.messages;
+            const allMessages = this._allMessages();
             const currentStreamIndex = this.streamState
-              ? currentMessages.findIndex(
+              ? visibleMessages.findIndex(
+                  (message) => message.id === this.streamState!.messageId,
+                )
+              : -1;
+            // Find the same message in the full array for splicing
+            const allStreamIndex = this.streamState
+              ? allMessages.findIndex(
                   (message) => message.id === this.streamState!.messageId,
                 )
               : -1;
 
             if (currentStreamIndex === -1) {
-              // Append at end — chain from the last existing message
+              // Append at end — chain from the last visible message
               const appendParentId =
-                currentMessages.length > 0
-                  ? currentMessages[currentMessages.length - 1].id
+                visibleMessages.length > 0
+                  ? visibleMessages[visibleMessages.length - 1].id
                   : undefined;
               const linkedToInsert = messagesToInsert.map((msg, i) => ({
                 ...msg,
                 parentId: i === 0 ? appendParentId : messagesToInsert[i - 1].id,
               }));
-              this.state.setMessages([...currentMessages, ...linkedToInsert]);
+              this.state.setMessages([...allMessages, ...linkedToInsert]);
             } else {
               // Insert before the current streaming message — chain from the
               // message immediately before it, then re-parent the streaming
               // message to chain from the last inserted.
               const insertParentId =
                 currentStreamIndex > 0
-                  ? currentMessages[currentStreamIndex - 1].id
+                  ? visibleMessages[currentStreamIndex - 1].id
                   : undefined;
               const linkedToInsert = messagesToInsert.map((msg, i) => ({
                 ...msg,
@@ -1508,16 +1570,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }));
               const lastInsertedId =
                 linkedToInsert[linkedToInsert.length - 1].id;
-              // Re-parent the streaming message to chain from the last inserted
-              const updatedCurrent = currentMessages.map((m, idx) =>
-                idx === currentStreamIndex
+              // Re-parent the streaming message in the full array
+              const spliceIdx =
+                allStreamIndex !== -1 ? allStreamIndex : allMessages.length;
+              const updatedAll = allMessages.map((m) =>
+                m.id === this.streamState?.messageId
                   ? { ...m, parentId: lastInsertedId }
                   : m,
               );
               this.state.setMessages([
-                ...updatedCurrent.slice(0, currentStreamIndex),
+                ...updatedAll.slice(0, spliceIdx),
                 ...linkedToInsert,
-                ...updatedCurrent.slice(currentStreamIndex),
+                ...updatedAll.slice(spliceIdx),
               ]);
             }
           }

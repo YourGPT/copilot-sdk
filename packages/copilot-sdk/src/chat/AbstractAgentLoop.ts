@@ -272,8 +272,10 @@ export class AbstractAgentLoop implements AgentLoopActions {
     }
 
     // Create new abort controller for this batch
+    // Do NOT reset _isCancelled here — if stop() was called between the
+    // iteration check and this line, we must not wipe that signal.
+    // _isCancelled is only reset in resetIterations() (called by sendMessage).
     this.abortController = new AbortController();
-    this._isCancelled = false;
     this._isProcessing = true;
 
     this.setIteration(this._iteration + 1);
