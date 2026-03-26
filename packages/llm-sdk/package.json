@@ -50,6 +50,11 @@
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.mjs",
       "require": "./dist/adapters/index.js"
+    },
+    "./yourgpt": {
+      "types": "./dist/yourgpt/index.d.ts",
+      "import": "./dist/yourgpt/index.mjs",
+      "require": "./dist/yourgpt/index.js"
     }
   },
   "homepage": "https://copilot-sdk.yourgpt.ai",

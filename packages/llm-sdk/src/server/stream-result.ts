@@ -64,6 +64,8 @@ export interface OnFinishResult {
     completionTokens: number;
     totalTokens: number;
   };
+  /** Session ID — present when storage adapter created/resolved a session */
+  threadId?: string;
 }
 
 /**
@@ -91,6 +93,8 @@ export interface CollectedResult {
   requiresAction: boolean;
   /** Token usage for billing/tracking */
   usage?: TokenUsageRaw;
+  /** Session ID — present when storage adapter created/resolved a session */
+  threadId?: string;
   /** Raw events (for debugging) */
   events: StreamEvent[];
 }
@@ -510,6 +514,7 @@ export class StreamResult {
       toolCalls: [],
       requiresAction: false,
       usage: undefined,
+      threadId: undefined,
       events: [],
     };
   }
@@ -564,6 +569,9 @@ export class StreamResult {
           this.capturedUsage = event.usage;
           collected.usage = event.usage;
         }
+        if (event.threadId) {
+          collected.threadId = event.threadId;
+        }
         break;
     }
   }
@@ -577,6 +585,7 @@ export class StreamResult {
         const usage = this.capturedUsage;
         await this.onFinishCallback({
           messages: collected.messages,
+          threadId: collected.threadId,
           usage: usage
             ? {
                 promptTokens: usage.prompt_tokens,

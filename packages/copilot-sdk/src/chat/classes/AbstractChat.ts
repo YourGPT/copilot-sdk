@@ -36,6 +36,8 @@ import {
   generateMessageId,
   streamStateToMessage,
 } from "../functions/message";
+import { generateThreadId } from "../../core/utils/id";
+import { resolveValue } from "../../core/utils/resolvable";
 import {
   createStreamState,
   processStreamChunk,
@@ -85,6 +87,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   protected callbacks: ChatCallbacks<T>;
   protected optimizer: ChatContextOptimizer;
   protected lastContextUsage: ContextUsage | null = null;
+  private onCreateSession?: () => string | Promise<string>;
+  private sessionInitPromise: Promise<string> | null = null;
+  private sessionStatus: "idle" | "creating" | "ready" | "error" = "idle";
 
   // Event handlers
   private eventHandlers = new Map<
@@ -106,6 +111,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       threadId: init.threadId,
       debug: init.debug,
       optimization: init.optimization,
+      yourgptConfig: init.yourgptConfig,
     };
 
     // Use provided state or create default
@@ -127,6 +133,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     // Store callbacks
     this.callbacks = init.callbacks ?? {};
     this.optimizer = new ChatContextOptimizer(init.optimization);
+    this.onCreateSession = init.onCreateSession;
 
     // Set initial messages
     if (init.initialMessages?.length) {
@@ -223,7 +230,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         parentId: newParentId,
       }) as T;
 
-      // Add to state
+      // Add user message + placeholder to state FIRST so the UI transitions to
+      // chat view immediately — session init (createSession network request) runs
+      // concurrently while the user already sees their message and the loader.
       this.state.pushMessage(userMessage);
       this.state.status = "submitted";
       this.state.error = undefined;
@@ -248,6 +257,41 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Notify callbacks (single batch: user message + status + optional placeholder)
       this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
+
+      // Lazy session init — only when threadId is not set AND session config is present.
+      // threadId IS the session ID: if it's set (from setActiveThread or a previous session),
+      // it is trusted as-is and no session creation call is made.
+      const needsSession =
+        !this.config.threadId &&
+        (!!this.config.yourgptConfig || !!this.onCreateSession);
+      if (needsSession) {
+        if (!this.sessionInitPromise) {
+          this.setSessionStatus("creating");
+          this.sessionInitPromise = (
+            this.onCreateSession
+              ? Promise.resolve(this.onCreateSession())
+              : this._defaultCreateSession()
+          )
+            .then((id) => {
+              this.callbacks.onThreadChange?.(id);
+              this.setSessionStatus("ready");
+              return id;
+            })
+            .catch((err) => {
+              this.setSessionStatus("error");
+              this.sessionInitPromise = null;
+              throw err;
+            });
+        }
+        this.config.threadId = await this.sessionInitPromise;
+        this.debug("sendMessage", { threadId: this.config.threadId });
+      }
+      // No threadId at this point — that's OK.
+      // If the server has a storage adapter, it will create a session and return
+      // the threadId in the response. The SDK adopts it automatically via
+      // handleJsonResponse / handleStreamResponse.
+      // Local thread IDs for CopilotChat persistence are managed independently
+      // by useInternalThreadManager.
 
       // Yield to allow UI to render loading state (important for non-streaming)
       await Promise.resolve();
@@ -777,6 +821,48 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Switch to a different thread (or start a new one).
+   *
+   * - Pass the session/thread ID from persistence → used as-is, no session creation call.
+   * - Pass null → threadId cleared, new session created on first sendMessage.
+   *
+   * The session ID IS the thread ID: whatever is stored in persistence is passed here directly.
+   */
+  setActiveThread(id: string | null): void {
+    this.config.threadId = id ?? undefined;
+    this.sessionInitPromise = null;
+    this.setSessionStatus(id ? "ready" : "idle");
+  }
+
+  /**
+   * Force a new session to be created on the next sendMessage.
+   * Call this when the current session has expired or credits are exhausted.
+   * After calling this, the next sendMessage will invoke onCreateSession/yourgptConfig
+   * again and onThreadChange will fire with the new session ID.
+   */
+  renewSession(): void {
+    this.config.threadId = undefined;
+    this.sessionInitPromise = null;
+    this.setSessionStatus("idle");
+  }
+
+  private setSessionStatus(
+    status: "idle" | "creating" | "ready" | "error",
+  ): void {
+    if (this.sessionStatus !== status) {
+      this.sessionStatus = status;
+      this.callbacks.onSessionStatusChange?.(status);
+    }
+  }
+
+  /**
+   * Get the current session creation status.
+   */
+  getSessionStatus(): "idle" | "creating" | "ready" | "error" {
+    return this.sessionStatus;
+  }
+
+  /**
    * Set system prompt dynamically
    * This allows updating the system prompt after initialization
    */
@@ -814,6 +900,55 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.config.body = body;
     if (this.transport.setBody && body !== undefined) {
       this.transport.setBody(body);
+    }
+  }
+
+  /**
+   * Default session creation via yourgptConfig.
+   * Only called when yourgptConfig is set and no onCreateSession is provided.
+   * The returned session_uid IS the thread ID going forward.
+   */
+  private async _defaultCreateSession(): Promise<string> {
+    if (!this.config.yourgptConfig) {
+      throw new Error(
+        "[copilot-sdk] _defaultCreateSession called without yourgptConfig",
+      );
+    }
+    const {
+      apiKey,
+      widgetUid,
+      endpoint = "https://api.yourgpt.ai",
+    } = this.config.yourgptConfig;
+    const base = endpoint.replace(/\/$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const res = await fetch(`${base}/chatbot/v1/copilot-sdk/createSession`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "api-key": apiKey,
+        },
+        body: JSON.stringify({ widget_uid: widgetUid }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      const d = data?.data ?? data;
+      const id = d?.session_uid ?? d?.id;
+      if (!id)
+        throw new Error(
+          "[copilot-sdk] createSession failed: " + JSON.stringify(data),
+        );
+      return String(id);
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") {
+        throw new Error(
+          "[copilot-sdk] createSession timed out after 10s — check your endpoint/network",
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -1214,6 +1349,23 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           chunkCount,
         });
 
+        // Adopt threadId from server storage adapter (if present)
+        if (
+          chunk.type === "done" &&
+          (chunk as { threadId?: string }).threadId
+        ) {
+          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+          if (
+            !this.config.threadId ||
+            this.config.threadId !== serverThreadId
+          ) {
+            this.config.threadId = serverThreadId;
+            this.sessionInitPromise = null;
+            this.setSessionStatus("ready");
+            this.callbacks.onThreadChange?.(serverThreadId);
+          }
+        }
+
         // CRITICAL: Process messages from done event (server-side tool results)
         // Without this, tool_call_id is lost and causes Anthropic API errors
         if (chunk.type === "done" && chunk.messages?.length) {
@@ -1494,6 +1646,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    * Handle JSON (non-streaming) response
    */
   protected handleJsonResponse(response: ChatResponse): void {
+    // Adopt threadId from server storage adapter (if present)
+    if (
+      response.threadId &&
+      (!this.config.threadId || this.config.threadId !== response.threadId)
+    ) {
+      this.config.threadId = response.threadId;
+      this.sessionInitPromise = null;
+      this.setSessionStatus("ready");
+      this.callbacks.onThreadChange?.(response.threadId);
+    }
+
     // Build a map of tool call hidden flags from response.toolCalls
     const toolCallHiddenMap = new Map<string, boolean>();
     if (response.toolCalls) {

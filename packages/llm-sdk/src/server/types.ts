@@ -7,6 +7,7 @@ import type {
 } from "../core/stream-events";
 import type { LLMAdapter } from "../adapters";
 import type { AIProvider } from "../providers/types";
+import type { StorageAdapter } from "../core/types";
 
 /**
  * Tool search/discovery configuration.
@@ -95,6 +96,17 @@ export interface RuntimeConfigWithAdapter {
    * Set to true for defaults, or pass WebSearchConfig for customization.
    */
   webSearch?: boolean | WebSearchConfig;
+  /**
+   * Storage adapter for automatic session creation and message persistence.
+   * When provided, runtime.chat() and runtime.stream() auto-save messages.
+   *
+   * @example
+   * ```ts
+   * import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt'
+   * storage: createYourGPT({ apiKey, widgetUid })
+   * ```
+   */
+  storage?: StorageAdapter;
 }
 
 /**
@@ -142,6 +154,17 @@ export interface RuntimeConfigWithProvider {
    * Set to true for defaults, or pass WebSearchConfig for customization.
    */
   webSearch?: boolean | WebSearchConfig;
+  /**
+   * Storage adapter for automatic session creation and message persistence.
+   * When provided, runtime.chat() and runtime.stream() auto-save messages.
+   *
+   * @example
+   * ```ts
+   * import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt'
+   * storage: createYourGPT({ apiKey, widgetUid })
+   * ```
+   */
+  storage?: StorageAdapter;
 }
 
 /**

@@ -53,6 +53,9 @@ export {
   type UseToolConfig,
   type UseToolWithSchemaConfig,
   type UseToolExecutorReturn,
+  // Thread/Session
+  useThread,
+  type UseThreadReturn,
 } from "./hooks";
 
 // Knowledge Base

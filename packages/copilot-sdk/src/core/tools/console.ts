@@ -193,7 +193,12 @@ export function stopConsoleCapture(): void {
 export function getConsoleLogs(
   options: ConsoleLogOptions = {},
 ): ConsoleLogResult {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const opts = {
+    ...DEFAULT_OPTIONS,
+    ...options,
+    types: options.types ?? DEFAULT_OPTIONS.types,
+    limit: options.limit ?? DEFAULT_OPTIONS.limit,
+  };
 
   let logs = [...capturedLogs];
 

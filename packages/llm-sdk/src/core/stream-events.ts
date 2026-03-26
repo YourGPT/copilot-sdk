@@ -242,6 +242,8 @@ export interface DoneEvent extends BaseEvent {
   messages?: DoneEventMessage[];
   /** Token usage (server-side only, stripped before sending to client) */
   usage?: TokenUsageRaw;
+  /** Session ID — present when storage adapter created a session for this request */
+  threadId?: string;
 }
 
 /**

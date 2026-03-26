@@ -96,6 +96,7 @@ export function useInternalThreadManager(
     isLoading,
     getAllMessages,
     switchBranch,
+    threadId: sdkThreadId,
   } = useCopilot();
 
   // Track if we're in the middle of loading messages from a thread switch
@@ -301,10 +302,19 @@ export function useInternalThreadManager(
     const activeLeafId = messages[messages.length - 1]?.id;
 
     // If no thread exists, create one with these messages
+    // Use the SDK's threadId (server session ID) as the local thread ID when available
+    // so both systems share the same ID — no mapping layer needed.
     if (!currentThreadId && !savingToThreadRef.current) {
       // Set ref immediately to prevent race condition with rapid messages
       savingToThreadRef.current = "creating";
-      createThread({ messages: coreMessages, activeLeafId }).then((thread) => {
+      // Mark as initialized so auto-restore doesn't fire when createThread
+      // sets currentThread — the messages are already in the chat state.
+      hasInitializedRef.current = true;
+      createThread({
+        id: sdkThreadId ?? undefined,
+        messages: coreMessages,
+        activeLeafId,
+      }).then((thread) => {
         lastSavedSnapshotRef.current = currentSnapshot;
         savingToThreadRef.current = thread.id;
         onThreadChange?.(thread.id);

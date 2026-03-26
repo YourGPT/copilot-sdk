@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import * as ReactDOM from "react-dom";
 import { cn } from "../../../lib/utils";
 import { Message, MessageAvatar, MessageContent } from "../../ui/message";
 import { SimpleReasoning } from "../../ui/reasoning";
@@ -456,12 +457,30 @@ export function DefaultMessage({
             </div>
           ) : (
             <>
-              {/* Text content */}
-              {message.content && (
-                <div className="relative">
+              {/* Combined media + text bubble (WhatsApp/Telegram style) */}
+              <div className="relative">
+                {/* Images (if any) — in their own bubble */}
+                {hasAttachments && (
+                  <div
+                    className={cn(
+                      "csdk-message-media rounded-2xl overflow-hidden bg-primary p-[2px]",
+                      !message.content && "max-w-[260px]",
+                      message.content && "max-w-[280px] mb-[3px]",
+                      userMessageClassName,
+                    )}
+                  >
+                    <MessageMedia
+                      attachments={message.attachments!}
+                      hasText={!!message.content}
+                      align="end"
+                    />
+                  </div>
+                )}
+                {/* Text content — same style as original, padding on MessageContent */}
+                {message.content && (
                   <MessageContent
                     className={cn(
-                      "csdk-message-user rounded-lg px-4 py-2 bg-primary text-primary-foreground",
+                      "csdk-message-user rounded-2xl px-4 py-2 bg-primary text-primary-foreground",
                       userMessageClassName,
                     )}
                     markdown
@@ -469,45 +488,37 @@ export function DefaultMessage({
                   >
                     {message.content}
                   </MessageContent>
-                  {/* Edit button — hover reveal */}
-                  {showEditBtn && (
-                    <button
-                      type="button"
-                      onClick={startEdit}
-                      aria-label="Edit message"
-                      className={cn(
-                        "csdk-edit-btn absolute -left-7 top-1/2 -translate-y-1/2",
-                        "size-6 flex items-center justify-center rounded-full",
-                        "text-muted-foreground bg-background border border-border shadow-sm",
-                        "opacity-0 group-hover/user-msg:opacity-100 transition-opacity",
-                        "hover:text-foreground hover:bg-muted",
-                      )}
+                )}
+                {/* Edit button — hover reveal */}
+                {showEditBtn && (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    aria-label="Edit message"
+                    className={cn(
+                      "csdk-edit-btn absolute -left-7 top-1/2 -translate-y-1/2",
+                      "size-6 flex items-center justify-center rounded-full",
+                      "text-muted-foreground bg-background border border-border shadow-sm",
+                      "opacity-0 group-hover/user-msg:opacity-100 transition-opacity",
+                      "hover:text-foreground hover:bg-muted cursor-pointer",
+                    )}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              )}
-              {/* Image Attachments */}
-              {hasAttachments && (
-                <div className="mt-2 flex flex-wrap gap-2 justify-end">
-                  {message.attachments!.map((attachment, index) => (
-                    <AttachmentPreview key={index} attachment={attachment} />
-                  ))}
-                </div>
-              )}
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
               {/* Branch Navigator */}
               {showBranchNav && (
                 <BranchNavigator
@@ -888,12 +899,14 @@ export function DefaultMessage({
               </div>
             )}
 
-            {/* Image Attachments */}
+            {/* Attachments (images + files) */}
             {message.attachments && message.attachments.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {message.attachments.map((attachment, index) => (
-                  <AttachmentPreview key={index} attachment={attachment} />
-                ))}
+              <div className="csdk-assistant-attachments mt-2">
+                <MessageMedia
+                  attachments={message.attachments}
+                  hasText={!!message.content}
+                  align="start"
+                />
               </div>
             )}
 
@@ -928,84 +941,435 @@ export function DefaultMessage({
   );
 }
 
-/**
- * Attachment preview component
- */
-function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
-  const [expanded, setExpanded] = React.useState(false);
+// ── Attachment helpers ──────────────────────────────────────────────────────
 
-  if (attachment.type !== "image") {
-    // For non-image attachments, show a simple file indicator
-    return (
-      <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
-        <span className="text-muted-foreground">{attachment.type}</span>
-        <span>{attachment.filename || "Attachment"}</span>
-      </div>
-    );
-  }
-
-  // Image preview - use URL if available, otherwise use base64 data
-  let src: string;
-  if (attachment.url) {
-    src = attachment.url;
-  } else if (attachment.data) {
-    src = attachment.data.startsWith("data:")
+function getAttachmentSrc(attachment: MessageAttachment): string | null {
+  if (attachment.url) return attachment.url;
+  if (attachment.data) {
+    return attachment.data.startsWith("data:")
       ? attachment.data
       : `data:${attachment.mimeType};base64,${attachment.data}`;
-  } else {
-    // No source available - shouldn't happen but handle gracefully
-    return null;
   }
+  return null;
+}
 
+/**
+ * Image lightbox — fullscreen view with CSS animation.
+ * Uses portal to render at document root for proper z-index.
+ *
+ * Animation: backdrop fade-in 200ms ease-out, image scale 0.92→1 + fade.
+ * Exit: backdrop fade-out 180ms ease-in, image scale 1→0.95 + fade.
+ * Follows: staging-dim-background, easing-entrance-ease-out, easing-exit-ease-in, duration-small-state
+ */
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  const [closing, setClosing] = React.useState(false);
+  const backdropRef = React.useRef<HTMLDivElement>(null);
+
+  const handleClose = React.useCallback(() => {
+    setClosing(true);
+    // Wait for exit animation (180ms ease-in)
+    setTimeout(onClose, 180);
+  }, [onClose]);
+
+  // Close on Escape
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [handleClose]);
+
+  // Prevent body scroll
+  React.useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  const portal = (
+    <div
+      ref={backdropRef}
+      className="csdk-lightbox csdk-lightbox-backdrop fixed inset-0 z-[9999] flex items-center justify-center cursor-zoom-out"
+      onClick={handleClose}
+      style={{
+        animation: closing
+          ? "csdk-lightbox-backdrop-out 180ms ease-in forwards"
+          : "csdk-lightbox-backdrop-in 200ms ease-out forwards",
+      }}
+    >
+      {/* Scrim — hardcoded dark, no theme vars */}
+      <div
+        className="csdk-lightbox-scrim absolute inset-0"
+        style={{
+          backgroundColor: "rgba(0, 0, 0, 0.88)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          animation: closing
+            ? "csdk-lightbox-fade-out 180ms ease-in forwards"
+            : "csdk-lightbox-fade-in 200ms ease-out forwards",
+        }}
+      />
+
+      {/* Image */}
+      <div
+        className="csdk-lightbox-content relative z-10 max-w-[90vw] max-h-[90vh]"
+        style={{
+          animation: closing
+            ? "csdk-lightbox-img-out 180ms ease-in forwards"
+            : "csdk-lightbox-img-in 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="csdk-lightbox-image max-w-full max-h-[90vh] object-contain rounded-xl"
+          style={{ boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)" }}
+          draggable={false}
+        />
+        {/* Close button */}
+        <button
+          type="button"
+          className="csdk-lightbox-close absolute -top-3 -right-3 size-8 flex items-center justify-center rounded-full shadow-lg transition-[background,transform] duration-150 cursor-pointer active:scale-95"
+          style={{ backgroundColor: "rgba(255,255,255,0.9)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255,255,255,1)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.9)";
+          }}
+          onClick={handleClose}
+        >
+          <svg
+            className="size-4"
+            style={{ color: "#333" }}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Keyframe styles (injected once) */}
+      <style>{`
+        @keyframes csdk-lightbox-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes csdk-lightbox-fade-out { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes csdk-lightbox-img-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+        @keyframes csdk-lightbox-img-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
+        @keyframes csdk-lightbox-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes csdk-lightbox-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+      `}</style>
+    </div>
+  );
+
+  // Portal to body
+  return typeof document !== "undefined"
+    ? ReactDOM.createPortal(portal, document.body)
+    : null;
+}
+
+/**
+ * Single image thumbnail — auto-sized, clickable, opens lightbox.
+ * Preserves aspect ratio. Max width constrained by bubble, height auto.
+ * active:scale-[0.98] for press feedback (physics-active-state).
+ */
+function ImageThumb({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
   return (
     <>
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="relative rounded-lg overflow-hidden border bg-muted/50 hover:opacity-90 transition-opacity"
+        className={cn(
+          "csdk-attachment-image relative overflow-hidden cursor-zoom-in",
+          "transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.98]",
+          className,
+        )}
+        style={{ backgroundColor: "#000" }}
       >
         <img
           src={src}
-          alt={attachment.filename || "Image"}
-          className="max-w-[200px] max-h-[150px] object-cover"
+          alt={alt}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          draggable={false}
         />
       </button>
-
-      {/* Fullscreen modal */}
       {expanded && (
-        <div
-          className="csdk-image-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-          onClick={() => setExpanded(false)}
+        <ImageLightbox src={src} alt={alt} onClose={() => setExpanded(false)} />
+      )}
+    </>
+  );
+}
+
+/**
+ * File attachment card — compact, non-image files
+ */
+function FileCard({ attachment }: { attachment: MessageAttachment }) {
+  const iconType =
+    attachment.type === "audio"
+      ? "audio"
+      : attachment.type === "video"
+        ? "video"
+        : "file";
+  const colors = {
+    audio: "text-emerald-500 bg-emerald-500/10",
+    video: "text-purple-500 bg-purple-500/10",
+    file: "text-blue-500 bg-blue-500/10",
+  };
+  const icons = {
+    audio: (
+      <path d="M9 18V5l12-2v13M6 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+    ),
+    video: (
+      <>
+        <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11" />
+        <rect width="14" height="12" x="2" y="6" rx="2" />
+      </>
+    ),
+    file: (
+      <>
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      </>
+    ),
+  };
+
+  const href =
+    attachment.url ||
+    (attachment.data?.startsWith("data:") ? attachment.data : null);
+
+  return (
+    <div
+      className={cn(
+        "csdk-attachment-file flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2 min-w-0 max-w-full",
+      )}
+    >
+      <div
+        className={cn(
+          "size-8 rounded-md flex items-center justify-center shrink-0",
+          colors[iconType],
+        )}
+      >
+        <svg
+          className="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         >
-          <div className="relative max-w-[90vw] max-h-[90vh]">
-            <img
-              src={src}
-              alt={attachment.filename || "Image (expanded)"}
-              className="max-w-full max-h-full object-contain rounded-lg"
-            />
-            <button
-              type="button"
-              className="csdk-image-close absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(false);
-              }}
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
+          {icons[iconType]}
+        </svg>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium truncate">
+          {attachment.filename || "Attachment"}
+        </p>
+        <p className="text-[10px] text-muted-foreground uppercase">
+          {attachment.mimeType?.split("/")[1] || attachment.type}
+        </p>
+      </div>
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          download={attachment.filename}
+          className="shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors"
+        >
+          <svg
+            className="size-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" x2="12" y1="15" y2="3" />
+          </svg>
+        </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Image grid — WhatsApp/Telegram-style layout
+ * 1 image: full width
+ * 2 images: side by side
+ * 3 images: 2 top + 1 bottom
+ * 4+ images: 2x2 grid with +N overlay
+ */
+function ImageGrid({
+  images,
+  bubbleRadius,
+}: {
+  images: MessageAttachment[];
+  bubbleRadius?: string;
+}) {
+  const srcs = images
+    .map((img) => getAttachmentSrc(img))
+    .filter(Boolean) as string[];
+  if (srcs.length === 0) return null;
+
+  // Concentric radius: inner = outer bubble radius (16px) minus padding (2px) = 14px
+  const innerRadius = bubbleRadius ? `calc(${bubbleRadius} - 2px)` : "0.875rem";
+
+  if (srcs.length === 1) {
+    return (
+      <div
+        className="csdk-attachment-grid"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        <ImageThumb
+          src={srcs[0]}
+          alt={images[0].filename || "Image"}
+          className="w-full"
+        />
+      </div>
+    );
+  }
+
+  if (srcs.length === 2) {
+    return (
+      <div
+        className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        {srcs.map((src, i) => (
+          <ImageThumb
+            key={i}
+            src={src}
+            alt={images[i].filename || "Image"}
+            className="aspect-square"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (srcs.length === 3) {
+    return (
+      <div
+        className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        <ImageThumb
+          src={srcs[0]}
+          alt={images[0].filename || "Image"}
+          className="col-span-2 max-h-[180px] min-h-[100px]"
+        />
+        <ImageThumb
+          src={srcs[1]}
+          alt={images[1].filename || "Image"}
+          className="aspect-square"
+        />
+        <ImageThumb
+          src={srcs[2]}
+          alt={images[2].filename || "Image"}
+          className="aspect-square"
+        />
+      </div>
+    );
+  }
+
+  // 4+ images: 2x2 grid, last cell shows +N if more
+  const showOverlay = srcs.length > 4;
+  const gridSrcs = srcs.slice(0, 4);
+
+  return (
+    <div
+      className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+      style={{ borderRadius: innerRadius, overflow: "hidden" }}
+    >
+      {gridSrcs.map((src, i) => (
+        <div key={i} className="relative aspect-square">
+          <ImageThumb
+            src={src}
+            alt={images[i].filename || "Image"}
+            className="w-full h-full"
+          />
+          {i === 3 && showOverlay && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center pointer-events-none">
+              <span className="text-white text-lg font-semibold">
+                +{srcs.length - 4}
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * MessageMedia — renders attachments in a message bubble.
+ * Handles image-only, image+text, file cards, and mixed content.
+ *
+ * Layout follows WhatsApp/Telegram pattern:
+ * - Images at top of bubble (no padding), text below with padding
+ * - Files shown as compact cards below text
+ */
+function MessageMedia({
+  attachments,
+  hasText,
+  align = "end",
+}: {
+  attachments: MessageAttachment[];
+  hasText: boolean;
+  align?: "start" | "end";
+}) {
+  const images = attachments.filter((a) => a.type === "image");
+  const files = attachments.filter((a) => a.type !== "image");
+
+  return (
+    <>
+      {images.length > 0 && (
+        <div className={cn("csdk-attachment-images", hasText ? "mb-0" : "")}>
+          <ImageGrid images={images} bubbleRadius="0.5rem" />
+        </div>
+      )}
+      {files.length > 0 && (
+        <div
+          className={cn(
+            "csdk-attachment-files flex flex-col gap-1",
+            hasText || images.length > 0 ? "px-3 pb-2 pt-1" : "p-1.5",
+            align === "end" ? "items-end" : "items-start",
+          )}
+        >
+          {files.map((file, i) => (
+            <FileCard key={i} attachment={file} />
+          ))}
         </div>
       )}
     </>

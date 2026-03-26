@@ -366,3 +366,18 @@ export const ChatPrimitives = {
 };
 
 export type { MessageListProps } from "./components/composed/chat/message-list";
+
+// ============================================
+// Attachments
+// ============================================
+export { useAttachments } from "./hooks/useAttachments";
+export type {
+  PendingAttachment,
+  UseAttachmentsConfig,
+  UseAttachmentsReturn,
+  UploadConfig,
+} from "./hooks/useAttachments";
+export { AttachmentStrip } from "./components/attachment-strip";
+export type { AttachmentStripProps } from "./components/attachment-strip";
+export { DropZoneOverlay } from "./components/drop-zone-overlay";
+export type { DropZoneOverlayProps } from "./components/drop-zone-overlay";

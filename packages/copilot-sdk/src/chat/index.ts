@@ -30,6 +30,7 @@ export type {
   ChatCallbacks,
   ChatInit,
   SendMessageOptions,
+  YourGPTConfig,
   // Tool types
   ToolCallInfo,
   RawToolCall,

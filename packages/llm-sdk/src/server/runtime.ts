@@ -23,6 +23,8 @@ import type {
   HandleRequestResult,
   GenerateOptions,
 } from "./types";
+import type { StorageAdapter } from "../core/types";
+import { extractInputMessages, mapOutputMessages } from "./storage-helpers";
 import { createSSEResponse } from "./streaming";
 import { StreamResult, type CollectedResult } from "./stream-result";
 import { GenerateResult } from "./generate-result";
@@ -198,11 +200,13 @@ function buildToolContext(
 export class Runtime {
   private adapter: LLMAdapter;
   private config: RuntimeConfig;
+  private storage: StorageAdapter | undefined;
   private actions: Map<string, ActionDefinition> = new Map();
   private tools: Map<string, ToolDefinition> = new Map();
 
   constructor(config: RuntimeConfig) {
     this.config = config;
+    this.storage = config.storage;
 
     // Create adapter based on configuration type
     if ("provider" in config && config.provider) {
@@ -1879,6 +1883,7 @@ export class Runtime {
        */
       onFinish?: (result: {
         messages: DoneEventMessage[];
+        threadId?: string;
         usage?: {
           promptTokens: number;
           completionTokens: number;
@@ -1887,8 +1892,84 @@ export class Runtime {
       }) => Promise<void> | void;
     },
   ): StreamResult {
-    const generator = this.processChatWithLoop(request, options?.signal);
-    return new StreamResult(generator, { onFinish: options?.onFinish });
+    const storage = this.storage;
+
+    if (!storage) {
+      // No storage — original behavior
+      const generator = this.processChatWithLoop(request, options?.signal);
+      return new StreamResult(generator, { onFinish: options?.onFinish });
+    }
+
+    // With storage: wrap generator to auto-create session + save input before streaming
+    let resolvedThreadId: string | undefined = request.threadId;
+    const self = this;
+
+    // Track whether storage is healthy for this request
+    let storageHealthy = true;
+
+    async function* storageWrappedGenerator(): AsyncGenerator<StreamEvent> {
+      // Auto-create session if no threadId
+      if (!resolvedThreadId) {
+        try {
+          const session = await storage!.createSession();
+          resolvedThreadId = session.id;
+        } catch (err) {
+          console.error(
+            "[Runtime] storage.createSession failed — generating fallback threadId:",
+            err,
+          );
+          // Fallback: generate a local thread ID so the system doesn't break
+          resolvedThreadId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          storageHealthy = false;
+        }
+      }
+
+      // Save input messages (user message / tool results)
+      if (resolvedThreadId && storageHealthy) {
+        try {
+          const inputMsgs = extractInputMessages(request.messages);
+          if (inputMsgs.length) {
+            await storage!.saveMessages(resolvedThreadId, inputMsgs);
+          }
+        } catch (err) {
+          console.error("[Runtime] storage.saveMessages (input) failed:", err);
+        }
+      }
+
+      // Delegate to the real chat generator
+      for await (const event of self.processChatWithLoop(
+        request,
+        options?.signal,
+      )) {
+        if (event.type === "done" && resolvedThreadId) {
+          // Inject threadId into done event so client can adopt it
+          yield { ...event, threadId: resolvedThreadId } as StreamEvent;
+        } else {
+          yield event;
+        }
+      }
+    }
+
+    return new StreamResult(storageWrappedGenerator(), {
+      onFinish: async (result) => {
+        // Save output messages after stream completes (skip if storage failed on createSession)
+        if (resolvedThreadId && storageHealthy && result.messages.length > 0) {
+          try {
+            const outputMsgs = mapOutputMessages(result.messages);
+            await storage.saveMessages(resolvedThreadId, outputMsgs);
+          } catch (err) {
+            console.error(
+              "[Runtime] storage.saveMessages (output) failed:",
+              err,
+            );
+          }
+        }
+        // Call user's onFinish
+        if (options?.onFinish) {
+          await options.onFinish({ ...result, threadId: resolvedThreadId });
+        }
+      },
+    });
   }
 
   /**
