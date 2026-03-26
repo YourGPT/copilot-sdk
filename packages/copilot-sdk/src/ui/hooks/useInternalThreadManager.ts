@@ -305,6 +305,14 @@ export function useInternalThreadManager(
     // Use the SDK's threadId (server session ID) as the local thread ID when available
     // so both systems share the same ID — no mapping layer needed.
     if (!currentThreadId && !savingToThreadRef.current) {
+      // If the SDK is expected to have a threadId from the server but doesn't yet
+      // (React state batching delay), skip this render — it'll fire again when
+      // sdkThreadId updates. This prevents creating a local thread_xxx that
+      // conflicts with the server session ID.
+      if (!sdkThreadId && status === "ready" && messages.length <= 2) {
+        // First message just completed — sdkThreadId may arrive next render
+        return;
+      }
       // Set ref immediately to prevent race condition with rapid messages
       savingToThreadRef.current = "creating";
       // Mark as initialized so auto-restore doesn't fire when createThread

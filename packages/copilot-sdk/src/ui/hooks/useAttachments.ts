@@ -95,7 +95,43 @@ export interface UseAttachmentsReturn {
 
 const DEFAULT_MAX_FILES = 5;
 const DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const DEFAULT_ALLOWED_TYPES = ["image/*", "application/pdf"];
+const DEFAULT_ALLOWED_TYPES = [
+  "image/*",
+  "application/pdf",
+  "text/csv",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  ".csv",
+  ".txt",
+  ".md",
+  ".json",
+];
+
+/** MIME types that are text-based — read as text, no upload needed */
+const TEXT_MIME_TYPES = new Set([
+  "text/csv",
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
+  "application/json",
+  "application/csv",
+]);
+
+function isTextFile(file: File): boolean {
+  if (TEXT_MIME_TYPES.has(file.type)) return true;
+  const ext = file.name.toLowerCase().split(".").pop();
+  return ext === "csv" || ext === "txt" || ext === "md" || ext === "json";
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsText(file);
+  });
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -188,6 +224,20 @@ export function useAttachments(
         abortControllers.current.set(id, controller);
 
         let result: MessageAttachment;
+
+        // Text files: read content locally, no upload needed
+        if (isTextFile(file)) {
+          updateProgress(50);
+          const textContent = await readFileAsText(file);
+          result = {
+            type: "file",
+            data: textContent,
+            mimeType: file.type || "text/plain",
+            filename: file.name,
+          };
+          markReady(result);
+          return;
+        }
 
         if (typeof upload === "function") {
           // Custom function — no progress tracking (user handles it)

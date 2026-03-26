@@ -145,8 +145,22 @@ const runtime = createRuntime({ provider, model, storage: myStorage });
 - `uploadFile` failure → Error returned to client (4xx/5xx)
 - All errors are logged with `[Runtime]` prefix
 
+### `onError` callback
+
+```ts
+const yourgpt = createYourGPT({
+  apiKey,
+  widgetUid,
+  onError: (error, operation, params) => {
+    // operation: "createSession" | "saveMessages" | "uploadFile"
+    // params: { sessionId, messageCount, roles, filename, mimeType, ... }
+    logger.error(`[YourGPT:${operation}]`, error.message, params);
+  },
+});
+```
+
 ## Alpha Notes
 
 - The `endpoint` option in `createYourGPT` will become internal in GA (defaults to production API)
 - `getSessions()` and `getMessages()` on StorageAdapter are reserved for future thread sync
-- File upload API contract (`/copilot-sdk/uploadMedia`) may change
+- File upload uses pre-signed URLs via `/copilot-sdk/getSignedUrl` — contract may change

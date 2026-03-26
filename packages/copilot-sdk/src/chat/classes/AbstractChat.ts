@@ -226,6 +226,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       // Create user message with parentId for correct tree placement
+      // Text file attachments (CSV, TXT, etc.) are kept as attachments for UI display.
+      // The optimizer inlines their content into the message text before sending to the LLM.
       const userMessage = createUserMessage(content, attachments, {
         parentId: newParentId,
       }) as T;
@@ -946,6 +948,51 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Build the request payload
    */
+  /** Inline text-file attachments into message content for the LLM */
+  private inlineTextAttachments(messages: T[]): T[] {
+    const textMimeTypes = new Set([
+      "text/csv",
+      "text/plain",
+      "text/markdown",
+      "text/x-markdown",
+      "application/json",
+      "application/csv",
+    ]);
+    const textExts = new Set(["csv", "txt", "md", "json"]);
+
+    return messages.map((msg) => {
+      if (msg.role !== "user" || !msg.attachments?.length) return msg;
+
+      const textFiles: MessageAttachment[] = [];
+      const binaryFiles: MessageAttachment[] = [];
+
+      for (const att of msg.attachments) {
+        const ext = att.filename?.toLowerCase().split(".").pop();
+        const isText =
+          textMimeTypes.has(att.mimeType) || (ext && textExts.has(ext));
+        if (isText && att.data && !att.url) {
+          textFiles.push(att);
+        } else {
+          binaryFiles.push(att);
+        }
+      }
+
+      if (textFiles.length === 0) return msg;
+
+      // Inline text file contents into the message
+      const fileParts = textFiles.map((f) => {
+        const ext = f.filename?.split(".").pop()?.toLowerCase() || "txt";
+        return `\n\n--- ${f.filename || "file"} ---\n\`\`\`${ext}\n${f.data}\n\`\`\``;
+      });
+
+      return {
+        ...msg,
+        content: (msg.content || "") + fileParts.join(""),
+        attachments: binaryFiles.length > 0 ? binaryFiles : undefined,
+      };
+    });
+  }
+
   protected buildRequest() {
     const systemPrompt = this.dynamicContext
       ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
@@ -955,8 +1002,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           this.state.messages as UIMessage[],
         ) as T[])
       : this.state.messages;
+
+    // Inline text-file attachments before optimization
+    const processedMessages = this.inlineTextAttachments(rawMessages);
     const optimized = this.optimizer.prepare({
-      messages: rawMessages,
+      messages: processedMessages,
       tools: this.config.tools,
       systemPrompt,
     });
