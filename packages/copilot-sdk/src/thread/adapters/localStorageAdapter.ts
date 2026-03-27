@@ -6,7 +6,7 @@
  */
 
 import type { ThreadData } from "../../core/types/thread";
-import type { ThreadStorageAdapter } from "./types";
+import type { ThreadStorageAdapter, AsyncThreadStorageAdapter } from "./types";
 
 const DEFAULT_STORAGE_KEY = "copilot-sdk-store";
 const STORE_VERSION = 1;
@@ -265,7 +265,7 @@ function updateStore(
  */
 export function createLocalStorageAdapter(
   config?: LocalStorageAdapterConfig,
-): ThreadStorageAdapter {
+): AsyncThreadStorageAdapter {
   const storageKey = config?.storageKey ?? DEFAULT_STORAGE_KEY;
 
   return {
@@ -298,6 +298,12 @@ export function createLocalStorageAdapter(
     setLastActiveThreadId: async (threadId: string | null): Promise<void> => {
       updateStore(storageKey, () => ({
         lastActiveThreadId: threadId,
+      }));
+    },
+
+    deleteThread: async (id: string): Promise<void> => {
+      updateStore(storageKey, (store) => ({
+        threads: store.threads.filter((t) => t.id !== id),
       }));
     },
   };

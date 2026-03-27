@@ -187,12 +187,19 @@ export function ThreadPicker({
   newButtonClassName,
 }: ThreadPickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  // Optimistic local list — immediately reflects deletions without waiting for async state
+  const [displayedThreads, setDisplayedThreads] = React.useState(threads);
+
+  // Sync when external threads prop changes (e.g. after async store update or new thread)
+  React.useEffect(() => {
+    setDisplayedThreads(threads);
+  }, [threads]);
 
   // Find selected thread
   const selectedThread = React.useMemo(() => {
     if (!value) return null;
-    return threads.find((t) => t.id === value) ?? null;
-  }, [value, threads]);
+    return displayedThreads.find((t) => t.id === value) ?? null;
+  }, [value, displayedThreads]);
 
   const handleSelect = (threadId: string) => {
     onSelect?.(threadId);
@@ -202,6 +209,12 @@ export function ThreadPicker({
   const handleNewThread = () => {
     onNewThread?.();
     setIsOpen(false);
+  };
+
+  const handleDelete = (threadId: string) => {
+    // Optimistically remove from local list immediately
+    setDisplayedThreads((prev) => prev.filter((t) => t.id !== threadId));
+    onDeleteThread?.(threadId);
   };
 
   return (
@@ -261,8 +274,8 @@ export function ThreadPicker({
         )}
 
         {/* Thread list */}
-        {threads.length > 0 ? (
-          threads.map((thread) => (
+        {displayedThreads.length > 0 ? (
+          displayedThreads.map((thread) => (
             <div
               key={thread.id}
               className={cn(
@@ -308,7 +321,7 @@ export function ThreadPicker({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onDeleteThread(thread.id);
+                    handleDelete(thread.id);
                   }}
                   className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all focus:opacity-100 focus:outline-none"
                   aria-label="Delete thread"
