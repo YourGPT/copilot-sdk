@@ -913,8 +913,8 @@ function ChatComponent({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {/* Drag overlay */}
-          {isDragging && (
+          {/* Drag overlay — only for built-in input; custom renderInput handles its own */}
+          {isDragging && !renderInput && (
             <div className="csdk-dropzone-overlay absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
               <div className="text-primary font-medium text-lg">
                 Drop files here
