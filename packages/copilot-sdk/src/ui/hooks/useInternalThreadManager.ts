@@ -3,17 +3,16 @@
 /**
  * useInternalThreadManager - Internal hook for CopilotChat persistence
  *
- * Encapsulates all thread management logic:
- * - Message format conversion (UIMessage ↔ Message)
- * - Auto-save on streaming complete
- * - Auto-restore last thread on mount
- * - Thread switch/create handlers
- * - Refs to prevent duplicate saves
+ * Uses a reducer-based state machine with clear phases:
+ *   idle → awaiting_server_id → creating → active
+ *   active → switching → active
+ *   active → idle (new thread)
  *
- * This is an internal hook used by CopilotChat when persistence is enabled.
+ * Handles both server-managed sessions (threadId from response) and
+ * local-only threads (no server storage) with the same flow.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useCopilot, type UIMessage } from "../../react";
 import {
   useThreadManager,
@@ -24,41 +23,180 @@ import type {
   AsyncThreadStorageAdapter,
 } from "../../thread/adapters";
 
+// ── Config & Return types ────────────────────────────────────────────────────
+
 export interface UseInternalThreadManagerConfig {
-  /** Storage adapter for persistence */
   adapter?: ThreadStorageAdapter | AsyncThreadStorageAdapter;
-  /** Debounce delay for auto-save (ms) */
   saveDebounce?: number;
-  /** Whether to auto-restore the last active thread */
   autoRestoreLastThread?: boolean;
-  /** Callback when thread changes */
   onThreadChange?: (threadId: string | null) => void;
-  /**
-   * Whether thread management is active.
-   * When false, all sync/restore effects are skipped.
-   * Used by CopilotChat when persistence is disabled to avoid touching the shared singleton.
-   * @default true
-   */
   enabled?: boolean;
 }
 
 export interface UseInternalThreadManagerReturn {
-  /** Thread manager state and actions */
   threadManager: ReturnType<typeof useThreadManager>;
-  /** Handler for switching threads */
   handleSwitchThread: (threadId: string) => Promise<void>;
-  /** Handler for creating new threads */
   handleNewThread: () => Promise<void>;
-  /** Whether thread operations should be disabled (during streaming) */
   isBusy: boolean;
 }
 
-/**
- * Internal thread manager hook for CopilotChat
- *
- * This hook manages the synchronization between CopilotProvider's messages
- * and the thread storage system.
- */
+// ── State machine ────────────────────────────────────────────────────────────
+
+type Phase =
+  | "idle" // No thread, waiting for first message
+  | "awaiting_server_id" // First response complete, waiting for sdkThreadId
+  | "creating" // Creating local thread
+  | "active" // Thread active, syncing messages
+  | "switching" // Switching to a different thread
+  | "restoring"; // Auto-restoring last thread on mount
+
+interface ThreadSyncState {
+  phase: Phase;
+  threadId: string | null; // Active local thread ID
+  lastSnapshot: string; // Last saved message snapshot
+  initialized: boolean; // Whether initial restore has run
+}
+
+type ThreadAction =
+  | { type: "FIRST_RESPONSE_COMPLETE" }
+  | { type: "SERVER_ID_RECEIVED"; threadId: string }
+  | { type: "CREATE_WITH_LOCAL_ID" }
+  | { type: "THREAD_CREATED"; threadId: string; snapshot: string }
+  | { type: "MESSAGES_SAVED"; snapshot: string }
+  | { type: "START_SWITCH" }
+  | { type: "SWITCH_COMPLETE"; threadId: string; snapshot: string }
+  | { type: "NEW_THREAD" }
+  | { type: "RESTORE_START" }
+  | { type: "RESTORE_COMPLETE"; threadId: string; snapshot: string }
+  | { type: "SKIP_RESTORE" };
+
+const INITIAL_STATE: ThreadSyncState = {
+  phase: "idle",
+  threadId: null,
+  lastSnapshot: "",
+  initialized: false,
+};
+
+function threadReducer(
+  state: ThreadSyncState,
+  action: ThreadAction,
+): ThreadSyncState {
+  switch (action.type) {
+    case "FIRST_RESPONSE_COMPLETE":
+      if (state.phase !== "idle") return state;
+      // Mark initialized so auto-restore doesn't interfere when
+      // createThread() later updates currentThread in the manager.
+      return { ...state, phase: "awaiting_server_id", initialized: true };
+
+    case "SERVER_ID_RECEIVED":
+      if (state.phase !== "awaiting_server_id") return state;
+      return { ...state, phase: "creating" };
+
+    case "CREATE_WITH_LOCAL_ID":
+      if (state.phase !== "awaiting_server_id") return state;
+      return { ...state, phase: "creating" };
+
+    case "THREAD_CREATED":
+      return {
+        ...state,
+        phase: "active",
+        threadId: action.threadId,
+        lastSnapshot: action.snapshot,
+        initialized: true,
+      };
+
+    case "MESSAGES_SAVED":
+      if (state.phase !== "active") return state;
+      return { ...state, lastSnapshot: action.snapshot };
+
+    case "START_SWITCH":
+      if (state.phase !== "active" && state.phase !== "idle") return state;
+      return { ...state, phase: "switching" };
+
+    case "SWITCH_COMPLETE":
+      return {
+        ...state,
+        phase: "active",
+        threadId: action.threadId,
+        lastSnapshot: action.snapshot,
+      };
+
+    case "NEW_THREAD":
+      return {
+        ...INITIAL_STATE,
+        initialized: true,
+      };
+
+    case "RESTORE_START":
+      if (state.initialized) return state;
+      if (state.phase === "creating" || state.phase === "awaiting_server_id")
+        return state;
+      return { ...state, phase: "restoring" };
+
+    case "RESTORE_COMPLETE":
+      return {
+        ...state,
+        phase: "active",
+        threadId: action.threadId,
+        lastSnapshot: action.snapshot,
+        initialized: true,
+      };
+
+    case "SKIP_RESTORE":
+      return { ...state, initialized: true };
+
+    default:
+      return state;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function getMessageSnapshot(msgs: UIMessage[]): string {
+  return msgs
+    .map((m) => {
+      const preview = (m.content ?? "").slice(0, 20);
+      return `${m.id}:${preview}:${m.content?.length ?? 0}`;
+    })
+    .join("|");
+}
+
+function convertToCore(msgs: UIMessage[]) {
+  return msgs.map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    created_at: m.createdAt,
+    tool_calls: m.toolCalls,
+    tool_call_id: m.toolCallId,
+    parent_id: m.parentId,
+    children_ids: m.childrenIds,
+    metadata: {
+      ...m.metadata,
+      attachments: m.attachments,
+      thinking: m.thinking,
+    },
+  }));
+}
+
+function coreToUI(m: any): UIMessage {
+  return {
+    id: m.id,
+    role: m.role,
+    content: m.content ?? "",
+    createdAt: m.created_at ?? new Date(),
+    toolCalls: m.tool_calls,
+    toolCallId: m.tool_call_id,
+    parentId: m.parent_id,
+    childrenIds: m.children_ids,
+    attachments: m.metadata?.attachments,
+    thinking: m.metadata?.thinking as string | undefined,
+    metadata: m.metadata,
+  };
+}
+
+// ── Hook ─────────────────────────────────────────────────────────────────────
+
 export function useInternalThreadManager(
   config: UseInternalThreadManagerConfig = {},
 ): UseInternalThreadManagerReturn {
@@ -70,14 +208,15 @@ export function useInternalThreadManager(
     enabled = true,
   } = config;
 
-  // Thread management
-  const threadManagerConfig: UseThreadManagerConfig = {
+  const [state, dispatch] = useReducer(threadReducer, INITIAL_STATE);
+  const isLoadingRef = useRef(false);
+
+  // Thread manager (handles localStorage / server adapter)
+  const threadManager = useThreadManager({
     adapter,
     saveDebounce,
     autoRestoreLastThread,
-  };
-
-  const threadManager = useThreadManager(threadManagerConfig);
+  });
   const {
     currentThread,
     currentThreadId,
@@ -85,10 +224,9 @@ export function useInternalThreadManager(
     switchThread,
     updateCurrentThread,
     clearCurrentThread,
-    refreshThreads,
   } = threadManager;
 
-  // Get copilot context for setMessages and status
+  // Copilot context
   const {
     messages,
     setMessages,
@@ -97,266 +235,192 @@ export function useInternalThreadManager(
     getAllMessages,
     switchBranch,
     threadId: sdkThreadId,
+    setActiveThread,
   } = useCopilot();
 
-  // Track if we're in the middle of loading messages from a thread switch
-  const isLoadingMessagesRef = useRef(false);
-  // Track the thread ID we're saving to (to prevent saving to wrong thread)
-  const savingToThreadRef = useRef<string | null>(null);
-  // Track last saved message snapshot (IDs + content hash) to prevent duplicate saves
-  const lastSavedSnapshotRef = useRef<string>("");
-  // Track if initial load has happened (for auto-restore)
-  const hasInitializedRef = useRef(false);
+  // ── Auto-restore on mount ──────────────────────────────────────────────
 
-  // Generate a snapshot key from messages for comparison
-  // Uses ID + content hash to detect actual changes
-  const getMessageSnapshot = useCallback((msgs: typeof messages) => {
-    return msgs
-      .map((m) => {
-        // Simple hash: first 20 chars + length for uniqueness without full comparison
-        const contentPreview = (m.content ?? "").slice(0, 20);
-        return `${m.id}:${contentPreview}:${m.content?.length ?? 0}`;
-      })
-      .join("|");
-  }, []);
-
-  // Convert UIMessage to core Message format
-  const convertToCore = useCallback((msgs: typeof messages) => {
-    return msgs.map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      created_at: m.createdAt,
-      tool_calls: m.toolCalls,
-      tool_call_id: m.toolCallId,
-      parent_id: m.parentId,
-      children_ids: m.childrenIds,
-      // Preserve full metadata including citations, toolExecutions, etc.
-      metadata: {
-        ...m.metadata,
-        attachments: m.attachments,
-        thinking: m.thinking,
-      },
-    }));
-  }, []);
-
-  // Handle thread switch - load saved messages
-  const handleSwitchThread = useCallback(
-    async (threadId: string) => {
-      isLoadingMessagesRef.current = true;
-
-      const thread = await switchThread(threadId);
-      if (thread?.messages) {
-        const uiMessages: UIMessage[] = thread.messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content ?? "",
-          createdAt: m.created_at ?? new Date(),
-          toolCalls: m.tool_calls,
-          toolCallId: m.tool_call_id,
-          parentId: m.parent_id,
-          childrenIds: m.children_ids,
-          attachments: m.metadata?.attachments,
-          thinking: m.metadata?.thinking as string | undefined,
-          // Preserve full metadata including citations, toolCallsHidden, toolExecutions, etc.
-          metadata: m.metadata,
-        }));
-        lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
-        savingToThreadRef.current = threadId;
-        setMessages(uiMessages);
-        // Restore active branch after tree is rebuilt
-        if (thread.activeLeafId) {
-          switchBranch(thread.activeLeafId);
-        }
-      } else {
-        lastSavedSnapshotRef.current = "";
-        savingToThreadRef.current = threadId;
-        setMessages([]);
-      }
-
-      // Notify thread change
-      onThreadChange?.(threadId);
-
-      // Reset loading flag after React processes the state update
-      requestAnimationFrame(() => {
-        isLoadingMessagesRef.current = false;
-      });
-    },
-    [
-      switchThread,
-      setMessages,
-      switchBranch,
-      getMessageSnapshot,
-      onThreadChange,
-    ],
-  );
-
-  // Handle new thread - just clear messages, thread is created lazily on first message
-  const handleNewThread = useCallback(async () => {
-    isLoadingMessagesRef.current = true;
-
-    // Don't create thread yet - it will be created automatically when first message is sent
-    // This prevents empty threads from being created
-    clearCurrentThread();
-    lastSavedSnapshotRef.current = "";
-    savingToThreadRef.current = null;
-    setMessages([]);
-
-    // Notify thread change (null = new unsaved thread)
-    onThreadChange?.(null);
-
-    requestAnimationFrame(() => {
-      isLoadingMessagesRef.current = false;
-    });
-  }, [clearCurrentThread, setMessages, onThreadChange]);
-
-  // Auto-restore: load messages when thread is restored from storage
   useEffect(() => {
-    // Skip if persistence is disabled
-    if (!enabled) return;
-    // Skip if already initialized or no thread restored yet
-    if (hasInitializedRef.current || !currentThread) {
-      return;
-    }
+    if (!enabled || state.initialized || !currentThread) return;
 
-    // Mark as initialized
-    hasInitializedRef.current = true;
+    dispatch({ type: "RESTORE_START" });
+    isLoadingRef.current = true;
 
-    // Load messages from the restored thread
-    isLoadingMessagesRef.current = true;
     if (currentThread.messages && currentThread.messages.length > 0) {
-      const uiMessages: UIMessage[] = currentThread.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content ?? "",
-        createdAt: m.created_at ?? new Date(),
-        toolCalls: m.tool_calls,
-        toolCallId: m.tool_call_id,
-        parentId: m.parent_id,
-        childrenIds: m.children_ids,
-        attachments: m.metadata?.attachments,
-        thinking: m.metadata?.thinking as string | undefined,
-        // Preserve full metadata including citations, toolExecutions, etc.
-        metadata: m.metadata,
-      }));
-      lastSavedSnapshotRef.current = getMessageSnapshot(uiMessages);
-      savingToThreadRef.current = currentThread.id;
+      const uiMessages = currentThread.messages.map(coreToUI);
+      const snapshot = getMessageSnapshot(uiMessages);
       setMessages(uiMessages);
-      // Restore active branch after tree is rebuilt
-      if (currentThread.activeLeafId) {
-        switchBranch(currentThread.activeLeafId);
-      }
+      if (currentThread.activeLeafId) switchBranch(currentThread.activeLeafId);
+      onThreadChange?.(currentThread.id);
+      dispatch({
+        type: "RESTORE_COMPLETE",
+        threadId: currentThread.id,
+        snapshot,
+      });
     } else {
-      lastSavedSnapshotRef.current = "";
-      savingToThreadRef.current = currentThread.id;
+      onThreadChange?.(currentThread.id);
+      dispatch({
+        type: "RESTORE_COMPLETE",
+        threadId: currentThread.id,
+        snapshot: "",
+      });
     }
-
-    // Notify thread change
-    onThreadChange?.(currentThread.id);
 
     requestAnimationFrame(() => {
-      isLoadingMessagesRef.current = false;
+      isLoadingRef.current = false;
     });
   }, [
     enabled,
-    adapter,
     currentThread,
+    state.initialized,
     setMessages,
     switchBranch,
-    getMessageSnapshot,
     onThreadChange,
   ]);
 
-  // Sync messages to storage when streaming completes
+  // Mark initialized if no thread to restore
   useEffect(() => {
-    // Skip if persistence is disabled
+    if (!enabled) {
+      dispatch({ type: "SKIP_RESTORE" });
+      return;
+    }
+    // If autoRestore is off or no thread loaded after mount, skip
+    if (!autoRestoreLastThread && !state.initialized) {
+      dispatch({ type: "SKIP_RESTORE" });
+    }
+  }, [enabled, autoRestoreLastThread, state.initialized]);
+
+  // ── Phase: idle → awaiting_server_id ───────────────────────────────────
+
+  useEffect(() => {
     if (!enabled) return;
-    // Skip if we're loading messages from a thread switch
-    if (isLoadingMessagesRef.current) {
-      return;
-    }
+    if (state.phase !== "idle") return;
+    if (isLoadingRef.current) return;
+    if (status === "streaming" || status === "submitted") return;
+    if (messages.length === 0) return;
+    if (currentThreadId) return; // Already have a thread
 
-    // Skip if still streaming - wait for completion
-    if (status === "streaming" || status === "submitted") {
-      return;
-    }
+    // First message response just completed
+    dispatch({ type: "FIRST_RESPONSE_COMPLETE" });
+  }, [enabled, state.phase, status, messages.length, currentThreadId]);
 
-    // Skip if no messages
-    if (messages.length === 0) {
-      return;
-    }
+  // ── Phase: awaiting_server_id → creating ───────────────────────────────
 
-    // Check if messages actually changed
-    const currentSnapshot = getMessageSnapshot(messages);
-    if (currentSnapshot === lastSavedSnapshotRef.current) {
-      return;
-    }
+  useEffect(() => {
+    if (state.phase !== "awaiting_server_id") return;
 
-    // Use getAllMessages() so all branches are persisted, not just the visible path
+    if (sdkThreadId) {
+      // Server provided a threadId — use it
+      dispatch({ type: "SERVER_ID_RECEIVED", threadId: sdkThreadId });
+    } else {
+      // No server ID available — create thread with a local ID.
+      dispatch({ type: "CREATE_WITH_LOCAL_ID" });
+    }
+  }, [state.phase, sdkThreadId]);
+
+  // ── Phase: creating → active ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (state.phase !== "creating") return;
+
     const allUIMessages = getAllMessages();
     const coreMessages = convertToCore(
       allUIMessages.length > 0 ? allUIMessages : messages,
     );
+    const activeLeafId = messages[messages.length - 1]?.id;
+    const snapshot = getMessageSnapshot(messages);
 
-    // Active leaf = last message on the visible path — persisted so reload restores the right branch
+    createThread({
+      id: sdkThreadId ?? undefined,
+      messages: coreMessages,
+      activeLeafId,
+    }).then((thread) => {
+      dispatch({ type: "THREAD_CREATED", threadId: thread.id, snapshot });
+      onThreadChange?.(thread.id);
+    });
+  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Phase: active — sync messages on change ────────────────────────────
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (state.phase !== "active") return;
+    if (isLoadingRef.current) return;
+    if (status === "streaming" || status === "submitted") return;
+    if (messages.length === 0) return;
+
+    const snapshot = getMessageSnapshot(messages);
+    if (snapshot === state.lastSnapshot) return;
+
+    // Verify we're saving to the right thread
+    if (state.threadId && state.threadId !== currentThreadId) return;
+
+    const allUIMessages = getAllMessages();
+    const coreMessages = convertToCore(
+      allUIMessages.length > 0 ? allUIMessages : messages,
+    );
     const activeLeafId = messages[messages.length - 1]?.id;
 
-    // If no thread exists, create one with these messages
-    // Use the SDK's threadId (server session ID) as the local thread ID when available
-    // so both systems share the same ID — no mapping layer needed.
-    if (!currentThreadId && !savingToThreadRef.current) {
-      // If the SDK is expected to have a threadId from the server but doesn't yet
-      // (React state batching delay), skip this render — it'll fire again when
-      // sdkThreadId updates. This prevents creating a local thread_xxx that
-      // conflicts with the server session ID.
-      if (!sdkThreadId && status === "ready" && messages.length <= 2) {
-        // First message just completed — sdkThreadId may arrive next render
-        return;
-      }
-      // Set ref immediately to prevent race condition with rapid messages
-      savingToThreadRef.current = "creating";
-      // Mark as initialized so auto-restore doesn't fire when createThread
-      // sets currentThread — the messages are already in the chat state.
-      hasInitializedRef.current = true;
-      createThread({
-        id: sdkThreadId ?? undefined,
-        messages: coreMessages,
-        activeLeafId,
-      }).then((thread) => {
-        lastSavedSnapshotRef.current = currentSnapshot;
-        savingToThreadRef.current = thread.id;
-        onThreadChange?.(thread.id);
-      });
-      return;
-    }
-
-    // Make sure we're saving to the correct thread
-    if (
-      savingToThreadRef.current &&
-      savingToThreadRef.current !== currentThreadId
-    ) {
-      return;
-    }
-
-    // Update existing thread
     updateCurrentThread({ messages: coreMessages, activeLeafId });
-    lastSavedSnapshotRef.current = currentSnapshot;
+    dispatch({ type: "MESSAGES_SAVED", snapshot });
   }, [
     enabled,
-    adapter,
+    state.phase,
+    state.lastSnapshot,
+    state.threadId,
     messages,
-    currentThreadId,
     status,
+    currentThreadId,
     updateCurrentThread,
-    createThread,
-    refreshThreads,
-    getMessageSnapshot,
-    convertToCore,
     getAllMessages,
-    onThreadChange,
   ]);
 
-  // Check if chat is busy (disable thread switching during streaming)
+  // ── Switch thread ──────────────────────────────────────────────────────
+
+  const handleSwitchThread = useCallback(
+    async (threadId: string) => {
+      dispatch({ type: "START_SWITCH" });
+      isLoadingRef.current = true;
+
+      const thread = await switchThread(threadId);
+      if (thread?.messages) {
+        const uiMessages = thread.messages.map(coreToUI);
+        const snapshot = getMessageSnapshot(uiMessages);
+        setMessages(uiMessages);
+        if (thread.activeLeafId) switchBranch(thread.activeLeafId);
+        onThreadChange?.(threadId);
+        dispatch({ type: "SWITCH_COMPLETE", threadId, snapshot });
+      } else {
+        setMessages([]);
+        onThreadChange?.(threadId);
+        dispatch({ type: "SWITCH_COMPLETE", threadId, snapshot: "" });
+      }
+
+      requestAnimationFrame(() => {
+        isLoadingRef.current = false;
+      });
+    },
+    [switchThread, setMessages, switchBranch, onThreadChange],
+  );
+
+  // ── New thread ─────────────────────────────────────────────────────────
+
+  const handleNewThread = useCallback(async () => {
+    isLoadingRef.current = true;
+
+    clearCurrentThread();
+    setMessages([]);
+    setActiveThread(null); // Clear SDK session so next message creates a new one
+    onThreadChange?.(null);
+    dispatch({ type: "NEW_THREAD" });
+
+    requestAnimationFrame(() => {
+      isLoadingRef.current = false;
+    });
+  }, [clearCurrentThread, setMessages, setActiveThread, onThreadChange]);
+
+  // ── Return ─────────────────────────────────────────────────────────────
+
   const isBusy = isLoading || status === "streaming" || status === "submitted";
 
   return {

@@ -70,15 +70,17 @@ export interface LocalStorageAdapterConfig {
 /**
  * Check if localStorage is available (SSR-safe)
  */
+let _localStorageAvailable: boolean | null = null;
 function isLocalStorageAvailable(): boolean {
-  if (typeof window === "undefined") return false;
+  if (_localStorageAvailable !== null) return _localStorageAvailable;
+  if (typeof window === "undefined") return (_localStorageAvailable = false);
   try {
-    const testKey = "__copilot_test__";
-    window.localStorage.setItem(testKey, testKey);
+    const testKey = "__copilot_ls_check__";
+    window.localStorage.setItem(testKey, "1");
     window.localStorage.removeItem(testKey);
-    return true;
+    return (_localStorageAvailable = true);
   } catch {
-    return false;
+    return (_localStorageAvailable = false);
   }
 }
 
