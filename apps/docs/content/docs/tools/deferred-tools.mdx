@@ -7,7 +7,7 @@ icon: Clock
 import { Callout } from 'fumadocs-ui/components/callout';
 
 <Callout type="warn">
-**Beta** — This feature is in **alpha**. APIs may change before stable release.
+**Experimental** — This feature is under active development. APIs may change before stable release.
 </Callout>
 
 Large tool registries bloat the LLM request payload and consume valuable context tokens. Mark tools with `deferLoading: true` to exclude them from the default request — they are auto-injected only when the user's query semantically matches the tool.
@@ -94,3 +94,78 @@ interface UseToolConfig<TParams> {
 <Callout type="info">
 Deferred tools are still available to the AI — they're just not included in the initial request payload. When the user's message matches, they're injected automatically before the request is sent.
 </Callout>
+
+---
+
+## Tool Profiles
+
+<Callout type="warn">
+**Experimental** — APIs may change before stable release.
+</Callout>
+
+Group tools into named profiles and activate only the relevant set per use case. Useful when different parts of your app need different tool subsets.
+
+Tag tools with the profiles they belong to:
+
+```typescript
+useTool({
+  name: "run_migration",
+  description: "Run a database migration",
+  profiles: ["admin"],        // Only active when "admin" profile is selected
+  inputSchema: z.object({ migrationId: z.string() }),
+  handler: async ({ migrationId }) => runMigration(migrationId),
+});
+
+useTool({
+  name: "search_docs",
+  description: "Search documentation",
+  profiles: ["support", "default"],
+  inputSchema: z.object({ query: z.string() }),
+  handler: async ({ query }) => searchDocs(query),
+});
+```
+
+Configure profiles on `<CopilotProvider>`:
+
+```tsx
+<CopilotProvider
+  optimization={{
+    toolProfiles: {
+      enabled: true,
+      defaultProfile: "default",
+      includeUnprofiled: true,      // Tools with no profiles[] are always included
+      profiles: {
+        admin: {
+          include: ["run_migration", "manage_users"],
+        },
+        support: {
+          include: ["search_docs", "get_ticket"],
+          exclude: ["run_migration"],
+        },
+      },
+    },
+  }}
+>
+```
+
+Switch the active profile at runtime:
+
+```typescript
+// Switch to admin tools when user elevates privileges
+chat.setOptimizationConfig({
+  toolProfiles: { defaultProfile: "admin" },
+});
+```
+
+### `ToolProfileConfig` reference
+
+```typescript
+interface ToolProfileConfig {
+  enabled?: boolean;
+  defaultProfile?: string;
+  profiles?: Record<string, {
+    include?: string[];    // Tool names to include
+    exclude?: string[];    // Tool names to exclude
+  }>;
+  includeUnprofiled?: boolean;   // default: true — tools with no profiles[] always load
+}

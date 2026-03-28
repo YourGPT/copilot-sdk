@@ -6,7 +6,7 @@ description: Monitor context window usage in real time with useContextStats
 import { Callout } from 'fumadocs-ui/components/callout';
 
 <Callout type="warn">
-**Beta** — This feature is in **alpha**. APIs may change before stable release.
+**Experimental** — This feature is under active development. APIs may change before stable release.
 </Callout>
 
 Monitor how much of the AI's context window is being used — broken down by message history, system prompt, tools, and injected context.
@@ -102,6 +102,85 @@ const msgTokens = await countMessagesTokensAccurate(llmMessages);
 ```typescript
 useMessageHistory({ tokenEstimation: "accurate" }); // "fast" | "accurate" | "off"
 ```
+
+---
+
+## Context Budget Enforcement
+
+<Callout type="warn">
+**Experimental** — APIs may change before stable release.
+</Callout>
+
+Automatically enforce per-bucket token limits so the prompt never overflows. Configured via `optimization.contextBudget` on `<CopilotProvider>`.
+
+```tsx
+<CopilotProvider
+  optimization={{
+    contextBudget: {
+      enabled: true,
+      budget: {
+        contextWindowTokens: 128000,   // Total window size
+        inputHeadroomRatio: 0.75,      // Use 75% for input, reserve rest for output
+        systemPromptShare: 0.15,       // 15% of input budget for system prompt
+        historyShare: 0.50,            // 50% for conversation history
+        toolResultsShare: 0.30,        // 30% for tool results
+        toolDefinitionsShare: 0.05,    // 5% for tool definitions
+      },
+      enforcement: {
+        mode: "truncate",              // "warn" | "truncate" | "error"
+        onBudgetExceeded: (usage) => {
+          console.warn("Budget exceeded", usage.total.percent);
+        },
+      },
+      monitoring: {
+        enabled: true,
+        onUsageUpdate: (usage) => trackMetrics(usage),
+      },
+    },
+  }}
+>
+```
+
+| `enforcement.mode` | Behaviour |
+|--------------------|-----------|
+| `"warn"` | Logs a warning, sends full payload |
+| `"truncate"` | Trims content to fit — history first, then tool results |
+| `"error"` | Throws before sending if budget is exceeded |
+
+---
+
+## Tool Result Truncation
+
+<Callout type="warn">
+**Experimental** — APIs may change before stable release.
+</Callout>
+
+Prevent a single large tool response from consuming the entire context. Configure under `optimization.toolResultConfig`:
+
+```tsx
+<CopilotProvider
+  optimization={{
+    toolResultConfig: {
+      truncation: {
+        enabled: true,
+        strategy: "head-tail",     // Keep first + last chunk, drop middle
+        maxContextShare: 0.3,      // Tool results can use at most 30% of context
+        hardMaxChars: 40000,       // Absolute cap regardless of context size
+        minKeepChars: 2000,        // Always keep at least this much per result
+        preserveErrors: true,      // Never truncate error results
+      },
+    },
+  }}
+>
+```
+
+| `strategy` | Behaviour |
+|------------|-----------|
+| `"head-tail"` | Keeps the beginning and end of the result; drops the middle |
+| `"head"` | Keeps only the beginning |
+| `"tail"` | Keeps only the end |
+
+A truncation notice is appended so the model knows the result was trimmed.
 
 ---
 
