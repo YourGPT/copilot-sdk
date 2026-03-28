@@ -493,6 +493,7 @@ function ChatComponent({
   onSendMessage,
   onStop,
   isLoading = false,
+  error,
   // Compound children
   children,
   // Labels
@@ -575,6 +576,19 @@ function ChatComponent({
     PendingAttachment[]
   >([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const [displayedError, setDisplayedError] = useState<Error | null>(null);
+
+  // Track error changes: new error → show it; error clears → keep displayedError for exit animation
+  React.useEffect(() => {
+    if (error) {
+      setDisplayedError(error);
+      setIsDismissed(false);
+    }
+  }, [error]);
+
+  // Banner is visible when: there's an error prop AND not dismissed
+  const showErrorBanner = !!error && !isDismissed;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId(); // Unique ID for this Chat instance's file input
 
@@ -1200,6 +1214,61 @@ function ChatComponent({
                   onSuggestionClick={handleSuggestionClick}
                   className={classNames.suggestions}
                 />
+              )}
+
+              {/* Error banner — always in DOM while displayedError exists, animated via max-height/opacity */}
+              {displayedError && (
+                <div
+                  className={cn(
+                    "mx-2 mb-1 overflow-hidden transition-all duration-200 ease-in-out",
+                    showErrorBanner
+                      ? "max-h-20 opacity-100"
+                      : "max-h-0 opacity-0 mb-0",
+                  )}
+                  onTransitionEnd={() => {
+                    // Clean up displayedError after exit animation finishes
+                    if (!showErrorBanner) setDisplayedError(null);
+                  }}
+                >
+                  <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    <svg
+                      className="mt-0.5 h-3.5 w-3.5 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                      />
+                    </svg>
+                    <span className="flex-1 leading-relaxed">
+                      {displayedError.message}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsDismissed(true)}
+                      className="flex-shrink-0 opacity-60 hover:opacity-100"
+                      aria-label="Dismiss error"
+                    >
+                      <svg
+                        className="h-3 w-3"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Input */}

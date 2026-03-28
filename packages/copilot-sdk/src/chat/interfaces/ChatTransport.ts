@@ -238,4 +238,21 @@ export interface TransportConfig {
   streaming?: boolean;
   /** Request timeout in ms */
   timeout?: number;
+  /**
+   * Custom error message extractor for non-2xx responses.
+   * Receives the HTTP status code and the parsed response body.
+   * Return a string to use as the error message, or null/undefined to fall back to the default extraction.
+   *
+   * @example
+   * ```ts
+   * // Handle nested or array error formats
+   * parseError: (status, body) => {
+   *   if (Array.isArray(body?.errors)) return body.errors[0]?.message;
+   *   if (body?.detail) return body.detail;       // Django-style
+   *   if (body?.data?.message) return body.data.message; // nested
+   *   return null; // fall back to default (body.message || body.error)
+   * }
+   * ```
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }

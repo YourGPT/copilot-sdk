@@ -71,6 +71,8 @@ export interface ChatWithToolsConfig {
   state?: ChatState<UIMessage>;
   /** Transport implementation */
   transport?: ChatTransport;
+  /** Custom error message extractor for non-2xx API responses */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }
 
 /**
@@ -153,6 +155,7 @@ export class ChatWithTools {
       initialMessages: config.initialMessages,
       state: config.state,
       transport: config.transport,
+      parseError: config.parseError,
       callbacks: {
         onMessagesChange: callbacks.onMessagesChange,
         onStatusChange: callbacks.onStatusChange,

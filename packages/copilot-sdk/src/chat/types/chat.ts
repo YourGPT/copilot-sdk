@@ -103,6 +103,11 @@ export interface ChatConfig {
   tools?: ToolDefinition[];
   /** Optional prompt/tool optimization controls */
   optimization?: ToolOptimizationConfig;
+  /**
+   * Custom error message extractor for non-2xx API responses.
+   * Receives HTTP status and parsed body — return a string or null to fall back to default.
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }
 
 /**

@@ -100,8 +100,21 @@ export class HttpTransport implements ChatTransport {
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          // Try user-provided parser first, then fall back to default extraction
+          const custom = this.config.parseError?.(response.status, errorBody);
+          errorMessage =
+            custom ??
+            errorBody?.message ??
+            errorBody?.error ??
+            JSON.stringify(errorBody);
+        } catch {
+          const text = await response.text();
+          if (text) errorMessage = text;
+        }
+        throw new Error(errorMessage);
       }
 
       const contentType = response.headers.get("content-type") || "";

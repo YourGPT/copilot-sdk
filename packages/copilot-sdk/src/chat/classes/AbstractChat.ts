@@ -100,6 +100,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   // Current streaming state
   private streamState: StreamingMessageState | null = null;
 
+  // ID of the pending assistant placeholder pushed before a request.
+  // Used by handleError() to pop (remove) the placeholder on failure so it
+  // doesn't stay frozen. Error is surfaced via state.error only — never written
+  // into message history.
+  private _activePlaceholderMessageId: string | undefined = undefined;
+
   constructor(init: ChatInit<T>) {
     this.config = {
       runtimeUrl: init.runtimeUrl,
@@ -128,6 +134,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         headers: init.headers,
         body: init.body,
         streaming: init.streaming ?? true,
+        parseError: init.parseError,
       });
 
     // Store callbacks
@@ -254,6 +261,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         }) as T;
         this.state.pushMessage(preMsg);
         preCreatedMessageId = preMsg.id;
+        this._activePlaceholderMessageId = preMsg.id;
       }
 
       // Notify callbacks (single batch: user message + status + optional placeholder)
@@ -466,6 +474,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       this.state.status = "submitted";
+      this.state.error = undefined;
       this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
@@ -692,6 +701,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.pushMessage(preMsg);
       this.callbacks.onMessagesChange?.(this._allMessages());
       preCreatedMessageId = preMsg.id;
+      this._activePlaceholderMessageId = preMsg.id;
     }
 
     // Send request
@@ -699,6 +709,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     // Check if streaming or JSON
     if (this.isAsyncIterable(response)) {
+      // _activePlaceholderMessageId stays set throughout streaming so that
+      // handleError() can pop the placeholder if an error chunk arrives mid-stream.
+      // handleStreamResponse clears it on successful completion.
       await this.handleStreamResponse(response, preCreatedMessageId);
     } else {
       // Non-streaming: remove the pre-pushed placeholder (not needed).
@@ -724,6 +737,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           this.state.setCurrentLeaf(intendedLeafId);
         }
       }
+      // Placeholder removed — clear the tracker before handling the response
+      this._activePlaceholderMessageId = undefined;
       this.handleJsonResponse(response);
     }
   }
@@ -1637,6 +1652,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     this.callbacks.onMessagesChange?.(this._allMessages());
 
+    // Stream completed successfully — placeholder is now a real message, clear tracker
+    this._activePlaceholderMessageId = undefined;
+
     // Close the stream group opened at the start of handleStreamResponse
     this.debugGroupEnd();
 
@@ -1757,6 +1775,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   protected handleError(error: Error): void {
     this.debug("error", error);
+
+    // Remove the pending loading placeholder so it doesn't stay frozen.
+    // The error is surfaced through state.error → UI banner only —
+    // never written into the message history.
+    if (this._activePlaceholderMessageId) {
+      this.state.popMessage();
+      this._activePlaceholderMessageId = undefined;
+      this.callbacks.onMessagesChange?.(this._allMessages());
+    }
+
     this.state.error = error;
     this.state.status = "error";
     this.callbacks.onError?.(error);

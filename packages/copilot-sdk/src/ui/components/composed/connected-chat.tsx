@@ -363,6 +363,7 @@ function CopilotChatBase(
     switchBranch,
     getBranchInfo,
     editMessage,
+    error: chatError,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -653,6 +654,7 @@ function CopilotChatBase(
       onSendMessage={sendMessage}
       onStop={stop}
       isLoading={isLoading}
+      error={chatError}
       showPoweredBy={chatProps.showPoweredBy ?? true}
       suggestions={suggestions}
       isProcessing={isProcessingToolResults}

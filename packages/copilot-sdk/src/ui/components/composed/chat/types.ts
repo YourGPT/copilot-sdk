@@ -253,6 +253,8 @@ export type ChatProps = {
   onStop?: () => void;
   /** Whether AI is currently generating */
   isLoading?: boolean;
+  /** Current error from the AI (shown as a dismissible banner above the input) */
+  error?: Error | null;
 
   // === Compound Components ===
   /**

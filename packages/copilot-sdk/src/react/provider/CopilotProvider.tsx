@@ -309,6 +309,15 @@ export interface CopilotProviderProps {
   onMessagesChange?: (messages: Message[]) => void;
   /** Callback when an error occurs */
   onError?: (error: Error) => void;
+  /**
+   * Custom error message extractor for non-2xx API responses.
+   * Receives the HTTP status and parsed response body.
+   * Return a string to override the default message, or null to use the default.
+   *
+   * @example
+   * parseError: (status, body) => body?.errors?.[0]?.message ?? body?.detail ?? null
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
   /**
@@ -549,6 +558,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
     initialMessages,
     onMessagesChange,
     onError,
+    parseError,
     streaming,
     headers,
     body,
@@ -650,6 +660,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
         streaming,
         headers,
         body,
+        parseError,
         debug,
         maxIterations,
         maxIterationsMessage,
