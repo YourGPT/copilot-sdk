@@ -1,295 +1,569 @@
-import { useState, useEffect } from "react";
-import { GitBranch, Zap, Bot, ChevronRight } from "lucide-react";
-import { CopilotProvider, CopilotChat } from "@yourgpt/copilot-sdk/ui";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 import "@yourgpt/copilot-sdk/ui/styles.css";
 
-// ============================================
-// Types
-// ============================================
+// ─── Skill definitions (client-side metadata) ─────────────────────────────────
 
-interface SkillInfo {
+interface SkillMeta {
+  id: string;
   name: string;
-  description: string;
+  icon: string;
+  shortDesc: string;
   strategy: "eager" | "auto" | "manual";
-  version?: string;
+  capabilities: string[];
+  color: string;
 }
 
-// ============================================
-// Helpers
-// ============================================
+type SkillState = "idle" | "scanning" | "loaded";
 
-function formatSkillName(name: string): string {
-  return name
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+const SKILLS: SkillMeta[] = [
+  {
+    id: "revenue-intelligence",
+    name: "Revenue Intelligence",
+    icon: "◈",
+    shortDesc: "MRR trends, churn analysis & expansion signals",
+    strategy: "auto",
+    capabilities: [
+      "Monthly recurring revenue breakdown",
+      "Churn forecasting & root cause",
+      "Expansion revenue opportunity scoring",
+    ],
+    color: "#818cf8",
+  },
+  {
+    id: "customer-health",
+    name: "Customer Health",
+    icon: "◉",
+    shortDesc: "Account risk scoring & engagement signals",
+    strategy: "auto",
+    capabilities: [
+      "Health score calculation (0–100)",
+      "At-risk account early warning",
+      "Engagement drop-off detection",
+    ],
+    color: "#34d399",
+  },
+  {
+    id: "incident-runbook",
+    name: "Incident Runbook",
+    icon: "◬",
+    shortDesc: "Production incident response protocol",
+    strategy: "manual",
+    capabilities: [
+      "Severity classification P0–P3",
+      "Step-by-step response checklist",
+      "Stakeholder communication templates",
+    ],
+    color: "#fb923c",
+  },
+];
+
+const METRICS = [
+  { label: "MRR", value: "$124.8k", change: "+12%", up: true },
+  { label: "Churn", value: "2.3%", change: "−0.4%", up: true },
+  { label: "DAU", value: "8,429", change: "+5%", up: true },
+  { label: "Open P1s", value: "2", change: "+2", up: false },
+];
+
+const DEMO_PROMPTS = [
+  "Analyze our MRR growth and top churn risks this month",
+  "Which enterprise accounts are most at risk right now?",
+  "We have a P1 — payment API is returning 503 errors",
+];
+
+// ─── Skill load notifier (invisible, watches for load_skill tool calls) ───────
+
+function SkillLoadNotifier({
+  args,
+  status,
+  onLoaded,
+}: {
+  args: Record<string, unknown>;
+  status: string;
+  result?: unknown;
+  toolCallId: string;
+  onLoaded: (name: string) => void;
+}) {
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (status === "success" && args?.name && !firedRef.current) {
+      firedRef.current = true;
+      onLoaded(args.name as string);
+    }
+  }, [status, args?.name, onLoaded]);
+  return null;
 }
 
-function StrategyBadge({ strategy }: { strategy: SkillInfo["strategy"] }) {
-  const config: Record<
-    SkillInfo["strategy"],
-    { label: string; className: string }
-  > = {
-    eager: {
-      label: "eager",
-      className:
-        "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25",
-    },
-    auto: {
-      label: "auto",
-      className: "bg-blue-500/15 text-blue-400 border border-blue-500/25",
-    },
-    manual: {
-      label: "manual",
-      className: "bg-amber-500/15 text-amber-400 border border-amber-500/25",
-    },
+// ─── Individual skill card ────────────────────────────────────────────────────
+
+function SkillCard({ skill, state }: { skill: SkillMeta; state: SkillState }) {
+  const isLoaded = state === "loaded";
+  const isScanning = state === "scanning";
+  const strategyLabel = {
+    eager: "ALWAYS ON",
+    auto: "AUTO",
+    manual: "ON DEMAND",
   };
 
-  const { label, className } = config[strategy];
-
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${className}`}
+    <div
+      className="skill-card"
+      data-state={state}
+      style={{ "--sc": skill.color } as React.CSSProperties}
     >
-      {label}
-    </span>
-  );
-}
+      {isScanning && <div className="scan-line" />}
 
-// ============================================
-// Toggle Switch
-// ============================================
-
-function ToggleSwitch({
-  checked,
-  onChange,
-  id,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  id: string;
-}) {
-  return (
-    <button
-      id={id}
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
-        checked ? "bg-blue-500" : "bg-zinc-700"
-      }`}
-    >
-      <span
-        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-          checked ? "translate-x-4" : "translate-x-0"
-        }`}
-      />
-    </button>
-  );
-}
-
-// ============================================
-// Skill Card
-// ============================================
-
-function SkillCard({ skill }: { skill: SkillInfo }) {
-  return (
-    <div className="group rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 transition-colors hover:border-zinc-700 hover:bg-zinc-900">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-medium text-zinc-100 leading-tight">
-          {formatSkillName(skill.name)}
+      <div className="sc-header">
+        <span className="sc-icon" data-scanning={isScanning}>
+          {skill.icon}
         </span>
-        <StrategyBadge strategy={skill.strategy} />
+        <div className="sc-title-group">
+          <span className="sc-name">{skill.name}</span>
+          <span className={`sc-badge sc-badge--${skill.strategy}`}>
+            {strategyLabel[skill.strategy]}
+          </span>
+        </div>
+        <span className="sc-dot" data-active={isLoaded} />
       </div>
-      <p className="mt-1.5 text-xs text-zinc-500 leading-relaxed line-clamp-2">
-        {skill.description}
-      </p>
+
+      <p className="sc-desc">{skill.shortDesc}</p>
+
+      <div className="sc-expanded" data-open={isLoaded}>
+        <div className="sc-divider" />
+        <p className="sc-active-label">✦ Skill active</p>
+        <ul className="sc-caps">
+          {skill.capabilities.map((cap, i) => (
+            <li
+              key={cap}
+              className="sc-cap"
+              data-visible={isLoaded}
+              style={{
+                transitionDelay: isLoaded ? `${0.12 + i * 0.09}s` : "0s",
+              }}
+            >
+              <span className="sc-cap-dot" />
+              {cap}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
 
-// ============================================
-// Sidebar
-// ============================================
-
-function Sidebar({
-  branchingEnabled,
-  onBranchingChange,
-}: {
-  branchingEnabled: boolean;
-  onBranchingChange: (v: boolean) => void;
-}) {
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/skills")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<SkillInfo[]>;
-      })
-      .then((data) => {
-        setSkills(data);
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Failed to load skills");
-        setLoading(false);
-      });
-  }, []);
-
-  return (
-    <aside className="flex h-full w-[280px] flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
-      {/* Header */}
-      <div className="border-b border-zinc-800 px-4 py-4">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/15 border border-blue-500/25">
-            <Zap className="h-4 w-4 text-blue-400" />
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold text-zinc-100">Skills Demo</h1>
-            <p className="text-xs text-zinc-500">
-              Server-side skill management
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Skills section */}
-      <div className="flex-1 overflow-y-auto px-3 py-4">
-        <div className="mb-3 flex items-center gap-1.5 px-1">
-          <Bot className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-            Available Skills
-          </span>
-        </div>
-
-        {loading && (
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-16 rounded-lg border border-zinc-800 bg-zinc-900/50 animate-pulse"
-              />
-            ))}
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5">
-            <p className="text-xs text-red-400">
-              Failed to load skills — is the server running?
-            </p>
-            <p className="mt-0.5 text-xs text-red-500/70">{error}</p>
-          </div>
-        )}
-
-        {!loading && !error && skills.length === 0 && (
-          <p className="px-1 text-xs text-zinc-600">No skills found.</p>
-        )}
-
-        {!loading && !error && skills.length > 0 && (
-          <div className="space-y-2">
-            {skills.map((skill) => (
-              <SkillCard key={skill.name} skill={skill} />
-            ))}
-          </div>
-        )}
-
-        {/* Strategy legend */}
-        {!loading && !error && skills.length > 0 && (
-          <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2.5">
-            <p className="mb-2 text-xs font-medium text-zinc-500">
-              Strategy legend
-            </p>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <StrategyBadge strategy="eager" />
-                <span className="text-xs text-zinc-500">Always injected</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <StrategyBadge strategy="auto" />
-                <span className="text-xs text-zinc-500">
-                  AI decides when to load
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <StrategyBadge strategy="manual" />
-                <span className="text-xs text-zinc-500">
-                  Explicit invocation only
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Branching section */}
-      <div className="border-t border-zinc-800 px-3 py-4">
-        <div className="mb-2 flex items-center gap-1.5 px-1">
-          <GitBranch className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-            Branching
-          </span>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <label htmlFor="branching-toggle" className="flex-1 cursor-pointer">
-              <span className="block text-sm font-medium text-zinc-200">
-                Conversation Branching
-              </span>
-              <span className="block text-xs text-zinc-500 mt-0.5">
-                Edit messages to create branches
-              </span>
-            </label>
-            <ToggleSwitch
-              id="branching-toggle"
-              checked={branchingEnabled}
-              onChange={onBranchingChange}
-            />
-          </div>
-          {branchingEnabled && (
-            <div className="mt-2.5 flex items-start gap-1.5 rounded-md bg-blue-500/10 border border-blue-500/20 px-2.5 py-2">
-              <ChevronRight className="mt-0.5 h-3 w-3 flex-shrink-0 text-blue-400" />
-              <p className="text-xs text-blue-400 leading-relaxed">
-                Click the edit icon on any user message to branch the
-                conversation.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// ============================================
-// App
-// ============================================
+// ─── Main app ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [skillStates, setSkillStates] = useState<Record<string, SkillState>>(
+    () => Object.fromEntries(SKILLS.map((s) => [s.id, "idle"])),
+  );
   const [branchingEnabled, setBranchingEnabled] = useState(false);
 
-  return (
-    <div className="flex h-screen w-full overflow-hidden bg-zinc-950">
-      <Sidebar
-        branchingEnabled={branchingEnabled}
-        onBranchingChange={setBranchingEnabled}
-      />
+  const handleSkillLoaded = useCallback((skillName: string) => {
+    if (!SKILLS.find((s) => s.id === skillName)) return;
+    setSkillStates((prev) =>
+      prev[skillName] === "loaded"
+        ? prev
+        : { ...prev, [skillName]: "scanning" },
+    );
+    setTimeout(() => {
+      setSkillStates((prev) => ({ ...prev, [skillName]: "loaded" }));
+    }, 1500);
+  }, []);
 
-      {/* Chat panel */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <CopilotProvider runtimeUrl="/api/chat">
-          <CopilotChat
-            allowEdit={branchingEnabled}
-            header={{
-              title: "Skills Chat",
-            }}
-            className="h-full"
-          />
-        </CopilotProvider>
-      </main>
-    </div>
+  const toolRenderers = useMemo(
+    () => ({
+      load_skill: (props: {
+        args: Record<string, unknown>;
+        status: string;
+        result?: unknown;
+        toolCallId: string;
+      }) => <SkillLoadNotifier {...props} onLoaded={handleSkillLoaded} />,
+    }),
+    [handleSkillLoaded],
+  );
+
+  const injectPrompt = (text: string) => {
+    const ta = document.querySelector<HTMLTextAreaElement>(
+      "textarea[placeholder]",
+    );
+    if (!ta) return;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    setter?.call(ta, text);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+      <div className="d-root">
+        {/* Top nav */}
+        <header className="d-nav">
+          <div className="d-nav__brand">
+            <span className="d-nav__logo">⬡</span>
+            <span className="d-nav__name">Dash</span>
+            <span className="d-nav__platform">Operations Platform</span>
+          </div>
+          <nav className="d-nav__links">
+            {["Overview", "Revenue", "Customers", "Incidents", "Settings"].map(
+              (l) => (
+                <span key={l} className="d-nav__link">
+                  {l}
+                </span>
+              ),
+            )}
+          </nav>
+          <div className="d-nav__copilot">
+            <span className="d-nav__pulse" />
+            AI Copilot
+          </div>
+        </header>
+
+        <div className="d-body">
+          {/* Sidebar */}
+          <aside className="d-sidebar">
+            {/* Metrics */}
+            <section className="d-section">
+              <h3 className="d-section__label">Live Metrics</h3>
+              <div className="d-metrics">
+                {METRICS.map((m) => (
+                  <div key={m.label} className="d-metric">
+                    <span className="d-metric__label">{m.label}</span>
+                    <span className="d-metric__val">{m.value}</span>
+                    <span className={`d-metric__chg ${m.up ? "up" : "dn"}`}>
+                      {m.change}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Skills */}
+            <section className="d-section d-section--skills">
+              <div className="d-section__header-row">
+                <h3 className="d-section__label">Copilot Skills</h3>
+                <span className="d-section__count">{SKILLS.length}</span>
+              </div>
+              <div className="d-skills">
+                {SKILLS.map((skill) => (
+                  <SkillCard
+                    key={skill.id}
+                    skill={skill}
+                    state={skillStates[skill.id] ?? "idle"}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {/* Branching */}
+            <section className="d-section d-section--branch">
+              <div className="d-branch">
+                <div>
+                  <p className="d-branch__label">Conversation Branching</p>
+                  <p className="d-branch__desc">
+                    Edit messages to explore alternatives
+                  </p>
+                </div>
+                <button
+                  className={`d-toggle ${branchingEnabled ? "d-toggle--on" : ""}`}
+                  onClick={() => setBranchingEnabled((v) => !v)}
+                />
+              </div>
+            </section>
+
+            {/* Demo prompts */}
+            <section className="d-section d-section--prompts">
+              <h3 className="d-section__label">Try asking…</h3>
+              <div className="d-prompts">
+                {DEMO_PROMPTS.map((p) => (
+                  <button
+                    key={p}
+                    className="d-prompt"
+                    onClick={() => injectPrompt(p)}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </section>
+          </aside>
+
+          {/* Chat */}
+          <main className="d-chat">
+            <CopilotProvider runtimeUrl="/api/chat">
+              <CopilotChat
+                className="d-copilot"
+                placeholder="Ask about revenue, customers, or incidents…"
+                showHeader
+                header={{ name: "Dash Copilot" }}
+                loaderVariant="typing"
+                showUserAvatar
+                allowEdit={branchingEnabled}
+                toolRenderers={toolRenderers as never}
+              />
+            </CopilotProvider>
+          </main>
+        </div>
+      </div>
+    </>
   );
 }
+
+// ─── All styles ───────────────────────────────────────────────────────────────
+
+const CSS = `
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #07090f;
+  --s1:       #0b0e1a;
+  --s2:       #0f1320;
+  --s3:       #141929;
+  --bd:       rgba(255,255,255,0.055);
+  --bd2:      rgba(255,255,255,0.10);
+  --t1:       #e8eaf6;
+  --t2:       #7b82a8;
+  --t3:       #3d4468;
+  --ok:       #34d399;
+  --err:      #f87171;
+  --acc:      #818cf8;
+  --font:     'Bricolage Grotesque', system-ui, sans-serif;
+  --mono:     'JetBrains Mono', monospace;
+}
+
+body {
+  background: var(--bg);
+  font-family: var(--font);
+  color: var(--t1);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Root ── */
+.d-root { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+/* ── Nav ── */
+.d-nav {
+  display: flex; align-items: center; gap: 20px;
+  padding: 0 20px; height: 50px; flex-shrink: 0;
+  background: var(--s1);
+  border-bottom: 1px solid var(--bd);
+}
+.d-nav__brand  { display: flex; align-items: center; gap: 8px; }
+.d-nav__logo   { font-size: 19px; color: var(--acc); }
+.d-nav__name   { font-weight: 700; font-size: 15px; letter-spacing: -0.04em; }
+.d-nav__platform { font-size: 11px; color: var(--t3); margin-left: 1px; }
+.d-nav__links  { display: flex; gap: 1px; margin-left: auto; }
+.d-nav__link   {
+  padding: 4px 11px; border-radius: 6px;
+  font-size: 12px; color: var(--t2); cursor: pointer;
+  transition: all 0.12s;
+}
+.d-nav__link:hover { background: var(--s2); color: var(--t1); }
+.d-nav__copilot {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 12px; border-radius: 20px;
+  background: rgba(129,140,248,0.08);
+  border: 1px solid rgba(129,140,248,0.2);
+  font-size: 11px; font-weight: 600; color: var(--acc);
+  letter-spacing: 0.05em; text-transform: uppercase;
+}
+.d-nav__pulse {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--acc);
+  animation: nav-pulse 2.2s ease-in-out infinite;
+}
+@keyframes nav-pulse {
+  0%,100% { opacity:.5; transform:scale(1); }
+  50%      { opacity:1;  transform:scale(1.35); }
+}
+
+/* ── Body ── */
+.d-body { display: flex; flex: 1; min-height: 0; }
+
+/* ── Sidebar ── */
+.d-sidebar {
+  width: 296px; flex-shrink: 0;
+  background: var(--s1); border-right: 1px solid var(--bd);
+  overflow-y: auto; display: flex; flex-direction: column;
+  scrollbar-width: thin; scrollbar-color: var(--bd2) transparent;
+}
+
+.d-section {
+  padding: 14px 14px;
+  border-bottom: 1px solid var(--bd);
+}
+.d-section__label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--t3); margin-bottom: 10px;
+}
+.d-section__header-row {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+}
+.d-section__count {
+  font-family: var(--mono); font-size: 10px; color: var(--t3);
+  background: var(--s2); padding: 1px 6px; border-radius: 8px;
+  border: 1px solid var(--bd);
+}
+
+/* ── Metrics ── */
+.d-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.d-metric {
+  background: var(--s2); border: 1px solid var(--bd);
+  border-radius: 8px; padding: 9px 10px 7px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.d-metric__label { font-size: 9.5px; color: var(--t3); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+.d-metric__val   { font-family: var(--mono); font-size: 16px; font-weight: 500; color: var(--t1); line-height: 1.2; }
+.d-metric__chg   { font-family: var(--mono); font-size: 10px; font-weight: 500; }
+.d-metric__chg.up { color: var(--ok); }
+.d-metric__chg.dn { color: var(--err); }
+
+/* ── Skills ── */
+.d-skills { display: flex; flex-direction: column; gap: 7px; }
+
+.skill-card {
+  position: relative; overflow: hidden;
+  border-radius: 10px; padding: 11px;
+  background: var(--s2); border: 1px solid var(--bd);
+  transition: border-color 0.45s ease, background 0.45s ease, box-shadow 0.45s ease;
+}
+.skill-card[data-state="scanning"] {
+  border-color: rgba(255,255,255,0.13);
+  background: var(--s3);
+}
+.skill-card[data-state="loaded"] {
+  border-color: color-mix(in srgb, var(--sc) 38%, transparent);
+  background: color-mix(in srgb, var(--sc) 6%, var(--s2));
+  box-shadow: 0 0 22px -4px color-mix(in srgb, var(--sc) 22%, transparent);
+  animation: card-pop 0.55s cubic-bezier(0.22,1,0.36,1);
+}
+@keyframes card-pop {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sc) 55%, transparent); }
+  45%  { box-shadow: 0 0 28px 5px color-mix(in srgb, var(--sc) 32%, transparent); }
+  100% { box-shadow: 0 0 22px -4px color-mix(in srgb, var(--sc) 22%, transparent); }
+}
+
+/* Scan line */
+.scan-line {
+  position: absolute; inset: 0; pointer-events: none; z-index: 10;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255,255,255,0.03) 40%,
+    rgba(255,255,255,0.11) 50%,
+    rgba(255,255,255,0.03) 60%,
+    transparent 100%
+  );
+  animation: scan 1.5s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+@keyframes scan {
+  0%   { transform: translateY(-110%); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(210%);  opacity: 0; }
+}
+
+.sc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.sc-icon {
+  font-size: 17px; line-height: 1; flex-shrink: 0;
+  color: var(--sc);
+  transition: transform 0.3s ease;
+}
+.skill-card[data-state="loaded"] .sc-icon { transform: scale(1.12); }
+.sc-icon[data-scanning="true"] { animation: icon-spin 1.5s ease-in-out; }
+@keyframes icon-spin {
+  0%   { transform: rotate(0deg)   scale(1); }
+  50%  { transform: rotate(180deg) scale(1.2); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+.sc-title-group { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.sc-name { font-size: 12.5px; font-weight: 600; color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.sc-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px; width: fit-content;
+}
+.sc-badge--eager  { background: rgba(52,211,153,.12); color: #34d399; border: 1px solid rgba(52,211,153,.2); }
+.sc-badge--auto   { background: rgba(129,140,248,.12); color: #818cf8; border: 1px solid rgba(129,140,248,.2); }
+.sc-badge--manual { background: rgba(251,146,60,.12);  color: #fb923c; border: 1px solid rgba(251,146,60,.2); }
+
+.sc-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--t3);
+  transition: background 0.35s, box-shadow 0.35s;
+}
+.sc-dot[data-active="true"] {
+  background: var(--sc);
+  box-shadow: 0 0 7px 1px color-mix(in srgb, var(--sc) 55%, transparent);
+  animation: dot-breathe 2s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  0%,100% { box-shadow: 0 0 7px 1px color-mix(in srgb, var(--sc) 45%, transparent); }
+  50%      { box-shadow: 0 0 11px 3px color-mix(in srgb, var(--sc) 65%, transparent); }
+}
+
+.sc-desc { font-size: 11px; color: var(--t2); line-height: 1.4; padding-left: 25px; }
+
+.sc-expanded {
+  max-height: 0; overflow: hidden;
+  transition: max-height 0.55s cubic-bezier(0.16,1,0.3,1);
+}
+.sc-expanded[data-open="true"] { max-height: 200px; }
+
+.sc-divider { height: 1px; background: color-mix(in srgb, var(--sc) 25%, transparent); margin: 10px 0 8px; }
+.sc-active-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--sc); margin-bottom: 7px; padding-left: 25px;
+}
+
+.sc-caps  { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.sc-cap {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--t2); padding-left: 25px;
+  opacity: 0; transform: translateX(-8px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.sc-cap[data-visible="true"] { opacity: 1; transform: translateX(0); }
+.sc-cap-dot {
+  width: 4px; height: 4px; border-radius: 50%; flex-shrink: 0;
+  background: var(--sc);
+}
+
+/* ── Branching ── */
+.d-branch {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.d-branch__label { font-size: 12px; font-weight: 600; color: var(--t1); }
+.d-branch__desc  { font-size: 10px; color: var(--t3); margin-top: 2px; }
+.d-toggle {
+  width: 36px; height: 20px; border-radius: 10px; flex-shrink: 0; cursor: pointer;
+  background: var(--s3); border: 1px solid var(--bd2); position: relative;
+  transition: background 0.2s, border-color 0.2s;
+}
+.d-toggle::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--t3);
+  transition: transform 0.2s, background 0.2s;
+}
+.d-toggle--on { background: rgba(129,140,248,.2); border-color: rgba(129,140,248,.4); }
+.d-toggle--on::after { transform: translateX(16px); background: var(--acc); }
+
+/* ── Demo prompts ── */
+.d-prompts { display: flex; flex-direction: column; gap: 6px; }
+.d-prompt {
+  text-align: left; background: var(--s2); border: 1px solid var(--bd);
+  border-radius: 8px; padding: 8px 10px;
+  font-size: 11px; font-family: var(--font); color: var(--t2);
+  cursor: pointer; line-height: 1.4;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.d-prompt:hover { background: var(--s3); border-color: var(--bd2); color: var(--t1); }
+
+/* ── Chat ── */
+.d-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.d-copilot { height: 100% !important; }
+`;
