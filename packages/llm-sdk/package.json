@@ -55,6 +55,11 @@
       "types": "./dist/yourgpt/index.d.ts",
       "import": "./dist/yourgpt/index.mjs",
       "require": "./dist/yourgpt/index.js"
+    },
+    "./fallback": {
+      "types": "./dist/fallback/index.d.ts",
+      "import": "./dist/fallback/index.mjs",
+      "require": "./dist/fallback/index.js"
     }
   },
   "homepage": "https://copilot-sdk.yourgpt.ai",

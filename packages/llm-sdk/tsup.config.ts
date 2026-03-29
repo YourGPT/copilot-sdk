@@ -19,6 +19,9 @@ export default defineConfig({
 
     // YourGPT storage adapter
     "yourgpt/index": "src/yourgpt/index.ts",
+
+    // Fallback chain & routing
+    "fallback/index": "src/fallback/index.ts",
   },
   format: ["cjs", "esm"],
   dts: true,

@@ -1,5 +1,13 @@
 {
   "title": "Providers",
   "icon": "Brain",
-  "pages": ["openai", "anthropic", "google", "xai", "ollama", "custom-provider"]
+  "pages": [
+    "openai",
+    "anthropic",
+    "google",
+    "xai",
+    "ollama",
+    "custom-provider",
+    "fallback"
+  ]
 }
