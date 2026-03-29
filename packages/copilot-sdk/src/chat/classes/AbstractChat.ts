@@ -1107,58 +1107,93 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         return;
       }
 
-      // Handle message:end mid-stream (server-side agent loop turn completed)
-      // This creates separate messages for each turn instead of combining them
-      if (chunk.type === "message:end" && this.streamState?.content) {
-        this.debug("message:end mid-stream", {
-          messageId: this.streamState.messageId,
-          contentLength: this.streamState.content.length,
-          toolCallsInState: this.streamState.toolCalls?.length ?? 0,
-          chunkCount,
-        });
-
-        // Finalize current message with its content and tool calls
-        const turnMessage = streamStateToMessage(this.streamState) as T;
-
-        // Add toolCallsHidden metadata if applicable
-        const toolCallsHidden: Record<string, boolean> = {};
-        for (const [id, result] of this.streamState.toolResults) {
-          if (result.hidden !== undefined) {
-            toolCallsHidden[id] = result.hidden;
-          }
-        }
-        if (
-          turnMessage.toolCalls?.length &&
-          Object.keys(toolCallsHidden).length > 0
-        ) {
-          (turnMessage as T & { metadata?: Record<string, unknown> }).metadata =
+      // Handle message:end mid-stream (server-side agent loop turn completed).
+      // Behaviour depends on streamMode:
+      //   'multi-step' (default) — finalize a new UIMessage per iteration.
+      //   'single-turn'          — skip entirely; keep accumulating into the
+      //                            same streamState so all iterations collapse
+      //                            into one bubble (Vercel AI SDK / Claude.ai style).
+      if (chunk.type === "message:end" && this.streamState) {
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:end mid-stream (single-turn: keeping streamState alive)",
             {
+              messageId: this.streamState.messageId,
+              contentLength: this.streamState.content.length,
+              chunkCount,
+            },
+          );
+          continue;
+        }
+
+        // multi-step (default): finalize current turn as its own UIMessage
+        if (!this.streamState.content) {
+          // Nothing streamed yet for this turn — skip finalization
+        } else {
+          this.debug("message:end mid-stream", {
+            messageId: this.streamState.messageId,
+            contentLength: this.streamState.content.length,
+            toolCallsInState: this.streamState.toolCalls?.length ?? 0,
+            chunkCount,
+          });
+
+          // Finalize current message with its content and tool calls
+          const turnMessage = streamStateToMessage(this.streamState) as T;
+
+          // Add toolCallsHidden metadata if applicable
+          const toolCallsHidden: Record<string, boolean> = {};
+          for (const [id, result] of this.streamState.toolResults) {
+            if (result.hidden !== undefined) {
+              toolCallsHidden[id] = result.hidden;
+            }
+          }
+          if (
+            turnMessage.toolCalls?.length &&
+            Object.keys(toolCallsHidden).length > 0
+          ) {
+            (
+              turnMessage as T & { metadata?: Record<string, unknown> }
+            ).metadata = {
               ...(turnMessage as T & { metadata?: Record<string, unknown> })
                 .metadata,
               toolCallsHidden,
             };
+          }
+
+          this.state.updateMessageById(
+            this.streamState.messageId,
+            (existing) => ({
+              ...turnMessage,
+              ...(existing.parentId !== undefined
+                ? { parentId: existing.parentId }
+                : {}),
+              ...(existing.childrenIds !== undefined
+                ? { childrenIds: existing.childrenIds }
+                : {}),
+            }),
+          );
+          this.callbacks.onMessageFinish?.(turnMessage);
+
+          // Reset stream state — next message:start will create a new message
+          this.streamState = null;
+          continue;
         }
-
-        this.state.updateMessageById(
-          this.streamState.messageId,
-          (existing) => ({
-            ...turnMessage,
-            ...(existing.parentId !== undefined
-              ? { parentId: existing.parentId }
-              : {}),
-            ...(existing.childrenIds !== undefined
-              ? { childrenIds: existing.childrenIds }
-              : {}),
-          }),
-        );
-        this.callbacks.onMessageFinish?.(turnMessage);
-
-        // Reset stream state for next turn - will be initialized on next message:start
-        this.streamState = null;
-        continue;
       }
 
-      // Handle message:start after a mid-stream finalization
+      // Handle message:start mid-stream:
+      //   single-turn — streamState is still alive, skip to keep accumulating.
+      //   multi-step  — streamState was reset to null above; fall through to
+      //                 the message:start === null handler below.
+      if (chunk.type === "message:start" && this.streamState !== null) {
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:start mid-stream (single-turn: streamState already active, skipping)",
+          );
+          continue;
+        }
+      }
+
+      // Handle message:start after a mid-stream finalization (multi-step mode)
       if (chunk.type === "message:start" && this.streamState === null) {
         this.debug("message:start after mid-stream end - creating new message");
         // Capture the current leaf BEFORE pushing the new message so the
@@ -1428,9 +1463,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             ),
           });
 
-          const currentStreamToolCallIds = new Set(
-            this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
-          );
+          // In single-turn mode all server-tool IDs land in streamState.toolResults
+          // (via action:start/args/end chunks). Include them so done.messages doesn't
+          // re-insert those tools as duplicates.
+          const currentStreamToolCallIds = new Set([
+            ...(this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ??
+              []),
+            ...(this.config.streamMode === "single-turn" &&
+            this.streamState?.toolResults
+              ? Array.from(this.streamState.toolResults.keys())
+              : []),
+          ]);
           const messagesToInsert: T[] = [];
 
           // Build hidden map from stream state's toolResults
