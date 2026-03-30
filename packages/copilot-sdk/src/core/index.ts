@@ -98,6 +98,12 @@ export type {
 } from "./tools";
 
 // ============================================
+// Logger
+// ============================================
+export { createLogger, logOnce } from "./utils/logger";
+export type { ScopedLogger, DebugConfig } from "./utils/logger";
+
+// ============================================
 // Core Types
 // ============================================
 
@@ -167,7 +173,21 @@ export type {
   ToolRenderProps,
   ToolDefinition,
   ToolConfig,
+  ToolResultConfig,
+  ToolResultTruncationConfig,
+  ToolTruncationStrategy,
+  ToolProfile,
+  ToolProfileConfig,
+  ContextHistoryConfig,
+  ContextSummarizationConfig,
+  TokenEstimationConfig,
+  ContextManagementConfig,
+  ContextUsagePart,
+  ContextUsage,
+  ContextBudgetConfig,
+  ToolOptimizationConfig,
   ToolSet,
+  ToolSetEntry,
   UnifiedToolCall,
   UnifiedToolResult,
   ToolExecutionStatus,

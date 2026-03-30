@@ -2,6 +2,7 @@
 
 import { useTheme } from "next-themes";
 import { CopilotChat, useCopilotChatContext } from "@yourgpt/copilot-sdk/ui";
+import { toast } from "sonner";
 import {
   Plus,
   Sun,
@@ -88,14 +89,14 @@ function CustomSuggestions() {
   );
 }
 
-export function SaasLayout({ theme, loaderVariant }: LayoutProps) {
+export function SaasLayout({ theme, loaderVariant, alphaConfig }: LayoutProps) {
   // Use supabase theme by default for this layout, unless a different theme is selected
   const effectiveTheme = theme === "default" ? "supabase" : theme;
 
   return (
     <div className="h-full" data-csdk-theme={effectiveTheme}>
       <CopilotChat.Root
-        persistence
+        persistence={alphaConfig.sessionPersistence || undefined}
         className="h-full"
         showPoweredBy={false}
         loaderVariant={loaderVariant}
@@ -107,6 +108,30 @@ export function SaasLayout({ theme, loaderVariant }: LayoutProps) {
           src: "https://api.dicebear.com/7.x/avataaars/svg?seed=user",
         }}
       >
+        {(alphaConfig.messageActions.copyEnabled ||
+          alphaConfig.messageActions.feedbackEnabled) && (
+          <CopilotChat.MessageActions role="assistant">
+            {alphaConfig.messageActions.copyEnabled && (
+              <CopilotChat.CopyAction />
+            )}
+            {alphaConfig.messageActions.feedbackEnabled && (
+              <CopilotChat.FeedbackAction
+                onFeedback={(message, type) =>
+                  toast.success(`Feedback: ${type}`, {
+                    duration: 2000,
+                    position: "top-center",
+                  })
+                }
+              />
+            )}
+          </CopilotChat.MessageActions>
+        )}
+        {(alphaConfig.messageActions.editEnabled ||
+          alphaConfig.branchingEnabled) && (
+          <CopilotChat.MessageActions role="user">
+            <CopilotChat.EditAction />
+          </CopilotChat.MessageActions>
+        )}
         {/* Home View - Custom welcome screen */}
         <CopilotChat.HomeView className="gap-4 p-6 bg-gradient-to-b from-primary/30 via-background to-background items-stretch w-full">
           {/* Logo */}

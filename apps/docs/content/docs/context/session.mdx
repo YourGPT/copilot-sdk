@@ -1,0 +1,98 @@
+---
+title: Session Persistence
+description: Survive page reloads and persist conversation state across sessions
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is in **alpha**. APIs may change before stable release.
+</Callout>
+
+Persist the full conversation state — including compaction metadata and message history — across page reloads with zero extra code.
+
+---
+
+## Basic Setup
+
+```typescript
+useMessageHistory({
+  persistSession: true,
+  storageKey: "my-app-chat", // default: "copilot-session"
+});
+```
+
+### What gets persisted
+
+| Data | Where | Notes |
+|------|-------|-------|
+| `compactionState` (small metadata) | `localStorage` | Sync, available immediately on cold start |
+| `displayMessages` (can be large) | `IndexedDB` | Async, avoids localStorage quota issues |
+
+Both are keyed by `storageKey`. Multiple chat instances can coexist with different keys.
+
+---
+
+## Clear Everything
+
+```typescript
+const { resetSession } = useMessageHistory({ persistSession: true });
+
+// Clears state AND storage
+await resetSession();
+```
+
+---
+
+## Multiple Chat Instances
+
+```tsx
+// Support chat — separate session
+<CopilotProvider widgetToken="...">
+  <SupportChat>
+    {/* useMessageHistory({ storageKey: "support-chat" }) */}
+  </SupportChat>
+</CopilotProvider>
+
+// Sales chat — separate session
+<CopilotProvider widgetToken="...">
+  <SalesChat>
+    {/* useMessageHistory({ storageKey: "sales-chat" }) */}
+  </SalesChat>
+</CopilotProvider>
+```
+
+---
+
+## Full Setup Example
+
+```tsx
+// app/layout.tsx
+import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
+
+export default function RootLayout({ children }) {
+  return (
+    <CopilotProvider
+      widgetToken="YOUR_TOKEN"
+      messageHistory={{
+        strategy: "summary-buffer",
+        maxContextTokens: 128000,
+        compactionThreshold: 0.75,
+        compactionUrl: "/api/compact",
+        persistSession: true,
+        storageKey: "my-app",
+        onCompaction: (e) => console.log("Compacted:", e),
+      }}
+    >
+      {children}
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Related
+
+- [Compaction](/docs/context/compaction) — how the session is summarized
+- [Token Tracking](/docs/context/token-tracking) — monitor context window usage

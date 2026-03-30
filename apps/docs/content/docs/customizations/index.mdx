@@ -68,47 +68,9 @@ The SDK uses standard shadcn/ui CSS variables. Override these to customize the l
 
 ## Semantic CSS Classes
 
-Target specific components with these CSS classes:
+Every structural element in the SDK exposes a `csdk-*` class for CSS targeting. See the full reference:
 
-### Message Components
-
-| Class | Element |
-|-------|---------|
-| `csdk-message` | Message container |
-| `csdk-message-user` | User message bubble |
-| `csdk-message-assistant` | Assistant message bubble |
-| `csdk-message-content` | Message text content |
-| `csdk-avatar` | Avatar container |
-
-### Input Components
-
-| Class | Element |
-|-------|---------|
-| `csdk-input` | Input container |
-| `csdk-input-textarea` | Text input field |
-| `csdk-button` | All buttons |
-| `csdk-button-send` | Send button |
-| `csdk-button-stop` | Stop generation button |
-| `csdk-button-attach` | Attachment button |
-
-### Layout Components
-
-| Class | Element |
-|-------|---------|
-| `csdk-chat-header` | Header slot |
-| `csdk-chat-footer` | Footer slot |
-| `csdk-chat-home-view` | Home view container |
-| `csdk-chat-view` | Chat view container |
-| `csdk-back-button` | Back/New chat button |
-
-### Other Components
-
-| Class | Element |
-|-------|---------|
-| `csdk-followup` | Follow-up suggestions container |
-| `csdk-followup-button` | Follow-up suggestion buttons |
-| `csdk-compound-input` | Compound input wrapper |
-| `csdk-compound-suggestions` | Compound suggestions wrapper |
+➜ [CSS Class Reference](/docs/customizations/css-classes) — complete list of all `csdk-*` classes with descriptions and override examples.
 
 ---
 
@@ -350,6 +312,8 @@ import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 
 ## Next Steps
 
+- [CSS Class Reference](/docs/customizations/css-classes) - All `csdk-*` classes with override examples
 - [UI Components](/docs/ui) - Pre-built components and themes
 - [Generative UI](/docs/generative-ui) - Render custom components from AI
-- [Chat](/docs/chat) - Full chat component API
+- [Chat Primitives](/docs/customizations/chat-primitives) - Headless building blocks
+- [Custom Message View](/docs/customizations/custom-message-view) - Full control over message rendering

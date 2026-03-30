@@ -1,29 +1,49 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import type {
   ToolDefinition,
   ToolResponse,
   ToolContext,
   ToolRenderProps,
   ToolSet,
+  ToolInputSchema,
+  AIResponseMode,
+  ToolResultConfig,
 } from "../../core";
+import { zodToJsonSchema } from "../../core";
 import { useCopilot } from "../provider/CopilotProvider";
 
 /**
- * Configuration for registering a tool (legacy format)
+ * Check if value is a Zod schema
+ */
+function isZodSchema(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    ("_def" in obj && typeof obj._def === "object") ||
+    ("_zod" in obj && typeof obj._zod === "object") ||
+    "~standard" in obj
+  );
+}
+
+/**
+ * Configuration for registering a tool
  */
 export interface UseToolConfig<TParams = Record<string, unknown>> {
   /** Unique tool name */
   name: string;
   /** Tool description for LLM */
   description: string;
-  /** JSON Schema for input parameters */
-  inputSchema: {
-    type: "object";
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
+  /**
+   * Input schema - accepts either:
+   * - Zod schema: z.object({ name: z.string() })
+   * - JSON Schema: { type: "object", properties: { name: { type: "string" } } }
+   *
+   * Zod schemas are automatically converted to JSON Schema at runtime.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  inputSchema: any;
   /** Handler function */
   handler: (
     params: TParams,
@@ -35,6 +55,8 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
   available?: boolean;
   /** Require user approval */
   needsApproval?: boolean;
+  /** Custom approval title shown in the approval UI */
+  approvalTitle?: string | ((params: TParams) => string);
   /** Custom approval message (can be string or function that receives params) */
   approvalMessage?: string | ((params: TParams) => string);
   /**
@@ -43,6 +65,30 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
    * @default false
    */
   hidden?: boolean;
+  /** Deferred tools stay out of the default request payload; discovered only when query matches */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool-selection scoring */
+  searchKeywords?: string[];
+  /** Optional group for profile-based selection */
+  group?: string;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
+  /** Human-readable title for UI display */
+  title?: string | ((args: TParams) => string);
+  /** Title shown while executing */
+  executingTitle?: string | ((args: TParams) => string);
+  /** Title shown after completion */
+  completedTitle?: string | ((args: TParams) => string);
+  /** How the AI should respond when this tool's result is rendered as UI */
+  aiResponseMode?: AIResponseMode;
+  /** Context/summary sent to AI instead of full result */
+  aiContext?:
+    | string
+    | ((result: ToolResponse, args: Record<string, unknown>) => string);
 }
 
 /**
@@ -51,22 +97,37 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
  * This hook registers a tool that can be called by the AI during a conversation.
  * The tool will execute on the client side.
  *
+ * Supports both Zod schemas and JSON schemas for inputSchema.
+ *
  * @example
  * ```tsx
+ * // Using Zod schema (recommended)
+ * import { z } from "zod";
+ *
  * useTool({
  *   name: "navigate_to_page",
  *   description: "Navigate to a specific page in the app",
- *   inputSchema: {
- *     type: "object",
- *     properties: {
- *       path: { type: "string", description: "The path to navigate to" },
- *     },
- *     required: ["path"],
- *   },
+ *   inputSchema: z.object({
+ *     path: z.string().describe("The path to navigate to"),
+ *   }),
  *   handler: async ({ path }) => {
  *     router.push(path);
  *     return { success: true, message: `Navigated to ${path}` };
  *   },
+ * });
+ *
+ * // Using JSON Schema
+ * useTool({
+ *   name: "open_modal",
+ *   description: "Open a modal dialog",
+ *   inputSchema: {
+ *     type: "object",
+ *     properties: {
+ *       modalId: { type: "string" },
+ *     },
+ *     required: ["modalId"],
+ *   },
+ *   handler: async ({ modalId }) => { ... },
  * });
  * ```
  */
@@ -80,22 +141,42 @@ export function useTool<TParams = Record<string, unknown>>(
   // Update ref when config changes
   configRef.current = config;
 
+  // Convert Zod schema to JSON Schema if needed (memoized)
+  const inputSchema = useMemo(() => {
+    if (isZodSchema(config.inputSchema)) {
+      return zodToJsonSchema(config.inputSchema);
+    }
+    return config.inputSchema as ToolInputSchema;
+  }, [config.inputSchema]);
+
   useEffect(() => {
     // Create tool definition
     const tool: ToolDefinition = {
       name: config.name,
       description: config.description,
       location: "client",
-      inputSchema: config.inputSchema as ToolDefinition["inputSchema"],
+      inputSchema,
       handler: async (params, context) => {
         return configRef.current.handler(params as TParams, context);
       },
       render: config.render as ToolDefinition["render"],
       available: config.available ?? true,
       needsApproval: config.needsApproval,
+      approvalTitle: config.approvalTitle as ToolDefinition["approvalTitle"],
       approvalMessage:
         config.approvalMessage as ToolDefinition["approvalMessage"],
       hidden: config.hidden,
+      deferLoading: config.deferLoading,
+      profiles: config.profiles,
+      searchKeywords: config.searchKeywords,
+      group: config.group,
+      category: config.category,
+      resultConfig: config.resultConfig,
+      title: config.title as ToolDefinition["title"],
+      executingTitle: config.executingTitle as ToolDefinition["executingTitle"],
+      completedTitle: config.completedTitle as ToolDefinition["completedTitle"],
+      aiResponseMode: config.aiResponseMode,
+      aiContext: config.aiContext as ToolDefinition["aiContext"],
     };
 
     // Register tool
@@ -106,7 +187,7 @@ export function useTool<TParams = Record<string, unknown>>(
       unregisterTool(config.name);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.name, ...dependencies]);
+  }, [config.name, inputSchema, ...dependencies]);
 }
 
 /**
@@ -219,11 +300,16 @@ export function useToolsArray<TParams = Record<string, unknown>>(
     const toolNames: string[] = [];
 
     for (const config of tools) {
+      // Convert Zod schema if needed
+      const inputSchema = isZodSchema(config.inputSchema)
+        ? zodToJsonSchema(config.inputSchema)
+        : (config.inputSchema as ToolInputSchema);
+
       const tool: ToolDefinition = {
         name: config.name,
         description: config.description,
         location: "client",
-        inputSchema: config.inputSchema as ToolDefinition["inputSchema"],
+        inputSchema,
         handler: async (params, context) => {
           const currentConfig = toolsRef.current.find(
             (t) => t.name === config.name,
@@ -235,6 +321,7 @@ export function useToolsArray<TParams = Record<string, unknown>>(
         },
         available: config.available ?? true,
         needsApproval: config.needsApproval,
+        approvalTitle: config.approvalTitle as ToolDefinition["approvalTitle"],
         approvalMessage:
           config.approvalMessage as ToolDefinition["approvalMessage"],
       };

@@ -369,6 +369,31 @@ function formatMessagesForAnthropic(messages: CoreMessage[]): {
   const formatted: any[] = [];
   const pendingToolResults: any[] = [];
 
+  // Helper to flush pending tool results with validation
+  const flushToolResults = () => {
+    if (pendingToolResults.length === 0) return;
+
+    const validResults = pendingToolResults.filter((tr) => {
+      if (!tr.toolCallId) {
+        console.warn("[llm-sdk] Skipping tool result with missing toolCallId");
+        return false;
+      }
+      return true;
+    });
+
+    if (validResults.length > 0) {
+      formatted.push({
+        role: "user",
+        content: validResults.map((tr) => ({
+          type: "tool_result",
+          tool_use_id: tr.toolCallId,
+          content: tr.content,
+        })),
+      });
+    }
+    pendingToolResults.length = 0;
+  };
+
   for (const msg of messages) {
     if (msg.role === "system") {
       system += (system ? "\n" : "") + msg.content;
@@ -377,30 +402,12 @@ function formatMessagesForAnthropic(messages: CoreMessage[]): {
 
     // Flush pending tool results before adding assistant messages
     if (msg.role === "assistant" && pendingToolResults.length > 0) {
-      formatted.push({
-        role: "user",
-        content: pendingToolResults.map((tr) => ({
-          type: "tool_result",
-          tool_use_id: tr.toolCallId,
-          content: tr.content,
-        })),
-      });
-      pendingToolResults.length = 0;
+      flushToolResults();
     }
 
     if (msg.role === "user") {
       // Flush pending tool results first
-      if (pendingToolResults.length > 0) {
-        formatted.push({
-          role: "user",
-          content: pendingToolResults.map((tr) => ({
-            type: "tool_result",
-            tool_use_id: tr.toolCallId,
-            content: tr.content,
-          })),
-        });
-        pendingToolResults.length = 0;
-      }
+      flushToolResults();
 
       if (typeof msg.content === "string") {
         formatted.push({ role: "user", content: msg.content });
@@ -460,24 +467,27 @@ function formatMessagesForAnthropic(messages: CoreMessage[]): {
         formatted.push({ role: "assistant", content });
       }
     } else if (msg.role === "tool") {
+      // Handle both camelCase (SDK format) and snake_case (OpenAI format)
+      const toolCallId =
+        msg.toolCallId ?? (msg as any).tool_call_id ?? (msg as any).toolUseId;
+
+      if (!toolCallId) {
+        console.warn(
+          "[llm-sdk] Tool message missing toolCallId, skipping:",
+          msg,
+        );
+        continue;
+      }
+
       pendingToolResults.push({
-        toolCallId: msg.toolCallId,
+        toolCallId,
         content: msg.content,
       });
     }
   }
 
   // Flush any remaining tool results
-  if (pendingToolResults.length > 0) {
-    formatted.push({
-      role: "user",
-      content: pendingToolResults.map((tr) => ({
-        type: "tool_result",
-        tool_use_id: tr.toolCallId,
-        content: tr.content,
-      })),
-    });
-  }
+  flushToolResults();
 
   return { system, messages: formatted };
 }

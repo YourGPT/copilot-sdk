@@ -30,7 +30,13 @@ export function transformTools(tools: ToolDefinition[]): OpenAITool[] {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.inputSchema,
+      parameters: tool.inputSchema
+        ? {
+            type: "object",
+            properties: tool.inputSchema.properties ?? {},
+            required: tool.inputSchema.required,
+          }
+        : { type: "object", properties: {} },
     },
   }));
 }

@@ -1,4 +1,21 @@
 export { Chat, useCopilotChatContext } from "./chat";
+export { MessageList } from "./message-list";
+export type { MessageListProps } from "./message-list";
+export {
+  MessageActions,
+  CopyAction,
+  EditAction,
+  FeedbackAction,
+  Action as MessageActionItem,
+} from "./message-actions-compound";
+export type {
+  MessageActionsProps,
+  CopyActionProps,
+  EditActionProps,
+  FeedbackActionProps,
+  ActionProps,
+} from "./message-actions-compound";
+export type { RegisteredAction } from "./message-actions-context";
 export type {
   HomeViewProps,
   HomeProps,

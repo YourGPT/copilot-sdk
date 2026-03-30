@@ -26,6 +26,11 @@ export interface ThreadData extends Thread {
   messages: Message[];
   /** Sources from knowledge base for this thread */
   sources: Source[];
+  /**
+   * ID of the active leaf message (tip of the active branch path).
+   * Saved so the correct branch is restored after a page reload.
+   */
+  activeLeafId?: string;
 }
 
 /**

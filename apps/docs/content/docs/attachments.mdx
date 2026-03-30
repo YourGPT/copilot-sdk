@@ -1,7 +1,7 @@
 ---
-title: Multimodal
-description: Send images, files, and documents with messages
-icon: Image
+title: Attachments
+description: Send images, PDFs, and files alongside chat messages
+icon: Paperclip
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -103,19 +103,93 @@ interface MessageAttachment {
 | `attachmentsEnabled` | `boolean` | `false` | Enable attachment button |
 | `maxFileSize` | `number` | `5MB` | Maximum file size in bytes |
 | `allowedFileTypes` | `string[]` | All | Allowed MIME types or extensions |
-| `processAttachment` | `function` | - | Custom upload handler |
+| `upload` | `string \| object \| function` | - | Upload handler (see below) |
 
 ---
 
-## Custom Upload Handler
+## The `upload` Prop
 
-Upload to your own storage:
+One prop, three modes — from simple to full control:
+
+```tsx
+// 1. URL string — server handles the upload
+<CopilotChat upload="/api/copilot/upload" />
+
+// 2. Object — URL + custom headers/body
+<CopilotChat upload={{
+  url: "/api/copilot/upload",
+  headers: () => ({ Authorization: `Bearer ${token}` }),
+  body: { projectId: "abc" },
+}} />
+
+// 3. Function — full custom logic
+<CopilotChat upload={async (file) => {
+  const url = await myS3Upload(file);
+  return { type: 'image', url, mimeType: file.type, filename: file.name };
+}} />
+```
+
+Without `upload`, files are embedded as base64 in the message body (works but heavier payload).
+
+---
+
+## Server Upload (Recommended)
+
+Point `upload` to your server endpoint. Files are uploaded there, and the returned URL is sent with the message.
 
 ```tsx
 <CopilotChat
   attachmentsEnabled={true}
-  processAttachment={async (file: File) => {
-    // Upload to S3, Cloudinary, etc.
+  upload="/api/copilot/upload"
+/>
+```
+
+### With YourGPT
+
+If your server uses the YourGPT adapter, the upload endpoint uses the same credentials:
+
+```ts title="server.ts"
+import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt';
+
+const yourgpt = createYourGPT({ apiKey, widgetUid });
+
+app.post('/api/copilot/upload', async (req, res) => {
+  const result = await yourgpt.uploadFile(req.body);
+  res.json(result);
+});
+```
+
+### With Custom Storage
+
+```ts title="server.ts"
+app.post('/api/copilot/upload', async (req, res) => {
+  const { data, mimeType, filename } = req.body;
+  const url = await myStorage.upload(Buffer.from(data, 'base64'), mimeType);
+  res.json({ url });
+});
+```
+
+### With Auth Headers
+
+```tsx
+<CopilotChat
+  upload={{
+    url: "/api/copilot/upload",
+    headers: () => ({ Authorization: `Bearer ${getToken()}` }),
+  }}
+/>
+```
+
+---
+
+## Custom Upload Function
+
+For complete control — handle the file however you want:
+
+```tsx
+<CopilotChat
+  attachmentsEnabled={true}
+  upload={async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -123,12 +197,11 @@ Upload to your own storage:
       method: 'POST',
       body: formData,
     });
-
     const { url } = await response.json();
 
     return {
       type: 'image',
-      url,  // Cloud URL instead of base64
+      url,
       mimeType: file.type,
       filename: file.name,
     };
@@ -137,7 +210,7 @@ Upload to your own storage:
 ```
 
 <Callout type="info">
-Cloud storage is recommended for production. Base64 embedding works but increases message size.
+Cloud storage is recommended for production. Base64 embedding works but increases message size significantly.
 </Callout>
 
 ---

@@ -1,0 +1,130 @@
+---
+title: Skills
+description: Instruction playbooks that shape the AI's behavior — loaded on demand
+icon: BookOpen
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Beta** — This feature is in **alpha**. APIs may change before stable release.
+</Callout>
+
+Skills are instruction playbooks the AI loads on demand. They shape the model's **behavior** — separate from [Tools](/docs/tools), which perform actions.
+
+A skill is a Markdown file (or inline string) containing instructions. The AI only loads a skill when it's relevant to the user's query — keeping the system prompt lean.
+
+---
+
+## Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `eager` | Content prepended to system prompt on every request. Always active. |
+| `auto` | Listed in the skill catalog. AI calls `load_skill` to retrieve when relevant. |
+| `manual` | Accessible via `load_skill` but not advertised in the catalog. For internal/conditional skills. |
+
+The `load_skill` tool is automatically registered when a `<SkillProvider>` is present (client) or when `loadSkills()` builds the tools object (server). **No manual wiring required.**
+
+---
+
+## Skills vs Tools
+
+| | Skills | Tools |
+|--|--------|-------|
+| **Purpose** | Shape behavior | Perform actions |
+| **Payload** | Markdown instructions | Code that runs |
+| **Loading** | Into system prompt | Into tool list |
+| **Example** | "Always respond in formal English" | `get_weather({ city })` |
+
+---
+
+## Quick Example
+
+```tsx
+import { SkillProvider, defineSkill } from "@yourgpt/copilot-sdk/react";
+
+const brandVoice = defineSkill({
+  name: "brand-voice",
+  description: "Ensures responses match our brand tone",
+  strategy: "eager",  // always active
+  source: {
+    type: "inline",
+    content: "Always respond in a friendly, concise tone. Use 'we' not 'I'.",
+  },
+});
+
+const sqlExpert = defineSkill({
+  name: "sql-expert",
+  description: "Writes and explains SQL queries",
+  strategy: "auto",   // AI loads when the user asks about SQL
+  source: {
+    type: "inline",
+    content: "When writing SQL: always use parameterized queries...",
+  },
+});
+
+export default function App() {
+  return (
+    <CopilotProvider widgetToken="...">
+      <SkillProvider skills={[brandVoice, sqlExpert]}>
+        <YourApp />
+      </SkillProvider>
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Skill File Format
+
+Skill files are Markdown with optional YAML frontmatter:
+
+```markdown
+---
+name: code-review
+description: Performs structured code reviews with actionable feedback
+strategy: auto
+version: 1.2.0
+---
+
+## Code Review Instructions
+
+When asked to review code, follow this structure:
+
+1. **Correctness** — Check for logic errors and edge cases
+2. **Security** — Flag injection risks, exposed secrets, insecure defaults
+3. **Performance** — Note O(n²) loops, unnecessary re-renders, missing indexes
+4. **Style** — Suggest naming and structure improvements (non-blocking)
+```
+
+### Frontmatter fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Recommended | Skill name. Derived from filename if omitted. |
+| `description` | Recommended | One-line description shown in the AI's skill catalog. |
+| `strategy` | No | `eager`, `auto`, or `manual`. Default: `auto`. |
+| `version` | No | Informational version string. |
+
+---
+
+## Directory Layout
+
+```
+skills/
+├── brand-voice.md       # Flat .md file
+├── code-review.md
+└── sql-expert/
+    └── SKILL.md         # Folder-based skill
+```
+
+For folder-based skills, place the main content at `<folder>/SKILL.md`. The folder name is used as the skill name unless overridden by frontmatter.
+
+---
+
+## Next Steps
+
+- [Client-side Skills](/docs/skills/client) — `SkillProvider`, `useSkill`, `useSkillStatus`
+- [Server-side Skills](/docs/skills/server) — `loadSkills()`, file/URL sources, collision detection

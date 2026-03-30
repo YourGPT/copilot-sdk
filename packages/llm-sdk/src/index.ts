@@ -77,6 +77,10 @@ export type {
   TokenUsage,
   FinishReason,
   ResponseOptions,
+  // Storage
+  StorageAdapter,
+  StorageMessage,
+  StorageFile,
 } from "./core/types";
 
 export { DEFAULT_CAPABILITIES } from "./core/types";
@@ -89,10 +93,15 @@ export { DEFAULT_CAPABILITIES } from "./core/types";
 export {
   Runtime,
   createRuntime,
+  selectTools,
+  searchTools,
+  shouldExposeToolSearch,
+  buildProviderToolOptions,
   type RuntimeConfig,
   type ChatRequest,
   type ActionRequest,
   type RequestContext,
+  type ToolSearchMatch,
 } from "./server";
 
 // StreamResult (Industry Standard Pattern)
@@ -102,6 +111,9 @@ export {
   type StreamResultOptions,
   type CollectedResult,
 } from "./server";
+
+// Storage helpers
+export { extractInputMessages, mapOutputMessages } from "./server";
 
 // GenerateResult (Non-streaming)
 export {
@@ -185,7 +197,13 @@ export type {
   UnifiedToolCall,
   UnifiedToolResult,
   ToolExecution,
-  AgentLoopConfig,
+  ToolProfile,
+  OpenAIToolSelectionHints,
+  AnthropicToolSelectionHints,
+  ToolNativeProviderHints,
+  OpenAIProviderToolOptions,
+  AnthropicProviderToolOptions,
+  ProviderToolRuntimeOptions,
   DoneEventMessage,
   ToolCallInfo,
   TokenUsageRaw,
@@ -200,3 +218,17 @@ export {
   generateToolCallId,
   generateThreadId,
 } from "./core/utils";
+
+// ============================================
+// Fallback Chain & Routing (types only from root)
+// ============================================
+// Full implementation: import from '@yourgpt/llm-sdk/fallback'
+export type {
+  RoutingStore,
+  RoutingStrategy,
+  RetryBackoff,
+  FallbackChainConfig,
+  FallbackFailure,
+  FallbackInfo,
+  RetryInfo,
+} from "./fallback/types";

@@ -214,7 +214,7 @@ export function ModelSelector({
       {isOpen && (
         <div
           className={cn(
-            "absolute z-50 top-full left-0 right-0 mt-1",
+            "csdk-model-dropdown absolute z-50 top-full left-0 right-0 mt-1",
             "max-h-[300px] overflow-auto",
             "rounded-md border bg-popover text-popover-foreground shadow-md",
             "animate-in fade-in-0 zoom-in-95",

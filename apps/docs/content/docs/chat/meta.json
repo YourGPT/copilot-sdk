@@ -1,0 +1,5 @@
+{
+  "title": "Chat",
+  "icon": "MessageSquare",
+  "pages": ["index", "branching", "message-actions"]
+}

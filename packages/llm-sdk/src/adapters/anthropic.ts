@@ -3,6 +3,7 @@ import type {
   StreamEvent,
   WebSearchConfig,
   Citation,
+  ToolDefinition,
 } from "../core/stream-events";
 import { generateMessageId } from "../core/utils";
 import type {
@@ -13,6 +14,7 @@ import type {
 import {
   formatMessagesForAnthropic,
   messageToAnthropicContent,
+  logProviderPayload,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -90,6 +92,10 @@ export class AnthropicAdapter implements LLMAdapter {
     const pendingToolResults: Array<{ tool_use_id: string; content: string }> =
       [];
 
+    // Track tool_use ids from assistant messages for inference
+    let lastToolCallIds: string[] = [];
+    let toolResultIndex = 0;
+
     for (const msg of rawMessages) {
       // Skip system messages (handled separately)
       if (msg.role === "system") continue;
@@ -110,6 +116,10 @@ export class AnthropicAdapter implements LLMAdapter {
             })),
           });
           pendingToolResults.length = 0;
+          // Clear tracking - tool results have been flushed, any subsequent
+          // tool results without a new tool_use are orphaned
+          lastToolCallIds = [];
+          toolResultIndex = 0;
         }
 
         // Convert assistant message with potential tool_calls
@@ -134,6 +144,10 @@ export class AnthropicAdapter implements LLMAdapter {
           | undefined;
 
         if (toolCalls && toolCalls.length > 0) {
+          // Track tool call IDs for inferring missing tool_call_id in tool messages
+          lastToolCallIds = toolCalls.map((tc) => tc.id);
+          toolResultIndex = 0;
+
           for (const tc of toolCalls) {
             let input = {};
             try {
@@ -156,8 +170,44 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       } else if (msg.role === "tool") {
         // Collect tool results to be bundled into a user message
+        let toolCallId = msg.tool_call_id as string | undefined;
+
+        // If tool_call_id is missing, try to infer from preceding assistant's tool_calls
+        if (!toolCallId && lastToolCallIds.length > 0) {
+          toolCallId = lastToolCallIds[toolResultIndex];
+          toolResultIndex++;
+          console.warn(
+            `[llm-sdk] Tool message missing tool_call_id, inferred: ${toolCallId}`,
+          );
+        }
+
+        if (!toolCallId) {
+          console.warn(
+            "[llm-sdk] Skipping tool message with missing tool_call_id (no inference possible):",
+            msg,
+          );
+          continue;
+        }
+
+        // Skip orphaned tool results (no pending tool_use to match)
+        // This happens when there's a duplicate/stale tool result in the conversation
+        if (lastToolCallIds.length === 0) {
+          console.warn(
+            `[llm-sdk] Skipping orphaned tool result (no pending tool_use): ${toolCallId}`,
+          );
+          continue;
+        }
+
+        // Skip if this tool_call_id is not in the expected list
+        if (!lastToolCallIds.includes(toolCallId)) {
+          console.warn(
+            `[llm-sdk] Skipping tool result with unexpected tool_call_id: ${toolCallId}`,
+          );
+          continue;
+        }
+
         pendingToolResults.push({
-          tool_use_id: msg.tool_call_id as string,
+          tool_use_id: toolCallId,
           content:
             typeof msg.content === "string"
               ? msg.content
@@ -289,6 +339,37 @@ export class AnthropicAdapter implements LLMAdapter {
     return messages;
   }
 
+  private buildNativeSearchTools(
+    tools: ToolDefinition[],
+    variant: "bm25" | "regex" = "bm25",
+  ): Array<Record<string, unknown>> {
+    const nativeSearchTool =
+      variant === "regex"
+        ? {
+            type: "tool_search_tool_regex_20251119",
+            name: "tool_search_tool_regex",
+          }
+        : {
+            type: "tool_search_tool_bm25_20251119",
+            name: "tool_search_tool_bm25",
+          };
+
+    const providerTools = tools
+      .filter((tool) => tool.available !== false)
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.inputSchema ?? {
+          type: "object" as const,
+          properties: {},
+          required: [],
+        },
+        defer_loading: tool.deferLoading === true,
+      }));
+
+    return [nativeSearchTool, ...providerTools];
+  }
+
   /**
    * Build common request options for both streaming and non-streaming
    */
@@ -310,32 +391,38 @@ export class AnthropicAdapter implements LLMAdapter {
       messages = formatted.messages as Array<Record<string, unknown>>;
     }
 
-    // Convert actions to Anthropic tool format
-    const tools: Array<Record<string, unknown>> =
-      request.actions?.map((action) => ({
-        name: action.name,
-        description: action.description,
-        input_schema: {
-          type: "object" as const,
-          properties: action.parameters
-            ? Object.fromEntries(
-                Object.entries(action.parameters).map(([key, param]) => [
-                  key,
-                  {
-                    type: param.type,
-                    description: param.description,
-                    enum: param.enum,
-                  },
-                ]),
-              )
-            : {},
-          required: action.parameters
-            ? Object.entries(action.parameters)
-                .filter(([, param]) => param.required)
-                .map(([key]) => key)
-            : [],
-        },
-      })) || [];
+    const anthropicNativeSearch =
+      request.providerToolOptions?.anthropic?.nativeToolSearch;
+
+    const tools: Array<Record<string, unknown>> = anthropicNativeSearch?.enabled
+      ? this.buildNativeSearchTools(
+          request.toolDefinitions ?? [],
+          anthropicNativeSearch.variant,
+        )
+      : request.actions?.map((action) => ({
+          name: action.name,
+          description: action.description,
+          input_schema: {
+            type: "object" as const,
+            properties: action.parameters
+              ? Object.fromEntries(
+                  Object.entries(action.parameters).map(([key, param]) => [
+                    key,
+                    {
+                      type: param.type,
+                      description: param.description,
+                      enum: param.enum,
+                    },
+                  ]),
+                )
+              : {},
+            required: action.parameters
+              ? Object.entries(action.parameters)
+                  .filter(([, param]) => param.required)
+                  .map(([key]) => key)
+              : [],
+          },
+        })) || [];
 
     // Check for web search configuration (from request or adapter config)
     const webSearchConfig = request.webSearch ?? this.config.webSearch;
@@ -388,6 +475,31 @@ export class AnthropicAdapter implements LLMAdapter {
       tools: tools.length ? tools : undefined,
     };
 
+    const anthropicToolOptions = request.providerToolOptions?.anthropic;
+    if (tools.length > 0 && anthropicToolOptions) {
+      if (
+        anthropicToolOptions.toolChoice ||
+        anthropicToolOptions.disableParallelToolUse !== undefined
+      ) {
+        const toolChoice: Record<string, unknown> =
+          typeof anthropicToolOptions.toolChoice === "object"
+            ? {
+                type: "tool",
+                name: anthropicToolOptions.toolChoice.name,
+              }
+            : anthropicToolOptions.toolChoice
+              ? { type: anthropicToolOptions.toolChoice }
+              : { type: "auto" };
+
+        if (anthropicToolOptions.disableParallelToolUse !== undefined) {
+          toolChoice.disable_parallel_tool_use =
+            anthropicToolOptions.disableParallelToolUse;
+        }
+
+        options.tool_choice = toolChoice;
+      }
+    }
+
     // Add server tool configuration for web search
     if (serverToolConfiguration) {
       options.server_tool_configuration = serverToolConfiguration;
@@ -418,7 +530,19 @@ export class AnthropicAdapter implements LLMAdapter {
     } as Record<string, unknown> & { stream: false };
 
     try {
+      logProviderPayload(
+        "anthropic",
+        "request payload",
+        nonStreamingOptions,
+        request.debug,
+      );
       const response = await client.messages.create(nonStreamingOptions);
+      logProviderPayload(
+        "anthropic",
+        "response payload",
+        response,
+        request.debug,
+      );
 
       // Parse response
       let content = "";
@@ -464,6 +588,12 @@ export class AnthropicAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
+      logProviderPayload(
+        "anthropic",
+        "request payload",
+        options,
+        request.debug,
+      );
       const stream = await client.messages.stream(options);
 
       let currentToolUse: {
@@ -488,6 +618,7 @@ export class AnthropicAdapter implements LLMAdapter {
         | undefined;
 
       for await (const event of stream) {
+        logProviderPayload("anthropic", "stream event", event, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;

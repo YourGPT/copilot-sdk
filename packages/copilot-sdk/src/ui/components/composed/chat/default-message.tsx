@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import * as ReactDOM from "react-dom";
 import { cn } from "../../../lib/utils";
 import { Message, MessageAvatar, MessageContent } from "../../ui/message";
 import { SimpleReasoning } from "../../ui/reasoning";
@@ -22,14 +23,95 @@ import type {
 import type { ToolDefinition, ToolRenderProps } from "../../../../core";
 import CopilotSDKLogo from "../../icons/copilot-sdk-logo";
 import { SourceGroup, type SourceItem } from "../../ui/source";
+import { BranchNavigator } from "../../ui/branch-navigator";
+import type { BranchInfo } from "../../../../chat/branching";
+import { useMessageActionsContext } from "./message-actions-context";
+import { CheckIcon, CopyIcon } from "./message-actions-compound";
+
+// ─── FloatingActions ──────────────────────────────────────────────────────────
+
+function FloatingActions({
+  message,
+  role,
+  align = "left",
+  onEdit,
+}: {
+  message: ChatMessage;
+  role: "user" | "assistant";
+  align?: "left" | "right";
+  onEdit?: () => void;
+}) {
+  const ctx = useMessageActionsContext();
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+
+  if (!ctx) return null;
+  const actions = ctx.getActions(role);
+  if (actions.length === 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-0.5 mt-1",
+        "opacity-0 group-hover/message:opacity-100 transition-opacity duration-150",
+        align === "right" ? "justify-end" : "justify-start",
+      )}
+    >
+      {actions.map((action) => {
+        const isHidden =
+          typeof action.hidden === "function"
+            ? action.hidden({ message })
+            : action.hidden;
+        if (isHidden) return null;
+
+        const isCopied = copiedId === action.id;
+
+        return (
+          <button
+            key={action.id}
+            type="button"
+            title={action.tooltip}
+            aria-label={action.tooltip}
+            className={cn(
+              "flex items-center justify-center size-6 rounded-md",
+              "text-muted-foreground hover:text-foreground hover:bg-muted",
+              "transition-colors",
+              action.className,
+            )}
+            onClick={() => {
+              if (action.id === "edit" && onEdit) {
+                onEdit();
+                return;
+              }
+              if (action.id === "copy") {
+                navigator.clipboard.writeText(message.content ?? "");
+                setCopiedId("copy");
+                setTimeout(() => setCopiedId(null), 1500);
+                return;
+              }
+              action.onClick({ message });
+            }}
+          >
+            {action.id === "copy" && isCopied ? <CheckIcon /> : action.icon}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 type DefaultMessageProps = {
   message: ChatMessage;
-  userAvatar: { src?: string; fallback?: string; component?: React.ReactNode };
+  userAvatar: {
+    src?: string;
+    fallback?: string;
+    component?: React.ReactNode;
+    className?: string;
+  };
   assistantAvatar: {
     src?: string;
     fallback?: string;
     component?: React.ReactNode;
+    className?: string;
   };
   showUserAvatar?: boolean;
   userMessageClassName?: string;
@@ -53,10 +135,12 @@ type DefaultMessageProps = {
     | "loading-dots";
   /** Registered tools (for accessing tool's render function) */
   registeredTools?: ToolDefinition[];
-  /** Custom renderers for tool results (Generative UI) - higher priority than tool.render */
+  /** Custom renderers for tool results (Generative UI) - fallback when tool has no render prop */
   toolRenderers?: ToolRenderers;
   /** Catch-all renderer for MCP tools (tools with source: "mcp") */
   mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
+  /** Catch-all renderer for any tool not matched by toolRenderers */
+  fallbackToolRenderer?: React.ComponentType<ToolRendererProps>;
   /** Called when user approves a tool execution */
   onApproveToolExecution?: (
     executionId: string,
@@ -79,6 +163,26 @@ type DefaultMessageProps = {
   followUpButtonClassName?: string;
   /** Citation/Sources configuration */
   citations?: CitationConfig;
+
+  // ============================================
+  // Branching
+  // ============================================
+
+  /**
+   * Branch navigation info for this message.
+   * When non-null and totalSiblings > 1, the BranchNavigator is shown.
+   */
+  branchInfo?: BranchInfo | null;
+  /**
+   * Called when the user navigates to a sibling branch.
+   * Receives the message ID to switch to.
+   */
+  onSwitchBranch?: (messageId: string) => void;
+  /**
+   * Called when the user submits an edited message.
+   * Triggers a new branch from the same parent as messageId.
+   */
+  onEditMessage?: (messageId: string, newContent: string) => void;
 };
 
 export function DefaultMessage({
@@ -96,6 +200,7 @@ export function DefaultMessage({
   registeredTools,
   toolRenderers,
   mcpToolRenderer,
+  fallbackToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   showFollowUps = true,
@@ -103,9 +208,86 @@ export function DefaultMessage({
   followUpClassName,
   followUpButtonClassName,
   citations = { enabled: true },
+  branchInfo,
+  onSwitchBranch,
+  onEditMessage,
 }: DefaultMessageProps) {
   const isUser = message.role === "user";
+  const isCompactionMarker =
+    message.role === "system" &&
+    (message.metadata as Record<string, unknown>)?.type === "compaction-marker";
   const isStreaming = isLastMessage && isLoading;
+
+  // Inline-edit state (user messages only)
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editValue, setEditValue] = React.useState(message.content ?? "");
+  const editRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const startEdit = React.useCallback(() => {
+    setEditValue(message.content ?? "");
+    setIsEditing(true);
+    // Focus textarea on next frame
+    requestAnimationFrame(() => editRef.current?.focus());
+  }, [message.content]);
+
+  const cancelEdit = React.useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
+  const submitEdit = React.useCallback(() => {
+    const trimmed = editValue.trim();
+    if (!trimmed || !onEditMessage) return;
+    onEditMessage(message.id, trimmed);
+    setIsEditing(false);
+  }, [editValue, message.id, onEditMessage]);
+
+  const handleEditKeyDown = React.useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitEdit();
+      }
+      if (e.key === "Escape") {
+        cancelEdit();
+      }
+    },
+    [submitEdit, cancelEdit],
+  );
+
+  // Whether branching UI should be shown for this message
+  const showBranchNav =
+    isUser && branchInfo && branchInfo.totalSiblings > 1 && onSwitchBranch;
+  const showEditBtn = isUser && !!onEditMessage && !isLoading;
+
+  // Render compaction marker divider
+  if (isCompactionMarker) {
+    const tokensSaved = (message.metadata as Record<string, unknown>)
+      ?.tokensSaved as number | undefined;
+    return (
+      <div className="flex items-center gap-3 py-2 px-1 my-1">
+        <div className="flex-1 h-px bg-border" />
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap flex items-center gap-1.5">
+          <svg
+            className="size-3 opacity-60"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19 9l-7 7-7-7"
+            />
+          </svg>
+          {tokensSaved
+            ? `Earlier conversation summarized · ~${tokensSaved.toLocaleString()} tokens saved`
+            : "Earlier conversation summarized"}
+        </span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+    );
+  }
 
   // Parse follow-up questions from assistant messages
   const { cleanContent: contentWithoutFollowUps, followUps } =
@@ -235,31 +417,134 @@ export function DefaultMessage({
     return (
       <Message
         className={cn(
-          "flex gap-2",
-          showUserAvatar ? "justify-end" : "justify-end",
+          "csdk-message csdk-user-message flex gap-2 group/user-msg group/message justify-end",
         )}
       >
         <div className="flex flex-col items-end max-w-[80%] min-w-0">
-          {/* Text content */}
-          {message.content && (
-            <MessageContent
-              className={cn(
-                "csdk-message-user rounded-lg px-4 py-2 bg-primary text-primary-foreground",
-                userMessageClassName,
-              )}
-              markdown
-              size={size}
-            >
-              {message.content}
-            </MessageContent>
-          )}
-          {/* Image Attachments */}
-          {hasAttachments && (
-            <div className="mt-2 flex flex-wrap gap-2 justify-end">
-              {message.attachments!.map((attachment, index) => (
-                <AttachmentPreview key={index} attachment={attachment} />
-              ))}
+          {/* Edit mode: inline textarea */}
+          {isEditing ? (
+            <div className="flex flex-col gap-1.5 w-full min-w-[200px]">
+              <textarea
+                ref={editRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                rows={Math.max(2, (editValue.match(/\n/g) || []).length + 1)}
+                className={cn(
+                  "csdk-edit-textarea w-full rounded-lg px-3 py-2 text-sm resize-none",
+                  "bg-primary text-primary-foreground placeholder:text-primary-foreground/50",
+                  "focus:outline-none focus:ring-2 focus:ring-primary-foreground/30",
+                  userMessageClassName,
+                )}
+              />
+              <div className="flex gap-1.5 justify-end">
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="csdk-edit-cancel px-3 py-1 text-xs rounded-md bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitEdit}
+                  disabled={!editValue.trim()}
+                  className="csdk-edit-submit px-3 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  Send
+                </button>
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="relative">
+                <div
+                  className={cn(
+                    "csdk-message-user rounded-2xl overflow-hidden bg-primary text-primary-foreground",
+                    hasAttachments && "p-[3px]",
+                    hasAttachments && !message.content && "max-w-[260px]",
+                    hasAttachments && message.content && "max-w-[280px]",
+                    !hasAttachments && "",
+                    userMessageClassName,
+                  )}
+                >
+                  {/* Media (images + files) */}
+                  {hasAttachments && (
+                    <MessageMedia
+                      attachments={message.attachments!}
+                      hasText={!!message.content}
+                      align="end"
+                    />
+                  )}
+                  {/* Text — px-4 py-2 passed to MessageContent, tailwind-merge overrides its internal p-2 */}
+                  {message.content && (
+                    <MessageContent
+                      className={cn("px-4 py-2")}
+                      markdown
+                      size={size}
+                    >
+                      {message.content}
+                    </MessageContent>
+                  )}
+                </div>
+                {/* Edit button — hover reveal */}
+                {showEditBtn && (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    aria-label="Edit message"
+                    className={cn(
+                      "csdk-edit-btn absolute -left-7 top-1/2 -translate-y-1/2",
+                      "size-6 flex items-center justify-center rounded-full",
+                      "text-muted-foreground bg-background border border-border shadow-sm",
+                      "opacity-0 group-hover/user-msg:opacity-100 transition-opacity",
+                      "hover:text-foreground hover:bg-muted cursor-pointer",
+                    )}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              {/* Branch Navigator */}
+              {showBranchNav && (
+                <BranchNavigator
+                  siblingIndex={branchInfo!.siblingIndex}
+                  totalSiblings={branchInfo!.totalSiblings}
+                  hasPrevious={branchInfo!.hasPrevious}
+                  hasNext={branchInfo!.hasNext}
+                  onPrevious={() =>
+                    onSwitchBranch!(
+                      branchInfo!.siblingIds[branchInfo!.siblingIndex - 1],
+                    )
+                  }
+                  onNext={() =>
+                    onSwitchBranch!(
+                      branchInfo!.siblingIds[branchInfo!.siblingIndex + 1],
+                    )
+                  }
+                  className="mt-1"
+                />
+              )}
+              {/* Floating actions for user messages */}
+              <FloatingActions
+                message={message}
+                role="user"
+                align="right"
+                onEdit={onEditMessage ? startEdit : undefined}
+              />
+            </>
           )}
         </div>
         {showUserAvatar && (
@@ -267,6 +552,7 @@ export function DefaultMessage({
             src={userAvatar.src}
             alt="User"
             fallback={userAvatar.fallback}
+            className={userAvatar.className}
           >
             {userAvatar.component}
           </MessageAvatar>
@@ -275,27 +561,32 @@ export function DefaultMessage({
     );
   }
 
-  // Helper: check if a tool is hidden (shouldn't appear in UI)
-  const isToolHidden = (toolName: string): boolean => {
-    const toolDef = registeredTools?.find((t) => t.name === toolName);
+  // Helper: check if a tool execution is hidden (shouldn't appear in UI)
+  // Checks both: 1) execution's hidden flag (from server), 2) registered tool's hidden flag
+  const isToolHidden = (exec: { name: string; hidden?: boolean }): boolean => {
+    // Check execution's own hidden flag first (from server's action:start event)
+    if (exec.hidden === true) return true;
+    // Then check registered tool definition
+    const toolDef = registeredTools?.find((t) => t.name === exec.name);
     return toolDef?.hidden === true;
   };
 
   // Separate tool executions into categories (excluding hidden tools)
   const pendingApprovalTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec.name),
+    (exec) => exec.approvalStatus === "required" && !isToolHidden(exec),
   );
   const completedTools = message.toolExecutions?.filter(
-    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec.name),
+    (exec) => exec.approvalStatus !== "required" && !isToolHidden(exec),
   );
 
-  // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, or tool.render)
+  // Helper: check if tool has any custom render (toolRenderers, mcpToolRenderer, fallbackToolRenderer, or tool.render)
   const hasCustomRender = (toolName: string, execSource?: string): boolean => {
     if (toolRenderers?.[toolName]) return true;
     const toolDef = registeredTools?.find((t) => t.name === toolName);
     // Check if mcpToolRenderer applies (MCP tool with catch-all renderer)
     if (mcpToolRenderer && (execSource === "mcp" || toolDef?.source === "mcp"))
       return true;
+    if (fallbackToolRenderer) return true;
     if (toolDef?.render) return true;
     return false;
   };
@@ -327,7 +618,7 @@ export function DefaultMessage({
 
   // Assistant message - left aligned with avatar
   return (
-    <Message className="flex gap-2">
+    <Message className="csdk-message csdk-assistant-message flex gap-2 group/message">
       <MessageAvatar
         src={assistantAvatar.src}
         alt="Assistant"
@@ -339,7 +630,7 @@ export function DefaultMessage({
             <CopilotSDKLogo className="size-5" />
           ) : undefined
         }
-        className="bg-muted"
+        className={cn("bg-muted", assistantAvatar.className)}
       >
         {assistantAvatar.component}
       </MessageAvatar>
@@ -353,11 +644,13 @@ export function DefaultMessage({
           />
         )}
 
-        {/* Show loader when processing after tool execution (only for last message) */}
-        {isLastMessage && isProcessing ? (
-          <div className="rounded-lg bg-muted px-4 py-2 flex items-center gap-2">
+        {/* Show loader when processing after tool execution (only for last message with no tools yet) */}
+        {isLastMessage &&
+        isProcessing &&
+        !completedTools?.length &&
+        !pendingApprovalTools?.length ? (
+          <div className="rounded-lg bg-muted px-4 py-2">
             <Loader variant="dots" size="sm" />
-            <span className="text-sm text-muted-foreground">Continuing...</span>
           </div>
         ) : /* Show streaming loader when loading with no content and no tools */
         isLastMessage &&
@@ -385,34 +678,45 @@ export function DefaultMessage({
               </MessageContent>
             )}
 
-            {/* Custom Tool Renderers - Priority: toolRenderers > tool.render */}
+            {/* Custom Tool Renderers - Priority: tool.render > fallbackToolRenderer > toolRenderers */}
             {toolsWithCustomRender && toolsWithCustomRender.length > 0 && (
               <div className={cn("space-y-2", cleanContent?.trim() && "mt-2")}>
                 {toolsWithCustomRender.map((exec) => {
-                  // PRIORITY 1: toolRenderers (app-level override for specific tool)
-                  const Renderer = toolRenderers?.[exec.name];
-                  if (Renderer) {
-                    return (
-                      <Renderer
-                        key={exec.id}
-                        execution={{
-                          id: exec.id,
-                          name: exec.name,
-                          args: exec.args,
-                          status: exec.status,
-                          result: exec.result,
-                          error: exec.error,
-                          approvalStatus: exec.approvalStatus,
-                          source: exec.source,
-                        }}
-                      />
-                    );
-                  }
-
-                  // PRIORITY 2: mcpToolRenderer (catch-all for MCP tools)
                   const toolDef = registeredTools?.find(
                     (t) => t.name === exec.name,
                   );
+
+                  // PRIORITY 1: tool's own render function (defined in useTool)
+                  if (toolDef?.render) {
+                    let status: ToolRenderProps["status"] = "pending";
+                    if (exec.status === "executing") status = "executing";
+                    else if (exec.status === "completed") status = "completed";
+                    else if (
+                      exec.status === "error" ||
+                      exec.status === "failed" ||
+                      exec.status === "rejected"
+                    )
+                      status = "error";
+
+                    const renderProps: ToolRenderProps = {
+                      status,
+                      args: exec.args,
+                      result: exec.result,
+                      error: exec.error,
+                      toolCallId: exec.id,
+                      toolName: exec.name,
+                    };
+                    const output = toolDef.render(
+                      renderProps,
+                    ) as React.ReactNode;
+                    if (output != null) {
+                      return (
+                        <React.Fragment key={exec.id}>{output}</React.Fragment>
+                      );
+                    }
+                  }
+
+                  // PRIORITY 2: mcpToolRenderer (catch-all for MCP tools)
                   if (
                     mcpToolRenderer &&
                     (exec.source === "mcp" || toolDef?.source === "mcp")
@@ -434,36 +738,42 @@ export function DefaultMessage({
                     );
                   }
 
-                  // PRIORITY 3: tool's own render function
-                  // toolDef already defined above for MCP check
-                  const toolDefForRender =
-                    toolDef ??
-                    registeredTools?.find((t) => t.name === exec.name);
-                  if (toolDefForRender?.render) {
-                    // Map execution status to ToolRenderProps status
-                    let status: ToolRenderProps["status"] = "pending";
-                    if (exec.status === "executing") status = "executing";
-                    else if (exec.status === "completed") status = "completed";
-                    else if (
-                      exec.status === "error" ||
-                      exec.status === "failed" ||
-                      exec.status === "rejected"
-                    )
-                      status = "error";
-
-                    const renderProps: ToolRenderProps = {
-                      status,
-                      args: exec.args,
-                      result: exec.result,
-                      error: exec.error,
-                      toolCallId: exec.id,
-                      toolName: exec.name,
-                    };
-                    const output = toolDefForRender.render(
-                      renderProps,
-                    ) as React.ReactNode;
+                  // PRIORITY 3: toolRenderers map (app-level explicit renderer — static, always available)
+                  const Renderer = toolRenderers?.[exec.name];
+                  if (Renderer) {
                     return (
-                      <React.Fragment key={exec.id}>{output}</React.Fragment>
+                      <Renderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
+                          approvalStatus: exec.approvalStatus,
+                          source: exec.source,
+                        }}
+                      />
+                    );
+                  }
+
+                  // PRIORITY 4: fallbackToolRenderer (catch-all for any unmatched tool)
+                  if (fallbackToolRenderer) {
+                    const FallbackRenderer = fallbackToolRenderer;
+                    return (
+                      <FallbackRenderer
+                        key={exec.id}
+                        execution={{
+                          id: exec.id,
+                          name: exec.name,
+                          args: exec.args,
+                          status: exec.status,
+                          result: exec.result,
+                          error: exec.error,
+                          source: exec.source,
+                        }}
+                      />
                     );
                   }
 
@@ -487,7 +797,7 @@ export function DefaultMessage({
 
             {/* MCP-UI Resources - Interactive components from MCP tools (excluding hidden) */}
             {message.toolExecutions
-              ?.filter((exec) => !isToolHidden(exec.name))
+              ?.filter((exec) => !isToolHidden(exec))
               .map((exec) => {
                 const uiResources = exec.result?._uiResources;
                 if (!uiResources || uiResources.length === 0) return null;
@@ -499,6 +809,16 @@ export function DefaultMessage({
                   />
                 );
               })}
+
+            {/* Processing indicator below completed tools (AI is continuing after tool execution) */}
+            {isLastMessage &&
+              isProcessing &&
+              completedTools &&
+              completedTools.length > 0 && (
+                <div className="mt-2 rounded-lg bg-muted px-4 py-2">
+                  <Loader variant="dots" size="sm" />
+                </div>
+              )}
 
             {/* Tool Approval Confirmations - Priority: toolRenderers > tool.render > default */}
             {pendingApprovalTools && pendingApprovalTools.length > 0 && (
@@ -552,7 +872,7 @@ export function DefaultMessage({
                     <PermissionConfirmation
                       key={tool.id}
                       state="pending"
-                      toolName={tool.name}
+                      toolName={tool.approvalTitle ?? tool.name}
                       message={
                         tool.approvalMessage ||
                         `This tool wants to execute. Do you approve?`
@@ -577,12 +897,14 @@ export function DefaultMessage({
               </div>
             )}
 
-            {/* Image Attachments */}
+            {/* Attachments (images + files) */}
             {message.attachments && message.attachments.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {message.attachments.map((attachment, index) => (
-                  <AttachmentPreview key={index} attachment={attachment} />
-                ))}
+              <div className="csdk-assistant-attachments mt-2">
+                <MessageMedia
+                  attachments={message.attachments}
+                  hasText={!!message.content}
+                  align="start"
+                />
               </div>
             )}
 
@@ -607,6 +929,9 @@ export function DefaultMessage({
                 buttonClassName={followUpButtonClassName}
               />
             )}
+
+            {/* Floating actions for assistant messages */}
+            <FloatingActions message={message} role="assistant" align="left" />
           </>
         )}
       </div>
@@ -614,84 +939,469 @@ export function DefaultMessage({
   );
 }
 
-/**
- * Attachment preview component
- */
-function AttachmentPreview({ attachment }: { attachment: MessageAttachment }) {
-  const [expanded, setExpanded] = React.useState(false);
+// ── Attachment helpers ──────────────────────────────────────────────────────
 
-  if (attachment.type !== "image") {
-    // For non-image attachments, show a simple file indicator
-    return (
-      <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
-        <span className="text-muted-foreground">{attachment.type}</span>
-        <span>{attachment.filename || "Attachment"}</span>
-      </div>
-    );
-  }
-
-  // Image preview - use URL if available, otherwise use base64 data
-  let src: string;
-  if (attachment.url) {
-    src = attachment.url;
-  } else if (attachment.data) {
-    src = attachment.data.startsWith("data:")
+function getAttachmentSrc(attachment: MessageAttachment): string | null {
+  if (attachment.url) return attachment.url;
+  if (attachment.data) {
+    return attachment.data.startsWith("data:")
       ? attachment.data
       : `data:${attachment.mimeType};base64,${attachment.data}`;
-  } else {
-    // No source available - shouldn't happen but handle gracefully
-    return null;
   }
+  return null;
+}
 
+/**
+ * Image lightbox — fullscreen view with CSS animation.
+ * Uses portal to render at document root for proper z-index.
+ *
+ * Animation: backdrop fade-in 200ms ease-out, image scale 0.92→1 + fade.
+ * Exit: backdrop fade-out 180ms ease-in, image scale 1→0.95 + fade.
+ * Follows: staging-dim-background, easing-entrance-ease-out, easing-exit-ease-in, duration-small-state
+ */
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  const [closing, setClosing] = React.useState(false);
+  const backdropRef = React.useRef<HTMLDivElement>(null);
+
+  const handleClose = React.useCallback(() => {
+    setClosing(true);
+    // Wait for exit animation (180ms ease-in)
+    setTimeout(onClose, 180);
+  }, [onClose]);
+
+  // Close on Escape
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [handleClose]);
+
+  // Prevent body scroll
+  React.useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  const portal = (
+    <div
+      ref={backdropRef}
+      className="csdk-lightbox csdk-lightbox-backdrop fixed inset-0 z-[9999] flex items-center justify-center cursor-zoom-out"
+      onClick={handleClose}
+      style={{
+        animation: closing
+          ? "csdk-lightbox-backdrop-out 180ms ease-in forwards"
+          : "csdk-lightbox-backdrop-in 200ms ease-out forwards",
+      }}
+    >
+      {/* Scrim — hardcoded dark, no theme vars */}
+      <div
+        className="csdk-lightbox-scrim absolute inset-0"
+        style={{
+          backgroundColor: "rgba(0, 0, 0, 0.88)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          animation: closing
+            ? "csdk-lightbox-fade-out 180ms ease-in forwards"
+            : "csdk-lightbox-fade-in 200ms ease-out forwards",
+        }}
+      />
+
+      {/* Image */}
+      <div
+        className="csdk-lightbox-content relative z-10 max-w-[90vw] max-h-[90vh]"
+        style={{
+          animation: closing
+            ? "csdk-lightbox-img-out 180ms ease-in forwards"
+            : "csdk-lightbox-img-in 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="csdk-lightbox-image max-w-full max-h-[90vh] object-contain rounded-xl"
+          style={{ boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)" }}
+          draggable={false}
+        />
+        {/* Close button */}
+        <button
+          type="button"
+          className="csdk-lightbox-close absolute -top-3 -right-3 size-8 flex items-center justify-center rounded-full shadow-lg transition-[background,transform] duration-150 cursor-pointer active:scale-95"
+          style={{ backgroundColor: "rgba(255,255,255,0.9)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255,255,255,1)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.9)";
+          }}
+          onClick={handleClose}
+        >
+          <svg
+            className="size-4"
+            style={{ color: "#333" }}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Keyframe styles (injected once) */}
+      <style>{`
+        @keyframes csdk-lightbox-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes csdk-lightbox-fade-out { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes csdk-lightbox-img-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+        @keyframes csdk-lightbox-img-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
+        @keyframes csdk-lightbox-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes csdk-lightbox-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+      `}</style>
+    </div>
+  );
+
+  // Portal to body
+  return typeof document !== "undefined"
+    ? ReactDOM.createPortal(portal, document.body)
+    : null;
+}
+
+/**
+ * Single image thumbnail — auto-sized, clickable, opens lightbox.
+ * Preserves aspect ratio. Max width constrained by bubble, height auto.
+ * active:scale-[0.98] for press feedback (physics-active-state).
+ */
+function ImageThumb({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
   return (
     <>
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="relative rounded-lg overflow-hidden border bg-muted/50 hover:opacity-90 transition-opacity"
+        className={cn(
+          "csdk-attachment-image relative overflow-hidden cursor-zoom-in",
+          "transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.98]",
+          className,
+        )}
+        style={{ backgroundColor: "#000" }}
       >
         <img
           src={src}
-          alt={attachment.filename || "Image"}
-          className="max-w-[200px] max-h-[150px] object-cover"
+          alt={alt}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          draggable={false}
         />
       </button>
-
-      {/* Fullscreen modal */}
       {expanded && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-          onClick={() => setExpanded(false)}
+        <ImageLightbox src={src} alt={alt} onClose={() => setExpanded(false)} />
+      )}
+    </>
+  );
+}
+
+/**
+ * File attachment card — inline within message bubble.
+ * Compact row: colored icon + filename + download/open button.
+ * Styled to sit inside the bubble bg (slightly darker inner card).
+ *
+ * PDF gets red accent, audio green, video purple, generic blue.
+ */
+function FileCard({ attachment }: { attachment: MessageAttachment }) {
+  const isPdfFile = isPdf(attachment);
+  const isAudio = attachment.type === "audio";
+  const isVideo = attachment.type === "video";
+
+  // Accent colors per type
+  const accent = isPdfFile
+    ? { color: "#ef4444", bg: "rgba(239,68,68,0.12)" }
+    : isAudio
+      ? { color: "#10b981", bg: "rgba(16,185,129,0.12)" }
+      : isVideo
+        ? { color: "#8b5cf6", bg: "rgba(139,92,246,0.12)" }
+        : { color: "#3b82f6", bg: "rgba(59,130,246,0.12)" };
+
+  const label = isPdfFile
+    ? "PDF"
+    : attachment.mimeType?.split("/")[1]?.toUpperCase() ||
+      attachment.type?.toUpperCase() ||
+      "FILE";
+  const filename = attachment.filename || "Attachment";
+  const href =
+    attachment.url ||
+    (attachment.data?.startsWith("data:") ? attachment.data : null);
+  const cssClass = isPdfFile ? "csdk-attachment-pdf" : "csdk-attachment-file";
+
+  return (
+    <a
+      href={href ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={isPdfFile ? undefined : attachment.filename}
+      className={cn(
+        cssClass,
+        "flex items-center gap-2 rounded-lg min-w-0 w-full",
+        "px-2 py-1.5 cursor-pointer transition-opacity duration-150 hover:opacity-80",
+        "no-underline",
+      )}
+      style={{ backgroundColor: "rgba(255,255,255,0.92)", color: "#1a1a1a" }}
+      onClick={(e) => {
+        if (!href) e.preventDefault();
+      }}
+    >
+      {/* Icon */}
+      <div
+        className="size-8 rounded-md flex items-center justify-center shrink-0"
+        style={{ backgroundColor: accent.bg }}
+      >
+        <svg
+          className="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={accent.color}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         >
-          <div className="relative max-w-[90vw] max-h-[90vh]">
-            <img
-              src={src}
-              alt={attachment.filename || "Image (expanded)"}
-              className="max-w-full max-h-full object-contain rounded-lg"
-            />
-            <button
-              type="button"
-              className="absolute top-2 right-2 bg-white/90 rounded-full p-2 hover:bg-white transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(false);
-              }}
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
+          {isPdfFile || (!isAudio && !isVideo) ? (
+            <>
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+            </>
+          ) : isAudio ? (
+            <>
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </>
+          ) : (
+            <>
+              <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11" />
+              <rect width="14" height="12" x="2" y="6" rx="2" />
+            </>
+          )}
+        </svg>
+      </div>
+      {/* Name + type */}
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-medium truncate leading-tight">
+          {filename}
+        </p>
+        <p
+          className="text-[9px] font-semibold uppercase tracking-wider leading-tight mt-0.5"
+          style={{ color: accent.color }}
+        >
+          {label}
+        </p>
+      </div>
+      {/* Download / open icon */}
+      {href && (
+        <div
+          className="size-6 rounded-md flex items-center justify-center shrink-0"
+          style={{ backgroundColor: "rgba(0,0,0,0.05)" }}
+        >
+          <svg
+            className="size-3"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ opacity: 0.35 }}
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" x2="12" y1="15" y2="3" />
+          </svg>
+        </div>
+      )}
+    </a>
+  );
+}
+
+/** @deprecated Use FileCard which now handles all types including PDF */
+const PdfCard = FileCard;
+
+/**
+ * Image grid — WhatsApp/Telegram-style layout
+ * 1 image: full width
+ * 2 images: side by side
+ * 3 images: 2 top + 1 bottom
+ * 4+ images: 2x2 grid with +N overlay
+ */
+function ImageGrid({
+  images,
+  bubbleRadius,
+}: {
+  images: MessageAttachment[];
+  bubbleRadius?: string;
+}) {
+  const srcs = images
+    .map((img) => getAttachmentSrc(img))
+    .filter(Boolean) as string[];
+  if (srcs.length === 0) return null;
+
+  // Concentric radius: inner = outer bubble radius (16px) minus padding (2px) = 14px
+  const innerRadius = bubbleRadius ? `calc(${bubbleRadius} - 2px)` : "0.875rem";
+
+  if (srcs.length === 1) {
+    return (
+      <div
+        className="csdk-attachment-grid"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        <ImageThumb
+          src={srcs[0]}
+          alt={images[0].filename || "Image"}
+          className="w-full"
+        />
+      </div>
+    );
+  }
+
+  if (srcs.length === 2) {
+    return (
+      <div
+        className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        {srcs.map((src, i) => (
+          <ImageThumb
+            key={i}
+            src={src}
+            alt={images[i].filename || "Image"}
+            className="aspect-square"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (srcs.length === 3) {
+    return (
+      <div
+        className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+        style={{ borderRadius: innerRadius, overflow: "hidden" }}
+      >
+        <ImageThumb
+          src={srcs[0]}
+          alt={images[0].filename || "Image"}
+          className="col-span-2 max-h-[180px] min-h-[100px]"
+        />
+        <ImageThumb
+          src={srcs[1]}
+          alt={images[1].filename || "Image"}
+          className="aspect-square"
+        />
+        <ImageThumb
+          src={srcs[2]}
+          alt={images[2].filename || "Image"}
+          className="aspect-square"
+        />
+      </div>
+    );
+  }
+
+  // 4+ images: 2x2 grid, last cell shows +N if more
+  const showOverlay = srcs.length > 4;
+  const gridSrcs = srcs.slice(0, 4);
+
+  return (
+    <div
+      className="csdk-attachment-grid grid grid-cols-2 gap-[2px]"
+      style={{ borderRadius: innerRadius, overflow: "hidden" }}
+    >
+      {gridSrcs.map((src, i) => (
+        <div key={i} className="relative aspect-square">
+          <ImageThumb
+            src={src}
+            alt={images[i].filename || "Image"}
+            className="w-full h-full"
+          />
+          {i === 3 && showOverlay && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center pointer-events-none">
+              <span className="text-white text-lg font-semibold">
+                +{srcs.length - 4}
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * MessageMedia — renders attachments in a message bubble.
+ * Handles image-only, image+text, file cards, and mixed content.
+ *
+ * Layout follows WhatsApp/Telegram pattern:
+ * - Images at top of bubble (no padding), text below with padding
+ * - Files shown as compact cards below text
+ */
+function isPdf(a: MessageAttachment): boolean {
+  return (
+    a.mimeType === "application/pdf" ||
+    a.filename?.toLowerCase().endsWith(".pdf") === true
+  );
+}
+
+function MessageMedia({
+  attachments,
+  hasText,
+  align = "end",
+}: {
+  attachments: MessageAttachment[];
+  hasText: boolean;
+  align?: "start" | "end";
+}) {
+  const images = attachments.filter((a) => a.type === "image");
+  const pdfs = attachments.filter((a) => isPdf(a));
+  const files = attachments.filter((a) => a.type !== "image" && !isPdf(a));
+
+  return (
+    <>
+      {images.length > 0 && (
+        <div className={cn("csdk-attachment-images", hasText ? "mb-0" : "")}>
+          <ImageGrid images={images} bubbleRadius="0.5rem" />
+        </div>
+      )}
+      {(pdfs.length > 0 || files.length > 0) && (
+        <div
+          className={cn(
+            "csdk-attachment-files flex flex-col gap-1",
+            hasText || images.length > 0 ? "px-1.5 pb-1.5 pt-1" : "p-1.5",
+          )}
+        >
+          {[...pdfs, ...files].map((file, i) => (
+            <FileCard key={i} attachment={file} />
+          ))}
         </div>
       )}
     </>

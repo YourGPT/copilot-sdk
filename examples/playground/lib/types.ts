@@ -132,3 +132,30 @@ export interface ToolMetadata {
   suggestedQuery: string;
   codeSnippet: string;
 }
+
+export interface MessageActionsConfig {
+  copyEnabled: boolean;
+  editEnabled: boolean;
+  feedbackEnabled: boolean;
+}
+
+export type CompactionStrategy = "none" | "sliding-window" | "selective-prune";
+
+export interface AlphaConfig {
+  // Message actions
+  messageActions: MessageActionsConfig;
+  // Branching
+  branchingEnabled: boolean;
+  // Skills
+  brandVoiceSkill: boolean;
+  codeReviewSkill: boolean;
+  // Context management
+  compactionStrategy: CompactionStrategy;
+  sessionPersistence: boolean;
+  contextStats: boolean;
+  // Tools
+  hiddenAnalytics: boolean;
+  deferredSearch: boolean;
+  // Custom message view
+  customMessageView: boolean;
+}

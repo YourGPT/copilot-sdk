@@ -75,10 +75,17 @@ export interface ToolExecutionData {
   duration?: number;
   /** Approval status for human-in-the-loop tools */
   approvalStatus?: ToolApprovalStatus;
+  /** Title shown in approval UI */
+  approvalTitle?: string;
   /** Message shown in approval UI */
   approvalMessage?: string;
   /** Data passed from user's approval action (e.g., selected item) */
   approvalData?: Record<string, unknown>;
+  /**
+   * Whether this tool execution should be hidden from the UI.
+   * Server-side tools can set this to hide internal operations from users.
+   */
+  hidden?: boolean;
 }
 
 /**

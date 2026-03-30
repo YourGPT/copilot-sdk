@@ -78,6 +78,7 @@ export function processStreamChunk(
         id: chunk.id,
         name: chunk.name,
         status: "executing",
+        hidden: chunk.hidden,
       });
       return { ...state, toolResults: newResults };
     }

@@ -159,6 +159,12 @@ export {
   type FollowUpProps,
 } from "./components/ui/follow-up";
 
+// Branch navigator (← N/M → variant navigation for branched conversations)
+export {
+  BranchNavigator,
+  type BranchNavigatorProps,
+} from "./components/ui/branch-navigator";
+
 // DevLogger (Development debugging tool)
 export {
   DevLogger,
@@ -285,3 +291,93 @@ export type { MCPUIFrameProps } from "../mcp/ui/types";
 // Utilities
 // ============================================
 export { cn } from "./lib/utils";
+
+// ============================================
+// Chat Primitives (headless composition API)
+// ============================================
+import { DefaultMessage } from "./components/composed/chat/default-message";
+import { ChatHeader } from "./components/composed/chat/chat-header";
+import { ChatWelcome } from "./components/composed/chat/chat-welcome";
+import { MessageList } from "./components/composed/chat/message-list";
+import {
+  Message,
+  MessageAvatar as MsgAvatar,
+  MessageContent as MsgContent,
+  MessageActions,
+  MessageAction,
+} from "./components/ui/message";
+import { PromptInput } from "./components/ui/prompt-input";
+import { Loader } from "./components/ui/loader";
+import { ChatContainerScrollAnchor } from "./components/ui/chat-container";
+
+/**
+ * ChatPrimitives — composable primitives for building custom chat layouts.
+ * Must be used inside <CopilotChat>.
+ *
+ * @example
+ * ```tsx
+ * import { ChatPrimitives as Chat } from '@yourgpt/copilot-sdk-ui';
+ *
+ * <CopilotChat>
+ *   <Chat.Header />
+ *   <Chat.MessageList>
+ *     {(message) =>
+ *       message.metadata?.type === "plan"
+ *         ? <PlanCard key={message.id} />
+ *         : <Chat.DefaultMessage key={message.id} message={message} />
+ *     }
+ *   </Chat.MessageList>
+ *   <Chat.Input />
+ * </CopilotChat>
+ * ```
+ */
+export const ChatPrimitives = {
+  // ── List ──────────────────────────────────────────────
+  /** Renders the message list via render-prop. Falls back to DefaultMessage if no children. */
+  MessageList,
+
+  // ── Messages ──────────────────────────────────────────
+  /** Full SDK message bubble (user + assistant + tools). Use as fallback inside MessageList. */
+  DefaultMessage,
+  /** Low-level message row wrapper (flex layout + avatar slot) */
+  Message,
+  /** Message avatar — image with fallback text/icon */
+  MessageAvatar: MsgAvatar,
+  /** Message content bubble — supports markdown */
+  MessageContent: MsgContent,
+  /** Action bar below a message (copy, feedback, etc.) */
+  MessageActions,
+  /** Single action button with tooltip inside MessageActions */
+  MessageAction,
+
+  // ── Layout ────────────────────────────────────────────
+  /** Chat header bar with title and controls */
+  Header: ChatHeader,
+  /** Welcome screen shown when there are no messages */
+  Welcome: ChatWelcome,
+  /** Chat input / composer */
+  Input: PromptInput,
+  /** Scroll anchor — keeps the view pinned to the latest message */
+  ScrollAnchor: ChatContainerScrollAnchor,
+
+  // ── Indicators ────────────────────────────────────────
+  /** Loading / streaming indicator (dots, wave, typing variants) */
+  Loader,
+};
+
+export type { MessageListProps } from "./components/composed/chat/message-list";
+
+// ============================================
+// Attachments
+// ============================================
+export { useAttachments } from "./hooks/useAttachments";
+export type {
+  PendingAttachment,
+  UseAttachmentsConfig,
+  UseAttachmentsReturn,
+  UploadConfig,
+} from "./hooks/useAttachments";
+export { AttachmentStrip } from "./components/attachment-strip";
+export type { AttachmentStripProps } from "./components/attachment-strip";
+export { DropZoneOverlay } from "./components/drop-zone-overlay";
+export type { DropZoneOverlayProps } from "./components/drop-zone-overlay";

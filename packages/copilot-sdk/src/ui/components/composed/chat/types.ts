@@ -3,6 +3,7 @@ import type { ToolExecutionData, ToolApprovalStatus } from "../tools";
 import type { PermissionLevel } from "../../ui/permission-confirmation";
 import type { ToolDefinition } from "../../../../core";
 import type { Thread } from "../../../../core/types/thread";
+import type { BranchInfo } from "../../../../chat/branching";
 
 // ============================================
 // Citation Configuration
@@ -70,6 +71,14 @@ export type ChatMessage = {
   }>;
   /** Additional metadata (citations, etc.) */
   metadata?: Record<string, unknown>;
+  /**
+   * Parent message ID for branching support.
+   * - null = root message (no parent)
+   * - undefined = legacy linear message (no branch awareness)
+   */
+  parent_id?: string | null;
+  /** Direct children IDs for O(1) sibling lookup */
+  children_ids?: string[];
 };
 
 export type { ToolApprovalStatus, PermissionLevel };
@@ -145,6 +154,10 @@ export interface ToolRendererProps {
     error?: string;
     /** Approval status for tools requiring confirmation */
     approvalStatus?: ToolApprovalStatus;
+    /** Title shown in approval UI */
+    approvalTitle?: string;
+    /** Message shown in approval UI */
+    approvalMessage?: string;
     /** Data passed from user's approval action */
     approvalData?: Record<string, unknown>;
     /** Tool source (mcp, native, custom) - useful for MCP tool identification */
@@ -240,6 +253,8 @@ export type ChatProps = {
   onStop?: () => void;
   /** Whether AI is currently generating */
   isLoading?: boolean;
+  /** Current error from the AI (shown as a dismissible banner above the input) */
+  error?: Error | null;
 
   // === Compound Components ===
   /**
@@ -303,6 +318,8 @@ export type ChatProps = {
     fallback?: string;
     /** Custom avatar component - when provided, replaces the default avatar */
     component?: React.ReactNode;
+    /** Additional className applied to the avatar wrapper (e.g. "!bg-transparent") */
+    className?: string;
   };
   /** Loader variant for typing indicator */
   loaderVariant?:
@@ -326,11 +343,41 @@ export type ChatProps = {
   /** Tooltip text when attachments are disabled */
   attachmentsDisabledTooltip?: string;
   /**
-   * Custom attachment processor (e.g., for cloud storage upload)
-   * If provided, uses this instead of default base64 conversion.
-   * @param file - The file to process
-   * @returns Promise<MessageAttachment> - The processed attachment (URL-based or base64)
+   * File upload handler. Determines how attachments are uploaded.
+   *
+   * - `string` — Server upload URL. Files are POSTed as JSON `{ data, mimeType, filename }`.
+   * - `object` — URL + headers/body options for the upload request.
+   * - `function` — Full custom handler. Receives `File`, returns `MessageAttachment`.
+   * - `undefined` — Falls back to base64 (embedded in message, no upload).
+   *
+   * @example
+   * ```tsx
+   * // Simple — just a URL:
+   * <CopilotChat upload="/api/copilot/upload" />
+   *
+   * // With auth headers:
+   * <CopilotChat upload={{
+   *   url: "/api/copilot/upload",
+   *   headers: () => ({ Authorization: `Bearer ${token}` }),
+   * }} />
+   *
+   * // Full custom:
+   * <CopilotChat upload={async (file) => {
+   *   const url = await myS3Upload(file);
+   *   return { type: 'image', url, mimeType: file.type, filename: file.name };
+   * }} />
+   * ```
    */
+  upload?:
+    | string
+    | {
+        url: string;
+        headers?: Record<string, string> | (() => Record<string, string>);
+        body?: Record<string, unknown> | (() => Record<string, unknown>);
+      }
+    | ((file: File) => Promise<MessageAttachment>);
+
+  /** @deprecated Use `upload` instead */
   processAttachment?: (file: File) => Promise<MessageAttachment>;
 
   // === Suggestions ===
@@ -403,6 +450,19 @@ export type ChatProps = {
    */
   mcpToolRenderer?: React.ComponentType<ToolRendererProps>;
 
+  /**
+   * Catch-all renderer for ALL tools not matched by `toolRenderers`.
+   * Applied regardless of tool source (native, custom, or MCP).
+   *
+   * Priority: toolRenderers[name] > mcpToolRenderer (mcp only) > fallbackToolRenderer > tool.render > default
+   *
+   * @example
+   * ```tsx
+   * <Chat fallbackToolRenderer={DefaultToolCard} />
+   * ```
+   */
+  fallbackToolRenderer?: React.ComponentType<ToolRendererProps>;
+
   // === Tool Approval (Human-in-the-loop) ===
   /**
    * Called when user approves a tool execution.
@@ -423,12 +483,54 @@ export type ChatProps = {
   ) => void;
 
   // === Custom Rendering ===
+  /**
+   * Custom message list view.
+   * Gives full control over how the message list is rendered.
+   * Receives pre-rendered `messageElements` (default SDK output) and raw `messages`
+   * so you can inject custom UI, reorder, or conditionally replace messages.
+   *
+   * @example
+   * ```tsx
+   * <CopilotChat
+   *   messageView={{
+   *     children: ({ messageElements, messages }) => (
+   *       <>
+   *         {messages.map((msg, i) =>
+   *           msg.metadata?.type === "plan"
+   *             ? <PlanCard key={msg.id} data={msg.metadata} />
+   *             : messageElements[i]
+   *         )}
+   *       </>
+   *     )
+   *   }}
+   * />
+   * ```
+   */
+  messageView?: {
+    children?: (props: {
+      /** Raw messages array */
+      messages: ChatMessage[];
+      /** Pre-rendered message elements (default SDK rendering) */
+      messageElements: React.ReactNode[];
+    }) => React.ReactNode;
+  };
   /** Custom message renderer */
   renderMessage?: (message: ChatMessage, index: number) => React.ReactNode;
+  /** Wrap each DefaultMessage in a custom container — for animations, hover effects, etc.
+   *  Unlike renderMessage, this preserves all SDK defaults (toolRenderers, loading, avatars, approval). */
+  wrapMessage?: (
+    content: React.ReactNode,
+    message: ChatMessage,
+    index: number,
+  ) => React.ReactNode;
   /** Custom input renderer (replaces entire input area) */
   renderInput?: () => React.ReactNode;
   /** Custom header renderer (replaces entire header) */
   renderHeader?: () => React.ReactNode;
+
+  /** Group consecutive messages from same role — hides avatar on non-first messages in a run.
+   *  Resets on role change or if messages are > 5 minutes apart. */
+  groupConsecutiveMessages?: boolean;
 
   // === Styling ===
   /** Class name for root container (use for sizing) */
@@ -465,4 +567,23 @@ export type ChatProps = {
   onSwitchThread?: (threadId: string) => void;
   /** Whether a thread operation is in progress (disables controls) */
   isThreadBusy?: boolean;
+
+  // === Branching (conversation variants) ===
+  /**
+   * Returns branch navigation info for a message ID.
+   * Provide this to enable the ← N/M → navigator below edited user messages.
+   * Wire from `useChat().getBranchInfo` or `useCopilot().actions.getBranchInfo`.
+   */
+  getBranchInfo?: (messageId: string) => BranchInfo | null;
+  /**
+   * Called when the user clicks ← or → in the branch navigator.
+   * Wire from `useChat().switchBranch` or `useCopilot().actions.switchBranch`.
+   */
+  onSwitchBranch?: (messageId: string) => void;
+  /**
+   * Called when the user submits an edit to a user message.
+   * Creates a new branch from the same parent as the original message.
+   * Wire from `useChat().editMessage` or `useCopilot().actions.editMessage`.
+   */
+  onEditMessage?: (messageId: string, newContent: string) => void;
 };

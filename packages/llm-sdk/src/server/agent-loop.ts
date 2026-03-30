@@ -16,12 +16,18 @@ import type {
   UnifiedToolCall,
   UnifiedToolResult,
   ToolResponse,
-  AgentLoopConfig,
   Message,
 } from "../core/stream-events";
 import type { AIProvider } from "../providers/types";
 import { generateToolCallId, generateMessageId } from "../core/utils";
 import { getFormatter } from "../providers";
+import {
+  buildProviderToolOptions,
+  searchTools,
+  selectTools,
+  shouldExposeToolSearch,
+  type InternalToolSelectionConfig,
+} from "./tool-selection";
 
 // ========================================
 // Constants
@@ -48,13 +54,23 @@ export interface AgentLoopOptions {
   provider: AIProvider;
   /** Abort signal for cancellation */
   signal?: AbortSignal;
-  /** Loop configuration */
-  config?: AgentLoopConfig;
+  /** Max agent loop iterations (default: 20) */
+  maxIterations?: number;
+  /** Enable debug logging */
+  debug?: boolean;
+  /** Internal tool selection config (from resolveEffectiveToolSelectionConfig) */
+  toolSelectionConfig?: InternalToolSelectionConfig;
+  /** Optional active tool profile for selective loading. */
+  toolProfile?: string;
   /**
    * LLM call function
    * Should call the LLM and return the raw response
    */
-  callLLM: (messages: unknown[], tools: unknown[]) => Promise<unknown>;
+  callLLM: (
+    messages: unknown[],
+    tools: unknown[],
+    providerToolOptions?: ReturnType<typeof buildProviderToolOptions>,
+  ) => Promise<unknown>;
   /**
    * Server-side tool executor
    * Called when a server-side tool needs to be executed
@@ -102,23 +118,24 @@ export async function* runAgentLoop(
     systemPrompt,
     provider,
     signal,
-    config,
+    maxIterations: optMaxIterations,
+    debug: optDebug,
+    toolSelectionConfig,
+    toolProfile,
     callLLM,
     executeServerTool,
     waitForClientToolResult,
   } = options;
 
-  const maxIterations = config?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const debug = config?.debug ?? false;
+  const maxIterations = optMaxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const debug = optDebug ?? false;
   const formatter = getFormatter(provider.name);
+  const toolSearchMetaToolName = "search_tools";
 
   // Separate server and client tools
   const serverTools = tools.filter((t) => t.location === "server");
   const clientTools = tools.filter((t) => t.location === "client");
   const allTools = [...serverTools, ...clientTools];
-
-  // Transform tools to provider format
-  const providerTools = formatter.transformTools(allTools);
 
   // Build conversation
   const conversation: ConversationMessage[] = buildConversation(
@@ -127,13 +144,15 @@ export async function* runAgentLoop(
   );
 
   let iteration = 0;
+  let loadedToolNames = new Set<string>();
 
   if (debug) {
     console.log("[AgentLoop] Starting with", {
       messageCount: messages.length,
-      toolCount: allTools.length,
+      availableToolCount: allTools.length,
       serverToolCount: serverTools.length,
       clientToolCount: clientTools.length,
+      activeProfile: toolProfile ?? toolSelectionConfig?.defaultProfile,
       maxIterations,
     });
   }
@@ -159,13 +178,83 @@ export async function* runAgentLoop(
       maxIterations,
     };
 
+    const selectedTools = selectTools({
+      tools: allTools,
+      messages,
+      config: toolSelectionConfig,
+      activeProfile: toolProfile,
+      forceIncludeNames: [...loadedToolNames],
+    });
+    const toolSearchTool = shouldExposeToolSearch({
+      tools: allTools,
+      config: toolSelectionConfig,
+    })
+      ? ({
+          name: toolSearchMetaToolName,
+          description:
+            "Search available deferred tools and load the most relevant ones for the next step when the required tool is not currently exposed.",
+          location: "server",
+          hidden: true,
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Describe the tool capability you need to find.",
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of matching tools to load.",
+              },
+            },
+            required: ["query"],
+          },
+          handler: async (params: Record<string, unknown>) => {
+            const query = typeof params.query === "string" ? params.query : "";
+            const limit =
+              typeof params.limit === "number" ? params.limit : undefined;
+            const results = searchTools({
+              tools: allTools,
+              query,
+              config: toolSelectionConfig,
+              activeProfile: toolProfile,
+              limit,
+              excludeNames: selectedTools.map((tool) => tool.name),
+            });
+            return {
+              success: true,
+              query,
+              loadedTools: results.map((result) => result.name),
+              results,
+            };
+          },
+        } satisfies ToolDefinition)
+      : null;
+    const effectiveSelectedTools = toolSearchTool
+      ? [...selectedTools, toolSearchTool]
+      : selectedTools;
+    const providerToolOptions = buildProviderToolOptions({
+      providerName: provider.name,
+      selectedTools: effectiveSelectedTools,
+      config: toolSelectionConfig,
+      metaToolName: toolSearchMetaToolName,
+    });
+    const providerTools = formatter.transformTools(effectiveSelectedTools);
+
     if (debug) {
-      console.log(`[AgentLoop] Iteration ${iteration}/${maxIterations}`);
+      console.log(`[AgentLoop] Iteration ${iteration}/${maxIterations}`, {
+        selectedToolCount: effectiveSelectedTools.length,
+        loadedDeferredTools: [...loadedToolNames],
+      });
     }
 
     try {
       // Call LLM
-      const response = await callLLM(conversation, providerTools);
+      const response = await callLLM(
+        conversation,
+        providerTools,
+        providerToolOptions,
+      );
 
       // Parse tool calls and text from response
       const toolCalls = formatter.parseToolCalls(response);
@@ -191,7 +280,7 @@ export async function* runAgentLoop(
         // Execute tools
         const results = await executeToolCalls(
           toolCalls,
-          tools,
+          effectiveSelectedTools,
           executeServerTool,
           waitForClientToolResult,
           function* (event: StreamEvent) {
@@ -210,6 +299,27 @@ export async function* runAgentLoop(
               name: toolCall.name,
               result: JSON.parse(result.content) as ToolResponse,
             };
+          }
+        }
+
+        for (const result of results) {
+          const toolCall = toolCalls.find((tc) => tc.id === result.toolCallId);
+          if (!toolCall || toolCall.name !== toolSearchMetaToolName) {
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(result.content) as {
+              loadedTools?: unknown;
+            };
+            if (Array.isArray(parsed.loadedTools)) {
+              for (const toolName of parsed.loadedTools) {
+                if (typeof toolName === "string" && toolName) {
+                  loadedToolNames.add(toolName);
+                }
+              }
+            }
+          } catch {
+            // Ignore malformed tool search result payloads.
           }
         }
 
@@ -345,11 +455,12 @@ async function executeToolCalls(
       continue;
     }
 
-    // Emit action start
+    // Emit action start (include hidden flag for client-side filtering)
     emitEvent?.({
       type: "action:start",
       id: toolCall.id,
       name: toolCall.name,
+      hidden: tool.hidden ?? false,
     });
 
     // Emit arguments

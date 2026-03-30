@@ -6,7 +6,7 @@
  */
 
 import type { ThreadData } from "../../core/types/thread";
-import type { ThreadStorageAdapter } from "./types";
+import type { ThreadStorageAdapter, AsyncThreadStorageAdapter } from "./types";
 
 const DEFAULT_STORAGE_KEY = "copilot-sdk-store";
 const STORE_VERSION = 1;
@@ -35,6 +35,8 @@ interface SerializedThreadData {
   updatedAt: string;
   messages: SerializedMessage[];
   sources: unknown[];
+  /** ID of the active leaf message for branch restoration */
+  activeLeafId?: string;
 }
 
 /**
@@ -48,6 +50,10 @@ interface SerializedMessage {
   tool_calls?: unknown;
   tool_call_id?: string;
   metadata?: unknown;
+  /** Parent message ID for branch tree reconstruction */
+  parent_id?: string | null;
+  /** Child message IDs for branch tree reconstruction */
+  children_ids?: string[];
 }
 
 /**
@@ -64,15 +70,17 @@ export interface LocalStorageAdapterConfig {
 /**
  * Check if localStorage is available (SSR-safe)
  */
+let _localStorageAvailable: boolean | null = null;
 function isLocalStorageAvailable(): boolean {
-  if (typeof window === "undefined") return false;
+  if (_localStorageAvailable !== null) return _localStorageAvailable;
+  if (typeof window === "undefined") return (_localStorageAvailable = false);
   try {
-    const testKey = "__copilot_test__";
-    window.localStorage.setItem(testKey, testKey);
+    const testKey = "__copilot_ls_check__";
+    window.localStorage.setItem(testKey, "1");
     window.localStorage.removeItem(testKey);
-    return true;
+    return (_localStorageAvailable = true);
   } catch {
-    return false;
+    return (_localStorageAvailable = false);
   }
 }
 
@@ -99,6 +107,7 @@ function serializeThread(thread: ThreadData): SerializedThreadData {
     createdAt: thread.createdAt.toISOString(),
     updatedAt: thread.updatedAt.toISOString(),
     sources: thread.sources || [],
+    activeLeafId: thread.activeLeafId,
     messages: thread.messages.map((m) => ({
       id: m.id,
       role: m.role,
@@ -110,6 +119,8 @@ function serializeThread(thread: ThreadData): SerializedThreadData {
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id,
       metadata: m.metadata,
+      parent_id: m.parent_id,
+      children_ids: m.children_ids,
     })),
   };
 }
@@ -126,6 +137,7 @@ function deserializeThread(data: SerializedThreadData): ThreadData {
     createdAt: new Date(data.createdAt),
     updatedAt: new Date(data.updatedAt),
     sources: (data.sources || []) as ThreadData["sources"],
+    activeLeafId: data.activeLeafId,
     messages: (data.messages || []).map((m) => ({
       id: m.id,
       role: m.role as "user" | "assistant" | "system" | "tool",
@@ -134,6 +146,8 @@ function deserializeThread(data: SerializedThreadData): ThreadData {
       tool_calls: m.tool_calls as ThreadData["messages"][0]["tool_calls"],
       tool_call_id: m.tool_call_id,
       metadata: m.metadata as ThreadData["messages"][0]["metadata"],
+      parent_id: m.parent_id,
+      children_ids: m.children_ids,
     })),
   };
 }
@@ -189,11 +203,28 @@ function writeStore(storageKey: string, store: CopilotStore): void {
     const serialized = JSON.stringify(store);
     localStorage.setItem(storageKey, serialized);
   } catch (e) {
-    // Handle quota exceeded
     if (e instanceof DOMException && e.name === "QuotaExceededError") {
-      console.error(
-        "[CopilotSDK] localStorage quota exceeded. Consider clearing old threads.",
-      );
+      // Evict the oldest thread and retry once
+      if (store.threads.length > 1) {
+        const evicted = [...store.threads].sort(
+          (a, b) =>
+            new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+        );
+        const trimmed = { ...store, threads: evicted.slice(1) };
+        console.warn(
+          "[CopilotSDK] localStorage quota exceeded — evicting oldest thread:",
+          evicted[0].id,
+        );
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(trimmed));
+        } catch {
+          console.error("[CopilotSDK] localStorage still full after eviction.");
+        }
+      } else {
+        console.error(
+          "[CopilotSDK] localStorage quota exceeded and only one thread remains. Cannot evict.",
+        );
+      }
     } else {
       console.warn("[CopilotSDK] Failed to write store:", e);
     }
@@ -234,7 +265,7 @@ function updateStore(
  */
 export function createLocalStorageAdapter(
   config?: LocalStorageAdapterConfig,
-): ThreadStorageAdapter {
+): AsyncThreadStorageAdapter {
   const storageKey = config?.storageKey ?? DEFAULT_STORAGE_KEY;
 
   return {
@@ -267,6 +298,12 @@ export function createLocalStorageAdapter(
     setLastActiveThreadId: async (threadId: string | null): Promise<void> => {
       updateStore(storageKey, () => ({
         lastActiveThreadId: threadId,
+      }));
+    },
+
+    deleteThread: async (id: string): Promise<void> => {
+      updateStore(storageKey, (store) => ({
+        threads: store.threads.filter((t) => t.id !== id),
       }));
     },
   };

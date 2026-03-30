@@ -2,6 +2,16 @@ import Link from "next/link";
 
 const demos = [
   {
+    name: "Generative UI",
+    href: "/generative-ui",
+    description: "LLM renders tables, stats, cards, charts & HTML inline",
+  },
+  {
+    name: "Conversation Branching",
+    href: "/branching",
+    description: "Edit & regenerate to branch — live tree visualization",
+  },
+  {
     name: "Non-Streaming",
     href: "/non-streaming",
     description: "runtime.generate() with CopilotChat",
@@ -25,6 +35,11 @@ const demos = [
     name: "Tool Types",
     href: "/tool-types-demo",
     description: "Different tool rendering patterns",
+  },
+  {
+    name: "Tool Scale Lab",
+    href: "/tool-scale",
+    description: "100-tool profile, search, and deferred-loading demo",
   },
   {
     name: "Widgets",

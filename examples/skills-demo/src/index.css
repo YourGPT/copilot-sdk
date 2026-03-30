@@ -1,0 +1,753 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Include SDK package for Tailwind class detection */
+@source "../node_modules/@yourgpt/copilot-sdk/dist/**/*.{js,ts,jsx,tsx}";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+/* ── Light theme — shadcn CSS variables ── */
+:root {
+  --radius: 0.75rem;
+  --background: #ffffff;
+  --foreground: #0d1117;
+  --card: #ffffff;
+  --card-foreground: #0d1117;
+  --popover: #ffffff;
+  --popover-foreground: #0d1117;
+  --primary: #0d9488;
+  --primary-foreground: #ffffff;
+  --secondary: #f0faf9;
+  --secondary-foreground: #0d1117;
+  --muted: #f4faf9;
+  --muted-foreground: #6b7280;
+  --accent: #e6faf7;
+  --accent-foreground: #0d1117;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.06);
+  --ring: #0d9488;
+
+  /* ── App design tokens ── */
+  --app-font: "DM Sans", system-ui, sans-serif;
+  --app-mono: "DM Mono", monospace;
+  --app-teal: #0d9488;
+  --app-teal-light: #99f6e4;
+  --app-bg-top: #ffffff;
+  --app-bg-bottom: #dcfffe;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family: var(--app-font);
+    color: var(--foreground);
+    background: linear-gradient(160deg, var(--app-bg-top) 0%, var(--app-bg-bottom) 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ── TextShimmer ── */
+@keyframes shimmer-text {
+  from {
+    background-position: 200% center;
+  }
+  to {
+    background-position: -200% center;
+  }
+}
+.text-shimmer {
+  background: linear-gradient(to right, rgba(13, 148, 136, 0.5) 0%, rgba(13, 148, 136, 1) 30%, rgba(5, 200, 180, 1) 50%, rgba(13, 148, 136, 1) 70%, rgba(13, 148, 136, 0.5) 100%);
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: shimmer-text linear infinite;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+/* ── Layout — 50/50 split ── */
+
+.root {
+  background: linear-gradient(160deg, var(--app-bg-top) 0%, var(--app-bg-bottom) 100%);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 100vh;
+  overflow: hidden;
+  /* Required for Vaul shouldScaleBackground — needs a background to show the scale transform */
+}
+
+.chat-panel {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── SDK overrides: transparent backgrounds ── */
+.chat-panel {
+  --background: transparent;
+  --card: transparent;
+  --muted: rgba(255, 255, 255, 0.72);
+  --border: rgba(0, 0, 0, 0.07);
+}
+
+/* CopilotChat must fill the chat panel so its internal scroll container is bounded */
+.chat-panel .copilot-fill {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Header: transparent, no bottom border */
+.copilot-fill > div:first-child {
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+/* Messages area: pad bottom so content clears the fixed input */
+.copilot-fill > div:nth-child(2) {
+  padding-bottom: 110px !important;
+}
+
+/* Fade-out gradient above fixed input — only covers the right chat column */
+
+/* ── AI message bubble: subtle card style ── */
+.csdk-assistant-message .csdk-message-content {
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 0.875rem;
+  box-shadow:
+    0 1px 6px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  padding: 0.625rem 0.875rem !important;
+}
+
+/* ── Custom input (via renderInput prop) ── */
+.custom-input-fixed {
+  position: fixed;
+  bottom: 20px;
+  left: 75vw;
+  transform: translateX(-50%);
+  width: min(600px, calc(50vw - 48px));
+  z-index: 50;
+}
+
+.custom-prompt-input {
+  background: #ffffff;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  cursor: text;
+}
+
+.custom-prompt-textarea {
+  flex: 1;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  resize: none;
+  font-family: var(--app-font);
+  font-size: 0.9rem;
+  color: var(--foreground);
+  line-height: 1.5;
+  padding: 0.35rem 0 !important;
+  max-height: 160px;
+}
+
+.custom-prompt-textarea::placeholder {
+  color: #9ca3af;
+}
+
+.custom-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding-bottom: 0.1rem;
+}
+
+.custom-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--app-teal);
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.custom-send-btn:hover {
+  background: color-mix(in srgb, var(--app-teal) 80%, #000);
+}
+
+/* ── Skills Panel — transparent, gradient shows through ── */
+.skills-panel {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 56px 52px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.08) transparent;
+  /* No background — gradient bleeds through */
+}
+
+/* Webkit scrollbar for skills panel */
+.skills-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.skills-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.skills-panel::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+.skills-panel-heading {
+  margin-bottom: 28px;
+}
+
+.skills-panel-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--app-teal);
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(13, 148, 136, 0.4);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 4px rgba(13, 148, 136, 0);
+  }
+}
+.skills-panel-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--app-teal);
+  animation: livePulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.skills-panel-title {
+  font-size: clamp(1.75rem, 2.8vw, 2.6rem);
+  font-weight: 700;
+  color: var(--foreground);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+.skills-panel-subtitle {
+  font-size: 0.875rem;
+  color: #9ca3af;
+  margin: 0 0 0;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.skills-panel-hint {
+  font-size: 0.72rem;
+  color: #aab5c0;
+  margin-top: 14px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  max-width: 380px;
+}
+
+.skills-panel-hint::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M8 2v7M5.5 6 8 3l2.5 3M3 12.5h10' stroke='%2300b5a8' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: contain;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.skills-panel-hint code {
+  font-family: var(--app-mono);
+  font-size: 0.7rem;
+  background: rgba(13, 148, 136, 0.07);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--app-teal);
+}
+
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 380px;
+}
+
+.skills-empty {
+  font-size: 0.8125rem;
+  color: #9ca3af;
+  text-align: center;
+  padding: 24px 0;
+}
+
+/* ── Skill card ── */
+.skill-card {
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: none;
+  padding: 13px 14px;
+  overflow: hidden;
+  transition:
+    box-shadow 0.18s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+  will-change: transform;
+}
+
+/* Hover: same feel as active — opaque bg + lift */
+.skill-card:hover {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(0, 0, 0, 0.07);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.05),
+    0 4px 16px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
+}
+
+/* Press: scale down — physics-active-state */
+.skill-card:active {
+  transform: scale(0.97);
+  box-shadow: none;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+/* Active/loaded state — white bg + same shadow as hover, colored border accent */
+.skill-card--active {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: color-mix(in srgb, var(--skill-color) 22%, transparent);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.05),
+    0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+/* Executing: colored glow pulse */
+@keyframes skillPulse {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--skill-color) 14%, transparent), 0 2px 8px rgba(0,0,0,0.05); }
+  50%       { box-shadow: 0 0 0 1px color-mix(in srgb, var(--skill-color) 28%, transparent), 0 4px 20px color-mix(in srgb, var(--skill-color) 16%, transparent); }
+}
+.skill-card--executing {
+  animation: skillPulse 1.6s ease-in-out infinite;
+}
+
+/* Card layout: icon on left, content on right */
+.skill-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.skill-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  transition:
+    background 0.22s ease,
+    color 0.22s ease;
+}
+
+.skill-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.skill-card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--foreground);
+  line-height: 1.3;
+  min-width: 0;
+  flex: 1;
+  transition: color 0.22s ease;
+}
+
+.skill-card-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* Pulsing dot while executing */
+@keyframes dotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.75);
+  }
+}
+.skill-executing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  animation: dotPulse 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* "✓ Active" badge shown when loaded */
+.skill-loaded-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border-radius: 5px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.skill-badge {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 5px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.skill-badge--file {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  color: #9ca3af;
+}
+
+.skill-badge--dropped {
+  background: rgba(13, 148, 136, 0.08);
+  border: 1px solid rgba(13, 148, 136, 0.2);
+  color: var(--app-teal);
+}
+
+.skill-card-desc {
+  font-size: 11.5px;
+  color: #6b7280;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+}
+
+/* "Loaded by Copilot" strip — slides in */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 40px;
+  }
+}
+.skill-loaded-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 10.5px;
+  font-weight: 500;
+  animation: slideIn 0.3s ease forwards;
+  overflow: hidden;
+}
+
+/* ── Drop overlay — frosted glass, no dashed border ── */
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Spring-like entrance: cubic-bezier overshoot — physics-spring-for-overshoot */
+@keyframes dropPillEnter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.93);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.skills-drop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(220, 253, 252, 0.28);
+  backdrop-filter: blur(5px) saturate(1.1);
+  -webkit-backdrop-filter: blur(5px) saturate(1.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  pointer-events: none;
+  /* easing-entrance-ease-out */
+  animation: overlayFadeIn 0.18s ease-out forwards;
+}
+
+.skills-drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--app-teal);
+  font-size: 13.5px;
+  font-weight: 600;
+  /* White pill with layered shadow — visual-layered-shadows */
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  padding: 22px 36px;
+  box-shadow:
+    0 8px 32px rgba(13, 148, 136, 0.14),
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 0 0 0.5px rgba(13, 148, 136, 0.08);
+  /* Spring overshoot entrance — timing-under-300ms: 260ms */
+  animation: dropPillEnter 0.26s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.skills-drop-overlay-inner svg {
+  opacity: 0.85;
+}
+
+.csdk-input {
+  background: white;
+}
+
+/* ── Skill Drawer (Vaul) ── */
+
+/* staging-dim-background: 40% overlay */
+.skill-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  z-index: 200;
+}
+
+/* Bottom sheet — spring physics handled by Vaul internally */
+.skill-drawer-content {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 201;
+  background: #ffffff;
+  border-radius: 20px 20px 0 0;
+  /* visual-layered-shadows */
+  box-shadow:
+    0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 -8px 32px rgba(0, 0, 0, 0.1),
+    0 -2px 8px rgba(0, 0, 0, 0.05);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+/* Drag handle — visual-concentric-radius: inside 20px rounded corner */
+.skill-drawer-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.12);
+  margin: 14px auto 0;
+  flex-shrink: 0;
+}
+
+/* Header row */
+.skill-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 24px 18px;
+  border-bottom: 1px solid;
+  flex-shrink: 0;
+}
+
+.skill-drawer-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.skill-drawer-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-drawer-title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+
+.skill-drawer-subtitle {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.skill-drawer-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.skill-drawer-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 5px;
+  padding: 3px 7px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.skill-drawer-version {
+  font-size: 10px;
+  color: #9ca3af;
+  font-family: var(--app-mono);
+}
+
+/* Scrollable body */
+.skill-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 36px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.08) transparent;
+}
+
+.skill-drawer-loading {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Plain text — type-text-wrap-pretty for body text */
+.skill-drawer-text {
+  font-family: var(--app-font);
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  text-wrap: pretty;
+}

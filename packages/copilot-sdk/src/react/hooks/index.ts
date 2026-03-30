@@ -75,6 +75,9 @@ export {
   type UseThreadManagerReturn,
 } from "./useThreadManager";
 
+// Thread/Session hook
+export { useThread, type UseThreadReturn } from "./useThread";
+
 // MCP (Model Context Protocol) Hooks
 export {
   useMCPClient,
@@ -96,3 +99,21 @@ export {
   type UseMCPUIIntentsConfig,
   type UseMCPUIIntentsReturn,
 } from "./useMCPUIIntents";
+
+// Context Stats (context window usage, token estimates, tool count)
+export {
+  useContextStats,
+  type ContextStats,
+  type MessageTokenUsage,
+} from "./useContextStats";
+
+// Skills Hooks
+export { useSkill } from "./useSkill";
+export { useSkillStatus, type UseSkillStatusReturn } from "./useSkillStatus";
+
+// Message Checkpoints (undo / restore to before a user message)
+export {
+  useMessageCheckpoints,
+  type MessageCheckpoint,
+  type UseMessageCheckpointsReturn,
+} from "./useMessageCheckpoints";

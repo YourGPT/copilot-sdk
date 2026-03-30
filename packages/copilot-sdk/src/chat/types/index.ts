@@ -19,6 +19,8 @@ export type {
   ChatCallbacks,
   ChatInit,
   SendMessageOptions,
+  ServerToolInfo,
+  YourGPTConfig,
 } from "./chat";
 
 // Tool types

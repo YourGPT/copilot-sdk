@@ -1,5 +1,12 @@
 {
   "title": "Tools",
   "icon": "Wrench",
-  "pages": ["built-in", "frontend-tools", "backend-tools", "agentic-loop"]
+  "pages": [
+    "built-in",
+    "frontend-tools",
+    "backend-tools",
+    "agentic-loop",
+    "deferred-tools",
+    "hidden-tools"
+  ]
 }

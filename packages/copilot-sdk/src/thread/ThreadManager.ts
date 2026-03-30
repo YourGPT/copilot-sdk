@@ -103,6 +103,8 @@ export interface CreateThreadOptions {
   title?: string;
   /** Initial messages */
   messages?: Message[];
+  /** Active leaf message ID — preserves branch selection across reloads */
+  activeLeafId?: string;
 }
 
 /**
@@ -318,6 +320,7 @@ export class ThreadManager {
           )
         : undefined,
       messageCount: options?.messages?.length ?? 0,
+      activeLeafId: options?.activeLeafId,
     };
 
     // Use optimized create if available

@@ -1,0 +1,314 @@
+---
+title: Fallback
+description: Automatic failover and load distribution across LLM providers
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Automatically retry failed requests with backup models. When your primary provider returns a `5xx` error, rate limit (`429`), or times out — the SDK silently tries the next model in your chain. Your application code doesn't change.
+
+```ts
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+
+const chain = createFallbackChain({
+  models: [
+    createOpenAI({ apiKey: '...' }).languageModel('gpt-5.4'),
+    createAnthropic({ apiKey: '...' }).languageModel('claude-haiku-4-5'),
+  ],
+});
+
+const runtime = createRuntime({ adapter: chain });
+```
+
+---
+
+## Installation
+
+```bash
+npm install @yourgpt/llm-sdk openai @anthropic-ai/sdk
+```
+
+---
+
+## Basic Usage
+
+Pass `createFallbackChain()` as the `adapter` in `createRuntime()`. The rest of your server code — streaming, tools, sessions — stays exactly the same.
+
+```ts title="server.ts"
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const runtime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      openai.languageModel('gpt-5.4'),            // tried first
+      anthropic.languageModel('claude-haiku-4-5'), // tried if OpenAI fails
+    ],
+  }),
+  systemPrompt: 'You are a helpful assistant.',
+});
+
+// Use exactly as normal — no other changes
+app.post('/api/chat', async (req, res) => {
+  await runtime.stream(req.body).pipeToResponse(res);
+});
+```
+
+---
+
+## What Triggers Fallback
+
+| Error type | Triggers fallback? |
+|---|---|
+| `5xx` server errors | ✅ Yes |
+| `429` rate limit | ✅ Yes |
+| Network timeout / connection refused | ✅ Yes |
+| `4xx` client errors (bad key, bad request) | ❌ No — these are your bugs, not provider failures |
+
+<Callout type="info">
+Once content has started streaming to the client, fallback is not attempted. You cannot restart a stream mid-flight.
+</Callout>
+
+---
+
+## Routing Strategies
+
+Control which model is tried first on each request.
+
+<Tabs items={['Priority (default)', 'Round-Robin']}>
+  <Tab value="Priority (default)">
+    Always tries models in the order defined. First model handles all traffic until it fails.
+
+    ```ts
+    createFallbackChain({
+      models: [primaryModel, backupModel],
+      strategy: 'priority', // default — can be omitted
+    });
+    ```
+  </Tab>
+  <Tab value="Round-Robin">
+    Distributes load evenly. Request 1 starts at model A, request 2 starts at model B, and so on. If the starting model fails, the chain falls through to the next one as usual.
+
+    ```ts
+    createFallbackChain({
+      models: [openaiModel, anthropicModel],
+      strategy: 'round-robin',
+    });
+    ```
+
+    <Callout type="info">
+    **Multi-instance deployments:** Round-robin state is in-memory by default and resets on restart. For shared state across instances, plug in a custom store (Redis, Upstash, etc.) via the `store` option.
+    </Callout>
+  </Tab>
+</Tabs>
+
+---
+
+## Per-Model Retries
+
+Retry the same model before moving to the next one. Useful for transient errors like brief rate limits or flaky connections.
+
+```ts
+createFallbackChain({
+  models: [openaiModel, anthropicModel],
+  retries: 2,                  // retry each model up to 2 times
+  retryDelay: 500,             // base delay: 500ms
+  retryBackoff: 'exponential', // 500ms → 1000ms → 2000ms (default)
+  onRetry: ({ model, retryAttempt, maxRetries, delayMs, error }) => {
+    console.warn(`[retry] ${model} attempt ${retryAttempt}/${maxRetries} — waiting ${delayMs}ms`);
+  },
+});
+```
+
+**Backoff options:**
+
+| `retryBackoff` | Pattern (retryDelay=500) |
+|---|---|
+| `exponential` (default) | 500ms → 1000ms → 2000ms |
+| `fixed` | 500ms → 500ms → 500ms |
+
+<Callout type="info">
+With `retries: 2`, each model gets 3 total attempts (1 initial + 2 retries) before the chain moves to the next model.
+</Callout>
+
+---
+
+## Observability Callbacks
+
+Two callbacks give you visibility into what the chain is doing.
+
+```ts
+createFallbackChain({
+  models: [openaiModel, anthropicModel, googleModel],
+
+  // Fires on each per-model retry (before the wait delay)
+  onRetry: ({ model, provider, error, retryAttempt, maxRetries, delayMs }) => {
+    console.warn(`[retry] ${provider}/${model} — attempt ${retryAttempt}/${maxRetries}`);
+    metrics.increment('llm.retry', { provider, model });
+  },
+
+  // Fires when a model is abandoned and the next one is tried
+  onFallback: ({ attemptedModel, nextModel, error, attempt }) => {
+    console.warn(`[fallback] ${attemptedModel} → ${nextModel}: ${error.message}`);
+    metrics.increment('llm.fallback', { from: attemptedModel, to: nextModel });
+  },
+});
+```
+
+---
+
+## Handling Full Failure
+
+When every model in the chain fails, `FallbackExhaustedError` is thrown. It includes a per-model breakdown of what failed.
+
+```ts
+import { FallbackExhaustedError } from '@yourgpt/llm-sdk/fallback';
+
+try {
+  await runtime.stream(req.body).pipeToResponse(res);
+} catch (err) {
+  if (err instanceof FallbackExhaustedError) {
+    // Per-model breakdown
+    for (const f of err.failures) {
+      console.error(
+        `${f.provider}/${f.model} failed after ${f.retriesAttempted} retries: ${f.error.message}`
+      );
+    }
+    res.status(503).json({ error: 'All models unavailable. Try again later.' });
+  }
+}
+```
+
+---
+
+## Custom Error Filtering
+
+By default the chain uses sensible rules (5xx, 429, network errors trigger fallback; 4xx does not). Override with `retryableErrors` for custom logic.
+
+```ts
+createFallbackChain({
+  models: [openaiModel, anthropicModel],
+
+  // Fall back on any error at all
+  retryableErrors: () => true,
+
+  // Or — only fall back on rate limits
+  retryableErrors: (err) => {
+    return err instanceof Error && /429|rate.?limit/i.test(err.message);
+  },
+});
+```
+
+---
+
+## Shared Routing Store (Multi-Instance)
+
+For round-robin to work correctly across multiple server instances or serverless functions, plug in a shared store.
+
+```ts
+import { createFallbackChain, type RoutingStore } from '@yourgpt/llm-sdk/fallback';
+
+// Implement RoutingStore with any backend — Redis, Upstash, Cloudflare KV, etc.
+// The SDK ships the interface. You own the implementation.
+const redisStore: RoutingStore = {
+  async get(key) {
+    const val = await redis.get(key);
+    return val ? Number(val) : undefined;
+  },
+  async set(key, value) {
+    await redis.set(key, String(value));
+  },
+};
+
+createFallbackChain({
+  models: [openaiModel, anthropicModel],
+  strategy: 'round-robin',
+  store: redisStore,
+});
+```
+
+<Callout type="info">
+The default `MemoryRoutingStore` is zero-config and works for single-process apps. No store configuration is needed unless you run multiple instances.
+</Callout>
+
+---
+
+## With Tools
+
+Tools work transparently across fallback providers. Define your tools once — whichever provider handles the request formats them natively.
+
+```ts
+const runtime = createRuntime({
+  adapter: createFallbackChain({
+    models: [openaiModel, anthropicModel],
+  }),
+  tools: [
+    {
+      name: 'get_weather',
+      description: 'Get current weather for a city',
+      location: 'server',
+      inputSchema: {
+        type: 'object',
+        properties: { city: { type: 'string' } },
+        required: ['city'],
+      },
+      handler: async ({ city }) => fetchWeather(city),
+    },
+  ],
+});
+```
+
+OpenAI receives tools as function-calling JSON. Anthropic receives them as `tool_use` blocks. **Your handler always runs on your server regardless of which provider responded.**
+
+---
+
+## Full Configuration Reference
+
+```ts
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+
+createFallbackChain({
+  // Required: adapters to try in order
+  models: LLMAdapter[],
+
+  // Routing strategy (default: 'priority')
+  strategy?: 'priority' | 'round-robin',
+
+  // Pluggable store for round-robin state (default: MemoryRoutingStore)
+  store?: RoutingStore,
+
+  // Retries per model before moving to next (default: 0)
+  retries?: number,
+
+  // Base delay between retries in ms (default: 500)
+  retryDelay?: number,
+
+  // Backoff strategy (default: 'exponential')
+  retryBackoff?: 'exponential' | 'fixed',
+
+  // Called on each per-model retry attempt
+  onRetry?: (info: RetryInfo) => void,
+
+  // Called when a model is abandoned and next one is tried
+  onFallback?: (info: FallbackInfo) => void,
+
+  // Custom predicate to decide which errors trigger fallback/retry
+  retryableErrors?: (error: unknown) => boolean,
+})
+```
+
+---
+
+## Next Steps
+
+- [OpenAI](/docs/providers/openai) — Configure your primary provider
+- [Anthropic](/docs/providers/anthropic) — Add a Claude fallback
+- [Server Storage](/docs/server/storage) — Persist sessions alongside fallback chains

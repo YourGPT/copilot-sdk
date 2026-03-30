@@ -207,6 +207,35 @@ function CustomChat() {
 
 ---
 
+## Error Handling
+
+When the server returns a non-2xx response, the SDK removes the loading placeholder and surfaces the error via `state.error`. The built-in `CopilotChat` shows a dismissible banner — errors are **never written into message history**.
+
+Handle errors via `CopilotProvider` props:
+
+```tsx
+<CopilotProvider
+  runtimeUrl="/api/chat"
+  onError={(error) => toast.error(error.message)}
+  parseError={(status, body: any) => {
+    // Return null to fall back to SDK default (body.message or body.error)
+    return body?.errors?.[0]?.message ?? body?.detail ?? null;
+  }}
+>
+```
+
+Or read error state directly from `useCopilot()`:
+
+```tsx
+const { error, status } = useCopilot();
+// error → null when idle, Error object on failure
+// status → 'ready' | 'streaming' | 'submitted' | 'error'
+```
+
+The error clears automatically when the user sends the next message.
+
+---
+
 ## Styling
 
 The chat component uses Tailwind CSS. Override styles with className:
@@ -228,4 +257,5 @@ The chat component uses Tailwind CSS. Override styles with className:
 ## Next Steps
 
 - [Tools](/docs/tools) - Add AI capabilities
-- [Custom Tools](/docs/custom-tools) - Build your own tools
+- [Branching](/docs/chat/branching) - Conversation branching like ChatGPT
+- [Message Actions](/docs/chat/message-actions) - Add copy, edit, feedback buttons

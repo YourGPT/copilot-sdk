@@ -83,6 +83,8 @@ export interface ActionStartEvent extends BaseEvent {
   type: "action:start";
   id: string;
   name: string;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**
@@ -121,6 +123,8 @@ export interface ToolCallInfo {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**
@@ -238,6 +242,8 @@ export interface DoneEvent extends BaseEvent {
   messages?: DoneEventMessage[];
   /** Token usage (server-side only, stripped before sending to client) */
   usage?: TokenUsageRaw;
+  /** Session ID — present when storage adapter created a session for this request */
+  threadId?: string;
 }
 
 /**
@@ -423,6 +429,10 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   name: string;
   description: string;
   location: ToolLocation;
+  /** Optional logical category for tool search and selective loading. */
+  category?: string;
+  /** Optional group label for related tools. */
+  group?: string;
   title?: string | ((args: TParams) => string);
   inputSchema?: ToolInputSchema;
   handler?: (
@@ -431,6 +441,13 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   ) => unknown | Promise<unknown>;
   render?: (props: unknown) => unknown;
   available?: boolean;
+  /**
+   * Hide this tool's execution from the chat UI.
+   * When true, tool calls and results won't be displayed to the user,
+   * but the tool will still execute normally.
+   * @default false
+   */
+  hidden?: boolean;
   needsApproval?: boolean;
   approvalMessage?: string | ((params: TParams) => string);
   /** AI response mode for this tool (none, brief, full) */
@@ -439,15 +456,77 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   aiContext?:
     | string
     | ((result: ToolResponse, args: Record<string, unknown>) => string);
+  /** Hint that this tool should be loaded lazily when dynamic selection is active. */
+  deferLoading?: boolean;
+  /** Named profiles this tool belongs to (for example "coding" or "search"). */
+  profiles?: string[];
+  /** Extra keywords used by lightweight tool search/ranking. */
+  searchKeywords?: string[];
 }
 
-/**
- * Agent loop configuration
- */
-export interface AgentLoopConfig {
-  maxIterations?: number;
-  debug?: boolean;
-  enabled?: boolean;
+export interface ToolProfile {
+  include?: string[];
+  exclude?: string[];
+}
+
+export interface OpenAIToolSelectionHints {
+  /**
+   * "single" forces the selected tool when exactly one tool remains after selection.
+   * Otherwise the adapter falls back to automatic tool choice.
+   */
+  toolChoice?: "auto" | "required" | "single";
+  /** Set false to disable parallel tool calls on OpenAI-compatible providers. */
+  parallelToolCalls?: boolean;
+}
+
+export interface AnthropicToolSelectionHints {
+  /**
+   * "single" forces the selected tool when exactly one tool remains after selection.
+   * Otherwise the adapter falls back to Anthropic's automatic tool choice.
+   */
+  toolChoice?: "auto" | "any" | "single";
+  /** Disable parallel tool use when supported by the Anthropic API. */
+  disableParallelToolUse?: boolean;
+}
+
+export interface ToolNativeProviderHints {
+  openai?: OpenAIToolSelectionHints;
+  anthropic?: AnthropicToolSelectionHints;
+}
+
+export interface OpenAIProviderToolOptions {
+  toolChoice?:
+    | "auto"
+    | "required"
+    | {
+        type: "function";
+        name: string;
+      };
+  parallelToolCalls?: boolean;
+  nativeToolSearch?: {
+    enabled: boolean;
+    useResponsesApi?: boolean;
+  };
+}
+
+export interface AnthropicProviderToolOptions {
+  toolChoice?:
+    | "auto"
+    | "any"
+    | {
+        type: "tool";
+        name: string;
+      };
+  disableParallelToolUse?: boolean;
+  nativeToolSearch?: {
+    enabled: boolean;
+    variant: "bm25" | "regex";
+  };
+}
+
+export interface ProviderToolRuntimeOptions {
+  openai?: OpenAIProviderToolOptions;
+  anthropic?: AnthropicProviderToolOptions;
 }
 
 /**

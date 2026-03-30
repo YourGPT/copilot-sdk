@@ -38,6 +38,7 @@ import {
   ExternalLink,
   Check,
   ChevronsUpDown,
+  FlaskConical,
 } from "lucide-react";
 import {
   Command,
@@ -64,6 +65,7 @@ import type {
   ProviderId,
   SDKConfig,
   LoaderVariant,
+  AlphaConfig,
 } from "@/lib/types";
 import {
   themes,
@@ -79,6 +81,7 @@ import { StockModule } from "./modules/StockModule";
 import { AlertModule } from "./modules/AlertModule";
 import { ToolInfoHoverCard } from "./ToolInfoHoverCard";
 import { ConfigInfoHoverCard } from "./ConfigInfoHoverCard";
+import { AlphaFeaturesSection } from "./AlphaFeaturesSection";
 import { toolMetadata } from "@/lib/tool-metadata";
 import { configMetadata } from "@/lib/config-metadata";
 
@@ -336,6 +339,11 @@ interface ControlPanelProps {
     key: K,
     value: SDKConfig[K],
   ) => void;
+  alphaConfig: AlphaConfig;
+  onUpdateAlpha: <K extends keyof AlphaConfig>(
+    key: K,
+    value: AlphaConfig[K],
+  ) => void;
 }
 
 function ControlPanelComponent({
@@ -363,6 +371,8 @@ function ControlPanelComponent({
   onSelectPerson,
   sdkConfig,
   onUpdateSDKConfig,
+  alphaConfig,
+  onUpdateAlpha,
 }: ControlPanelProps) {
   const activeToolCount = Object.values(toolsEnabled).filter(Boolean).length;
   const selectedTheme = themes.find((t) => t.id === copilotTheme);
@@ -1072,6 +1082,34 @@ function ControlPanelComponent({
                 </div>
               </div>
             </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Alpha Features */}
+        <AccordionItem
+          value="alpha"
+          className="border border-zinc-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900/50"
+        >
+          <AccordionTrigger className="px-5 py-4 hover:no-underline hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-orange-500/10 ring-1 ring-orange-500/20">
+                <FlaskConical className="h-4 w-4 text-orange-500" />
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  Alpha Features
+                </p>
+                <p className="text-[10px] text-zinc-500 font-mono">
+                  experimental · in development
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-5 pt-1 pb-5">
+            <AlphaFeaturesSection
+              alphaConfig={alphaConfig}
+              onUpdate={onUpdateAlpha}
+            />
           </AccordionContent>
         </AccordionItem>
       </Accordion>

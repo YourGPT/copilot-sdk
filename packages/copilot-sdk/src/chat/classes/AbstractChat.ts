@@ -11,10 +11,10 @@
  */
 
 import type {
+  ContextUsage,
   MessageAttachment,
-  AIResponseMode,
-  ToolResponse,
   ToolDefinition,
+  ToolOptimizationConfig,
 } from "../../core";
 import type { ChatState } from "../interfaces/ChatState";
 import type {
@@ -36,96 +36,16 @@ import {
   generateMessageId,
   streamStateToMessage,
 } from "../functions/message";
+import { generateThreadId } from "../../core/utils/id";
+import { resolveValue } from "../../core/utils/resolvable";
 import {
   createStreamState,
   processStreamChunk,
   isStreamDone,
-  requiresToolExecution,
 } from "../functions/stream";
 import { SimpleChatState } from "../interfaces/ChatState";
-
-// ============================================
-// AI Response Control Helper
-// ============================================
-
-/**
- * Tool definition with AI response control fields
- */
-interface ToolWithAIConfig {
-  name: string;
-  aiResponseMode?: AIResponseMode;
-  aiContext?:
-    | string
-    | ((result: ToolResponse, args: Record<string, unknown>) => string);
-}
-
-/**
- * Build tool result content for AI based on aiResponseMode and aiContext
- * This transforms client-side tool results before sending to the LLM
- *
- * Priority for responseMode: result._aiResponseMode > tool.aiResponseMode > "full"
- * Priority for context: result._aiContext > tool.aiContext > undefined
- *
- * @param result - The tool result (may include _aiResponseMode, _aiContext, _aiContent)
- * @param tool - Optional tool definition with aiResponseMode and aiContext
- * @param args - Tool arguments (for dynamic aiContext functions)
- * @returns The content string to send to the AI
- */
-function buildToolResultContentForAI(
-  result: unknown,
-  tool?: ToolWithAIConfig,
-  args?: Record<string, unknown>,
-): string {
-  if (typeof result === "string") return result;
-
-  const typedResult = result as ToolResponse | null;
-
-  // Priority: result._aiResponseMode > tool.aiResponseMode > "full"
-  const responseMode =
-    typedResult?._aiResponseMode ?? tool?.aiResponseMode ?? "full";
-
-  // Check for multimodal content
-  if (typedResult?._aiContent) {
-    return JSON.stringify(typedResult._aiContent);
-  }
-
-  // Get AI context: result._aiContext > tool.aiContext (string or function)
-  let aiContext: string | undefined = typedResult?._aiContext;
-  if (!aiContext && tool?.aiContext) {
-    aiContext =
-      typeof tool.aiContext === "function"
-        ? tool.aiContext(typedResult as ToolResponse, args ?? {})
-        : tool.aiContext;
-  }
-
-  switch (responseMode) {
-    case "none":
-      return aiContext ?? "[Result displayed to user]";
-
-    case "brief":
-      return aiContext ?? "[Tool executed successfully]";
-
-    case "full":
-    default:
-      if (aiContext) {
-        // Include context as prefix, then full data (without the control fields)
-        const {
-          _aiResponseMode,
-          _aiContext,
-          _aiContent,
-          _uiResources,
-          ...dataOnly
-        } = typedResult ?? {};
-        return `${aiContext}\n\nFull data: ${JSON.stringify(dataOnly)}`;
-      }
-      // Strip UI resources from full result - they're for rendering, not for AI
-      if (typedResult?._uiResources) {
-        const { _uiResources, ...dataOnly } = typedResult;
-        return JSON.stringify(dataOnly);
-      }
-      return JSON.stringify(result);
-  }
-}
+import { ChatContextOptimizer } from "../optimizations";
+import { createLogger } from "../../core/utils/logger";
 
 /**
  * Event types emitted by AbstractChat
@@ -165,6 +85,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   protected transport: ChatTransport;
   protected config: ChatConfig;
   protected callbacks: ChatCallbacks<T>;
+  protected optimizer: ChatContextOptimizer;
+  protected lastContextUsage: ContextUsage | null = null;
+  private onCreateSession?: () => string | Promise<string>;
+  private sessionInitPromise: Promise<string> | null = null;
+  private sessionStatus: "idle" | "creating" | "ready" | "error" = "idle";
 
   // Event handlers
   private eventHandlers = new Map<
@@ -175,6 +100,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   // Current streaming state
   private streamState: StreamingMessageState | null = null;
 
+  // ID of the pending assistant placeholder pushed before a request.
+  // Used by handleError() to pop (remove) the placeholder on failure so it
+  // doesn't stay frozen. Error is surfaced via state.error only — never written
+  // into message history.
+  private _activePlaceholderMessageId: string | undefined = undefined;
+
   constructor(init: ChatInit<T>) {
     this.config = {
       runtimeUrl: init.runtimeUrl,
@@ -182,8 +113,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       systemPrompt: init.systemPrompt,
       streaming: init.streaming ?? true,
       headers: init.headers,
+      body: init.body,
       threadId: init.threadId,
       debug: init.debug,
+      optimization: init.optimization,
+      yourgptConfig: init.yourgptConfig,
     };
 
     // Use provided state or create default
@@ -192,16 +126,21 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       (new SimpleChatState<T>() as ChatState<T>);
 
     // Use provided transport or create default
+    // Pass Resolvable values - they are resolved at request time
     this.transport =
       init.transport ??
       new HttpTransport({
         url: init.runtimeUrl,
         headers: init.headers,
+        body: init.body,
         streaming: init.streaming ?? true,
+        parseError: init.parseError,
       });
 
     // Store callbacks
     this.callbacks = init.callbacks ?? {};
+    this.optimizer = new ChatContextOptimizer(init.optimization);
+    this.onCreateSession = init.onCreateSession;
 
     // Set initial messages
     if (init.initialMessages?.length) {
@@ -245,10 +184,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Send a message
    * Returns false if a request is already in progress
+   *
+   * @param content - Message content
+   * @param attachments - Optional attachments
+   * @param options - Optional branching options
+   * @param options.editMessageId - Edit flow: new message branches from the
+   *   same parent as this message ID, creating a parallel conversation path
    */
   async sendMessage(
     content: string,
     attachments?: MessageAttachment[],
+    options?: {
+      editMessageId?: string;
+    },
   ): Promise<boolean> {
     // Guard: Don't send if already processing
     if (this.isBusy) {
@@ -256,30 +204,110 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       return false;
     }
 
-    this.debug("sendMessage", { content, attachments });
+    this.debug("sendMessage", { content, attachments, options });
 
     try {
       // IMPORTANT: Resolve any pending tool_calls before sending
       // This prevents Anthropic API errors: "tool_use without tool_result"
       this.resolveUnresolvedToolCalls();
 
-      // Create user message
-      const userMessage = createUserMessage(content, attachments) as T;
+      // Determine parentId for the new user message
+      let newParentId: string | null | undefined;
+      const visibleMessages = this.state.messages;
 
-      // Add to state
+      if (options?.editMessageId && this.state.setCurrentLeaf) {
+        // Edit flow: branch from the same parent as the edited message
+        const allMessages =
+          this.state.getAllMessages?.() ?? this.state.messages;
+        const target = allMessages.find((m) => m.id === options.editMessageId);
+        if (target && target.parentId !== undefined) {
+          newParentId = target.parentId;
+          // Rewind active path to just before the original message
+          this.state.setCurrentLeaf(
+            typeof target.parentId === "string" ? target.parentId : null,
+          );
+        }
+      } else if (visibleMessages.length > 0) {
+        // Normal follow-up: new message is a child of the current leaf
+        newParentId = visibleMessages[visibleMessages.length - 1].id;
+      }
+
+      // Create user message with parentId for correct tree placement
+      // Text file attachments (CSV, TXT, etc.) are kept as attachments for UI display.
+      // The optimizer inlines their content into the message text before sending to the LLM.
+      const userMessage = createUserMessage(content, attachments, {
+        parentId: newParentId,
+      }) as T;
+
+      // Add user message + placeholder to state FIRST so the UI transitions to
+      // chat view immediately — session init (createSession network request) runs
+      // concurrently while the user already sees their message and the loader.
       this.state.pushMessage(userMessage);
       this.state.status = "submitted";
       this.state.error = undefined;
 
-      // Notify callbacks
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      // For streaming: push placeholder assistant message NOW (before microtask yield)
+      // so the loader appears immediately with zero blank-state flash between user
+      // message submission and the first stream event arriving.
+      let preCreatedMessageId: string | undefined;
+      if (this.config.streaming !== false) {
+        const visibleMessages = this.state.messages;
+        const currentLeafId =
+          visibleMessages.length > 0
+            ? visibleMessages[visibleMessages.length - 1].id
+            : undefined;
+        const preMsg = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
+        this.state.pushMessage(preMsg);
+        preCreatedMessageId = preMsg.id;
+        this._activePlaceholderMessageId = preMsg.id;
+      }
+
+      // Notify callbacks (single batch: user message + status + optional placeholder)
+      this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
+
+      // Lazy session init — only when threadId is not set AND session config is present.
+      // threadId IS the session ID: if it's set (from setActiveThread or a previous session),
+      // it is trusted as-is and no session creation call is made.
+      const needsSession =
+        !this.config.threadId &&
+        (!!this.config.yourgptConfig || !!this.onCreateSession);
+      if (needsSession) {
+        if (!this.sessionInitPromise) {
+          this.setSessionStatus("creating");
+          this.sessionInitPromise = (
+            this.onCreateSession
+              ? Promise.resolve(this.onCreateSession())
+              : this._defaultCreateSession()
+          )
+            .then((id) => {
+              this.callbacks.onThreadChange?.(id);
+              this.setSessionStatus("ready");
+              return id;
+            })
+            .catch((err) => {
+              this.setSessionStatus("error");
+              this.sessionInitPromise = null;
+              throw err;
+            });
+        }
+        this.config.threadId = await this.sessionInitPromise;
+        this.debug("sendMessage", { threadId: this.config.threadId });
+      }
+      // No threadId at this point — that's OK.
+      // If the server has a storage adapter, it will create a session and return
+      // the threadId in the response. The SDK adopts it automatically via
+      // handleJsonResponse / handleStreamResponse.
+      // Local thread IDs for CopilotChat persistence are managed independently
+      // by useInternalThreadManager.
 
       // Yield to allow UI to render loading state (important for non-streaming)
       await Promise.resolve();
 
-      // Send request
-      await this.processRequest();
+      // Send request — pass pre-created ID so processRequest reuses it
+      await this.processRequest({ preCreatedMessageId });
       return true;
     } catch (error) {
       this.handleError(error as Error);
@@ -322,10 +350,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         `Adding ${unresolvedIds.length} missing tool results`,
       );
 
-      // Add error result for each unresolved tool_call
+      // Add error result for each unresolved tool_call.
+      // Chain parentId so these messages are placed correctly in the branch tree.
+      const visibleMsgs = this.state.messages;
+      let errorChainParentId: string | undefined =
+        visibleMsgs.length > 0
+          ? visibleMsgs[visibleMsgs.length - 1].id
+          : undefined;
+
       for (const toolCallId of unresolvedIds) {
+        const toolMessageId = generateMessageId();
         const toolMessage = {
-          id: generateMessageId(),
+          id: toolMessageId,
           role: "tool" as const,
           content: JSON.stringify({
             success: false,
@@ -333,12 +369,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           }),
           toolCallId,
           createdAt: new Date(),
+          ...(errorChainParentId !== undefined
+            ? { parentId: errorChainParentId }
+            : {}),
         } as T;
 
         this.state.pushMessage(toolMessage);
+        errorChainParentId = toolMessageId;
       }
 
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.callbacks.onMessagesChange?.(this._allMessages());
     }
   }
 
@@ -357,6 +397,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     try {
       // Process results - extract attachments that should be added as user message
       const attachmentsToAdd: MessageAttachment[] = [];
+
+      // Capture current leaf so tool messages are chained under the assistant
+      // message that triggered the tool calls, not placed at tree root.
+      // Without this, MessageTree.addMessage() assigns parentKey = ROOT_KEY,
+      // which hijacks getVisibleMessages() and breaks the conversation path.
+      const visibleMessages = this.state.messages;
+      let chainParentId: string | undefined =
+        visibleMessages.length > 0
+          ? visibleMessages[visibleMessages.length - 1].id
+          : undefined;
 
       for (const { toolCallId, result } of toolResults) {
         // Check if result wants to be added as user message (e.g., screenshot)
@@ -390,15 +440,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             typeof result === "string" ? result : JSON.stringify(result);
         }
 
+        const toolMessageId = generateMessageId();
         const toolMessage = {
-          id: generateMessageId(),
+          id: toolMessageId,
           role: "tool" as const,
           content: messageContent,
           toolCallId,
           createdAt: new Date(),
+          ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
         } as T;
 
         this.state.pushMessage(toolMessage);
+        // Next tool message (if any) chains off this one
+        chainParentId = toolMessageId;
       }
 
       // If there are attachments (e.g., screenshots), add user message so AI can see them
@@ -413,23 +467,78 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           content: "Here's my screen:",
           attachments: attachmentsToAdd,
           createdAt: new Date(),
+          ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
         } as T;
 
         this.state.pushMessage(userMessage);
       }
 
       this.state.status = "submitted";
-      this.callbacks.onMessagesChange?.(this.state.messages);
+      this.state.error = undefined;
+      this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
-      // Yield to allow UI to render loading state (important for non-streaming)
-      await Promise.resolve();
+      // Yield a full macrotask so React can flush the "submitted" status
+      // before the next request fires. Promise.resolve() is a microtask and
+      // is not enough for React 18 to render the loading state.
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Continue request
       await this.processRequest();
     } catch (error) {
       this.handleError(error as Error);
     }
+  }
+
+  /**
+   * Add tool result messages to history and stop — does NOT trigger a new LLM request.
+   *
+   * Use this instead of continueWithToolResults when you want to close out pending
+   * tool_use blocks (so the history stays valid) without letting the AI continue.
+   * Optionally appends a final assistant message (e.g. an iteration-limit notice).
+   */
+  async addToolResultMessages(
+    toolResults: Array<{ toolCallId: string; result: unknown }>,
+    finalAssistantContent?: string,
+  ): Promise<void> {
+    const visibleMessages = this.state.messages;
+    let chainParentId: string | undefined =
+      visibleMessages.length > 0
+        ? visibleMessages[visibleMessages.length - 1].id
+        : undefined;
+
+    for (const { toolCallId, result } of toolResults) {
+      const messageContent =
+        typeof result === "string" ? result : JSON.stringify(result);
+
+      const toolMessageId = generateMessageId();
+      const toolMessage = {
+        id: toolMessageId,
+        role: "tool" as const,
+        content: messageContent,
+        toolCallId,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+
+      this.state.pushMessage(toolMessage);
+      chainParentId = toolMessageId;
+    }
+
+    if (finalAssistantContent) {
+      const assistantMsg = {
+        id: generateMessageId(),
+        role: "assistant" as const,
+        content: finalAssistantContent,
+        createdAt: new Date(),
+        ...(chainParentId !== undefined ? { parentId: chainParentId } : {}),
+      } as T;
+      this.state.pushMessage(assistantMsg);
+    }
+
+    this.callbacks.onMessagesChange?.(this._allMessages());
+    this.state.status = "ready";
+    this.callbacks.onStatusChange?.("ready");
   }
 
   /**
@@ -458,31 +567,57 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
-   * Regenerate last response
+   * Regenerate last response.
+   *
+   * Branch-aware: when the state supports branching (setCurrentLeaf is available),
+   * regenerate creates a new sibling response instead of destroying the original.
+   * The old response is preserved and navigable via switchBranch().
+   *
+   * Legacy fallback: when branching is not available, uses old slice() behavior.
    */
   async regenerate(messageId?: string): Promise<void> {
-    // Remove messages from the specified ID (or last assistant message)
-    const messages = this.state.messages;
-    let targetIndex = messages.length - 1;
+    if (this.isBusy) return;
+
+    const messages = this.state.messages; // visible path
+    let targetMessage: T | undefined;
 
     if (messageId) {
-      targetIndex = messages.findIndex((m) => m.id === messageId);
+      targetMessage = messages.find((m) => m.id === messageId);
+      // Not on visible path — check inactive branches too
+      if (!targetMessage) {
+        targetMessage = this.state
+          .getAllMessages?.()
+          .find((m) => m.id === messageId);
+      }
     } else {
-      // Find last assistant message
+      // Find last assistant message in the visible path
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "assistant") {
-          targetIndex = i;
+          targetMessage = messages[i];
           break;
         }
       }
     }
 
-    if (targetIndex > 0) {
-      // Remove from target onwards
-      this.state.setMessages(messages.slice(0, targetIndex));
-      this.callbacks.onMessagesChange?.(this.state.messages);
+    if (!targetMessage) return;
 
-      // Resend
+    // Branch-aware regenerate: preserve old response as inactive sibling
+    if (targetMessage.parentId !== undefined && this.state.setCurrentLeaf) {
+      // Rewind active path to target's parent
+      // The new assistant response will be pushed as a new child (sibling)
+      this.state.setCurrentLeaf(targetMessage.parentId ?? null);
+      this.callbacks.onMessagesChange?.(this._allMessages());
+      this.state.status = "submitted";
+      await Promise.resolve();
+      await this.processRequest();
+      return;
+    }
+
+    // Legacy fallback: old slice() behavior for non-tree-aware state
+    const targetIndex = messages.indexOf(targetMessage);
+    if (targetIndex > 0) {
+      this.state.setMessages(messages.slice(0, targetIndex));
+      this.callbacks.onMessagesChange?.(this._allMessages());
       await this.processRequest();
     }
   }
@@ -490,6 +625,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   // ============================================
   // Event Handling
   // ============================================
+
+  /**
+   * Returns all messages across all branches when the state supports it
+   * (branch-aware), otherwise returns the visible path.
+   * Use this whenever firing onMessagesChange so inactive branches are not lost.
+   */
+  private _allMessages(): T[] {
+    return this.state.getAllMessages?.() ?? this.state.messages;
+  }
 
   /**
    * Subscribe to events
@@ -532,17 +676,69 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Process a chat request
    */
-  protected async processRequest(): Promise<void> {
+  protected async processRequest(options?: {
+    preCreatedMessageId?: string;
+  }): Promise<void> {
     // Build request
     const request = this.buildRequest();
+
+    // For streaming: pre-push an empty assistant message BEFORE the HTTP
+    // round-trip so the UI shows a loading bubble immediately (e.g. between
+    // tool execution and the continuation stream starting).
+    // Skip if sendMessage already pushed a placeholder (preCreatedMessageId set).
+    let preCreatedMessageId = options?.preCreatedMessageId;
+    if (this.config.streaming !== false && !preCreatedMessageId) {
+      // Use the current leaf (last visible message) as parent so the assistant
+      // message is correctly placed as a child in the branch tree.
+      const visibleMessages = this.state.messages;
+      const currentLeafId =
+        visibleMessages.length > 0
+          ? visibleMessages[visibleMessages.length - 1].id
+          : undefined;
+      const preMsg = createEmptyAssistantMessage(undefined, {
+        parentId: currentLeafId,
+      }) as T;
+      this.state.pushMessage(preMsg);
+      this.callbacks.onMessagesChange?.(this._allMessages());
+      preCreatedMessageId = preMsg.id;
+      this._activePlaceholderMessageId = preMsg.id;
+    }
 
     // Send request
     const response = await this.transport.send(request);
 
     // Check if streaming or JSON
     if (this.isAsyncIterable(response)) {
-      await this.handleStreamResponse(response);
+      // _activePlaceholderMessageId stays set throughout streaming so that
+      // handleError() can pop the placeholder if an error chunk arrives mid-stream.
+      // handleStreamResponse clears it on successful completion.
+      await this.handleStreamResponse(response, preCreatedMessageId);
     } else {
+      // Non-streaming: remove the pre-pushed placeholder (not needed).
+      // Use getAllMessages() so inactive branch messages are preserved when
+      // tree.reset() is called — this.state.messages only returns visible path.
+      // Also capture + restore the intended active path: tree.reset() rebuilds
+      // activeChildMap using "last child at each fork", which would snap back to
+      // the wrong branch if we're mid-edit on an inactive branch.
+      if (preCreatedMessageId) {
+        const id = preCreatedMessageId;
+        // The placeholder is the last visible message; the one before it is the
+        // intended leaf after removal.
+        const visibleMsgs = this.state.messages;
+        const placeholderIdx = visibleMsgs.findIndex((m) => m.id === id);
+        const intendedLeafId =
+          placeholderIdx > 0 ? visibleMsgs[placeholderIdx - 1].id : null;
+
+        const allMsgs = this.state.getAllMessages?.() ?? this.state.messages;
+        this.state.setMessages(allMsgs.filter((m) => m.id !== id));
+
+        // Restore the correct active branch after tree.reset()
+        if (intendedLeafId && this.state.setCurrentLeaf) {
+          this.state.setCurrentLeaf(intendedLeafId);
+        }
+      }
+      // Placeholder removed — clear the tracker before handling the response
+      this._activePlaceholderMessageId = undefined;
       this.handleJsonResponse(response);
     }
   }
@@ -555,16 +751,123 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   }
 
   /**
+   * Update prompt/tool optimization behavior.
+   */
+  setOptimizationConfig(config?: ToolOptimizationConfig): void {
+    this.config.optimization = config;
+    this.optimizer.updateConfig(config);
+  }
+
+  /**
+   * Select the active tool profile for future requests.
+   */
+  setToolProfile(profile?: string): void {
+    this.optimizer.setActiveProfile(profile);
+  }
+
+  /**
+   * Get the most recent prompt context usage snapshot.
+   */
+  getContextUsage(): ContextUsage | null {
+    return this.lastContextUsage;
+  }
+
+  /**
+   * Inline skills from the client (sent on every request for server to merge)
+   */
+  protected inlineSkills: Array<{
+    name: string;
+    description: string;
+    content: string;
+    strategy?: string;
+  }> = [];
+
+  /**
+   * Set inline skills (called by SkillProvider via React layer)
+   */
+  setInlineSkills(
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ): void {
+    this.inlineSkills = skills;
+    this.debug("Inline skills updated", { count: skills.length });
+  }
+
+  /**
    * Dynamic context from useAIContext hook
    */
   protected dynamicContext: string = "";
+
+  /**
+   * Optional transform applied to messages just before building the HTTP request.
+   * Used by the message-history / compaction system to send a pruned message list
+   * without mutating the in-memory store (which keeps the full history for display).
+   */
+  private requestMessageTransform:
+    | ((messages: UIMessage[]) => UIMessage[])
+    | null = null;
+
+  /**
+   * Set (or clear) the per-request message transform.
+   * Pass null to disable.
+   */
+  setRequestMessageTransform(
+    fn: ((messages: UIMessage[]) => UIMessage[]) | null,
+  ): void {
+    this.requestMessageTransform = fn;
+  }
 
   /**
    * Set dynamic context (appended to system prompt)
    */
   setContext(context: string): void {
     this.dynamicContext = context;
-    this.debug("Context updated", { length: context.length });
+  }
+
+  /**
+   * Switch to a different thread (or start a new one).
+   *
+   * - Pass the session/thread ID from persistence → used as-is, no session creation call.
+   * - Pass null → threadId cleared, new session created on first sendMessage.
+   *
+   * The session ID IS the thread ID: whatever is stored in persistence is passed here directly.
+   */
+  setActiveThread(id: string | null): void {
+    this.config.threadId = id ?? undefined;
+    this.sessionInitPromise = null;
+    this.setSessionStatus(id ? "ready" : "idle");
+  }
+
+  /**
+   * Force a new session to be created on the next sendMessage.
+   * Call this when the current session has expired or credits are exhausted.
+   * After calling this, the next sendMessage will invoke onCreateSession/yourgptConfig
+   * again and onThreadChange will fire with the new session ID.
+   */
+  renewSession(): void {
+    this.config.threadId = undefined;
+    this.sessionInitPromise = null;
+    this.setSessionStatus("idle");
+  }
+
+  private setSessionStatus(
+    status: "idle" | "creating" | "ready" | "error",
+  ): void {
+    if (this.sessionStatus !== status) {
+      this.sessionStatus = status;
+      this.callbacks.onSessionStatusChange?.(status);
+    }
+  }
+
+  /**
+   * Get the current session creation status.
+   */
+  getSessionStatus(): "idle" | "creating" | "ready" | "error" {
+    return this.sessionStatus;
   }
 
   /**
@@ -573,109 +876,176 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   setSystemPrompt(prompt: string): void {
     this.config.systemPrompt = prompt;
-    this.debug("System prompt updated", { length: prompt.length });
+  }
+
+  /**
+   * Set headers configuration
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders(headers: ChatConfig["headers"]): void {
+    this.config.headers = headers;
+    if (this.transport.setHeaders && headers !== undefined) {
+      this.transport.setHeaders(headers);
+    }
+  }
+
+  /**
+   * Set URL configuration
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl(url: ChatConfig["runtimeUrl"]): void {
+    this.config.runtimeUrl = url;
+    if (this.transport.setUrl) {
+      this.transport.setUrl(url);
+    }
+  }
+
+  /**
+   * Set body configuration
+   * Additional properties merged into every request body
+   */
+  setBody(body: ChatConfig["body"]): void {
+    this.config.body = body;
+    if (this.transport.setBody && body !== undefined) {
+      this.transport.setBody(body);
+    }
+  }
+
+  /**
+   * Default session creation via yourgptConfig.
+   * Only called when yourgptConfig is set and no onCreateSession is provided.
+   * The returned session_uid IS the thread ID going forward.
+   */
+  private async _defaultCreateSession(): Promise<string> {
+    if (!this.config.yourgptConfig) {
+      throw new Error(
+        "[copilot-sdk] _defaultCreateSession called without yourgptConfig",
+      );
+    }
+    const {
+      apiKey,
+      widgetUid,
+      endpoint = "https://api.yourgpt.ai",
+    } = this.config.yourgptConfig;
+    const base = endpoint.replace(/\/$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const res = await fetch(`${base}/chatbot/v1/copilot-sdk/createSession`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "api-key": apiKey,
+        },
+        body: JSON.stringify({ widget_uid: widgetUid }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      const d = data?.data ?? data;
+      const id = d?.session_uid ?? d?.id;
+      if (!id)
+        throw new Error(
+          "[copilot-sdk] createSession failed: " + JSON.stringify(data),
+        );
+      return String(id);
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") {
+        throw new Error(
+          "[copilot-sdk] createSession timed out after 10s — check your endpoint/network",
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /**
    * Build the request payload
    */
-  protected buildRequest() {
-    // Send tools in SDK format - runtime handles conversion to LLM format
-    // Filter out tools that are marked as unavailable
-    const tools = this.config.tools
-      ?.filter((tool) => tool.available !== false)
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      }));
+  /** Inline text-file attachments into message content for the LLM */
+  private inlineTextAttachments(messages: T[]): T[] {
+    const textMimeTypes = new Set([
+      "text/csv",
+      "text/plain",
+      "text/markdown",
+      "text/x-markdown",
+      "application/json",
+      "application/csv",
+    ]);
+    const textExts = new Set(["csv", "txt", "md", "json"]);
 
-    // Build a map of toolCallId -> { toolName, args } from assistant messages
-    const toolCallMap = new Map<
-      string,
-      { toolName: string; args: Record<string, unknown> }
-    >();
-    for (const msg of this.state.messages) {
-      if (msg.role === "assistant" && msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          try {
-            const args = tc.function?.arguments
-              ? JSON.parse(tc.function.arguments)
-              : {};
-            toolCallMap.set(tc.id, { toolName: tc.function.name, args });
-          } catch {
-            toolCallMap.set(tc.id, { toolName: tc.function.name, args: {} });
-          }
+    return messages.map((msg) => {
+      if (msg.role !== "user" || !msg.attachments?.length) return msg;
+
+      const textFiles: MessageAttachment[] = [];
+      const binaryFiles: MessageAttachment[] = [];
+
+      for (const att of msg.attachments) {
+        const ext = att.filename?.toLowerCase().split(".").pop();
+        const isText =
+          textMimeTypes.has(att.mimeType) || (ext && textExts.has(ext));
+        if (isText && att.data && !att.url) {
+          textFiles.push(att);
+        } else {
+          binaryFiles.push(att);
         }
       }
-    }
 
-    // Create a lookup for tool definitions by name
-    const toolDefMap = new Map<string, ToolWithAIConfig>();
-    if (this.config.tools) {
-      for (const tool of this.config.tools) {
-        toolDefMap.set(tool.name, {
-          name: tool.name,
-          aiResponseMode: tool.aiResponseMode,
-          aiContext: tool.aiContext,
-        });
-      }
-    }
+      if (textFiles.length === 0) return msg;
+
+      // Inline text file contents into the message
+      const fileParts = textFiles.map((f) => {
+        const ext = f.filename?.split(".").pop()?.toLowerCase() || "txt";
+        return `\n\n--- ${f.filename || "file"} ---\n\`\`\`${ext}\n${f.data}\n\`\`\``;
+      });
+
+      return {
+        ...msg,
+        content: (msg.content || "") + fileParts.join(""),
+        attachments: binaryFiles.length > 0 ? binaryFiles : undefined,
+      };
+    });
+  }
+
+  protected buildRequest() {
+    const systemPrompt = this.dynamicContext
+      ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
+      : this.config.systemPrompt;
+    const rawMessages = this.requestMessageTransform
+      ? (this.requestMessageTransform(
+          this.state.messages as UIMessage[],
+        ) as T[])
+      : this.state.messages;
+
+    // Inline text-file attachments before optimization
+    const processedMessages = this.inlineTextAttachments(rawMessages);
+    const optimized = this.optimizer.prepare({
+      messages: processedMessages,
+      tools: this.config.tools,
+      systemPrompt,
+    });
+    this.lastContextUsage = optimized.contextUsage;
+    this.callbacks.onContextUsageChange?.(optimized.contextUsage);
 
     return {
-      messages: this.state.messages.map((m) => {
-        // For tool messages, transform based on aiResponseMode at SEND time
-        // This preserves full data in storage while sending brief to AI
-        if (m.role === "tool" && m.content && m.toolCallId) {
-          try {
-            const fullResult = JSON.parse(m.content);
-
-            // Look up the tool name and args from the tool call
-            const toolCallInfo = toolCallMap.get(m.toolCallId);
-            const toolDef = toolCallInfo
-              ? toolDefMap.get(toolCallInfo.toolName)
-              : undefined;
-            const toolArgs = toolCallInfo?.args;
-
-            const transformedContent = buildToolResultContentForAI(
-              fullResult,
-              toolDef,
-              toolArgs,
-            );
-            return {
-              role: m.role,
-              content: transformedContent,
-              tool_call_id: m.toolCallId,
-            };
-          } catch (e) {
-            // If not JSON, send as-is (log in debug mode)
-            this.debug("Failed to parse tool message JSON", {
-              content: m.content?.slice(0, 100),
-              error: e instanceof Error ? e.message : String(e),
-            });
-            return {
-              role: m.role,
-              content: m.content,
-              tool_call_id: m.toolCallId,
-            };
-          }
-        }
-
-        // Other messages unchanged
-        return {
-          role: m.role,
-          content: m.content,
-          tool_calls: m.toolCalls,
-          tool_call_id: m.toolCallId,
-          attachments: m.attachments,
-        };
-      }),
+      messages: optimized.messages,
       threadId: this.config.threadId,
-      systemPrompt: this.dynamicContext
-        ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
-        : this.config.systemPrompt,
+      systemPrompt,
       llm: this.config.llm,
-      tools: tools?.length ? tools : undefined,
+      tools: this.config.tools?.length
+        ? this.config.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            category: tool.category,
+            group: tool.group,
+            deferLoading: tool.deferLoading,
+            profiles: tool.profiles,
+            searchKeywords: tool.searchKeywords,
+            inputSchema: tool.inputSchema,
+          }))
+        : undefined,
+      __skills: this.inlineSkills.length ? this.inlineSkills : undefined,
     };
   }
 
@@ -684,39 +1054,307 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   protected async handleStreamResponse(
     stream: AsyncIterable<StreamChunk>,
+    preCreatedMessageId?: string,
   ): Promise<void> {
     this.state.status = "streaming";
     this.callbacks.onStatusChange?.("streaming");
 
-    // Create empty assistant message for streaming
-    const assistantMessage = createEmptyAssistantMessage() as T;
-    this.state.pushMessage(assistantMessage);
+    // Reuse the pre-pushed empty assistant message (created in processRequest
+    // before the HTTP round-trip) so there's no blank gap waiting for stream start.
+    // Fall back to pushing a new one if not provided.
+    let assistantMessage: T;
+    if (preCreatedMessageId) {
+      const existing = this.state.messages.find(
+        (m) => m.id === preCreatedMessageId,
+      );
+      if (existing) {
+        assistantMessage = existing;
+      } else {
+        assistantMessage = createEmptyAssistantMessage() as T;
+        this.state.pushMessage(assistantMessage);
+      }
+    } else {
+      assistantMessage = createEmptyAssistantMessage() as T;
+      this.state.pushMessage(assistantMessage);
+    }
 
     // Initialize stream state
     this.streamState = createStreamState(assistantMessage.id);
     this.callbacks.onMessageStart?.(assistantMessage.id);
 
-    this.debug("handleStreamResponse", "Starting to process stream");
+    this.debugGroup("handleStreamResponse");
+    this.debug("Starting to process stream");
 
     let chunkCount = 0;
-    let hasError = false;
     let toolCallsEmitted = false; // Guard to prevent emitting toolCalls twice
+    // Holds client tool calls received via a tool_calls chunk AFTER a
+    // mid-stream message:end nulled streamState.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pendingClientToolCalls: any[] | undefined;
 
     // Process stream chunks
     for await (const chunk of stream) {
       chunkCount++;
-      this.debug("chunk", { count: chunkCount, type: chunk.type });
+      // Skip high-frequency delta chunks from the chunk log to reduce noise
+      if (chunk.type !== "message:delta") {
+        this.debug("chunk", { count: chunkCount, type: chunk.type });
+      }
 
       // Handle error chunks immediately
       if (chunk.type === "error") {
-        hasError = true;
         const error = new Error(chunk.message || "Stream error");
         this.handleError(error);
         return;
       }
 
+      // Handle message:end mid-stream (server-side agent loop turn completed)
+      // This creates separate messages for each turn instead of combining them
+      if (chunk.type === "message:end" && this.streamState?.content) {
+        this.debug("message:end mid-stream", {
+          messageId: this.streamState.messageId,
+          contentLength: this.streamState.content.length,
+          toolCallsInState: this.streamState.toolCalls?.length ?? 0,
+          chunkCount,
+        });
+
+        // Finalize current message with its content and tool calls
+        const turnMessage = streamStateToMessage(this.streamState) as T;
+
+        // Add toolCallsHidden metadata if applicable
+        const toolCallsHidden: Record<string, boolean> = {};
+        for (const [id, result] of this.streamState.toolResults) {
+          if (result.hidden !== undefined) {
+            toolCallsHidden[id] = result.hidden;
+          }
+        }
+        if (
+          turnMessage.toolCalls?.length &&
+          Object.keys(toolCallsHidden).length > 0
+        ) {
+          (turnMessage as T & { metadata?: Record<string, unknown> }).metadata =
+            {
+              ...(turnMessage as T & { metadata?: Record<string, unknown> })
+                .metadata,
+              toolCallsHidden,
+            };
+        }
+
+        this.state.updateMessageById(
+          this.streamState.messageId,
+          (existing) => ({
+            ...turnMessage,
+            ...(existing.parentId !== undefined
+              ? { parentId: existing.parentId }
+              : {}),
+            ...(existing.childrenIds !== undefined
+              ? { childrenIds: existing.childrenIds }
+              : {}),
+          }),
+        );
+        this.callbacks.onMessageFinish?.(turnMessage);
+
+        // Reset stream state for next turn - will be initialized on next message:start
+        this.streamState = null;
+        continue;
+      }
+
+      // Handle message:start after a mid-stream finalization
+      if (chunk.type === "message:start" && this.streamState === null) {
+        this.debug("message:start after mid-stream end - creating new message");
+        // Capture the current leaf BEFORE pushing the new message so the
+        // continuation turn is chained as a child in the branch tree.
+        // Without this parentId the new message becomes a ROOT orphan, which
+        // hijacks getVisibleMessages() and wipes the prior conversation from
+        // the active path on every subsequent buildRequest() call.
+        const currentLeaf = this.state.messages;
+        const currentLeafId =
+          currentLeaf.length > 0
+            ? currentLeaf[currentLeaf.length - 1].id
+            : undefined;
+        const newMessage = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
+        this.state.pushMessage(newMessage);
+        this.streamState = createStreamState(newMessage.id);
+        this.callbacks.onMessageStart?.(newMessage.id);
+        continue;
+      }
+
       // Update stream state (pure function)
+      // Skip most chunks if streamState is null.
+      // EXCEPTION: after a mid-stream message:end the server can still send
+      // tool_calls + done for client-side tool dispatch. Handle those directly.
+      if (!this.streamState) {
+        if (chunk.type === "tool_calls") {
+          // Store for emission when done arrives. Do NOT update message state
+          // here — done.messages carries the assistant message with tool_calls
+          // in proper OpenAI format, which we use in the done handler below.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          pendingClientToolCalls = (chunk as { toolCalls: any[] }).toolCalls;
+          this.debug("tool_calls (post-message:end, stored as pending)", {
+            count: pendingClientToolCalls?.length,
+            ids: pendingClientToolCalls?.map((tc: { id?: string }) => tc.id),
+          });
+          continue;
+        }
+
+        if (chunk.type === "done") {
+          this.debug("done (post-message:end)", {
+            hasPendingToolCalls: !!pendingClientToolCalls?.length,
+            pendingCount: pendingClientToolCalls?.length ?? 0,
+            doneMessagesCount: chunk.messages?.length ?? 0,
+            requiresAction: (chunk as { requiresAction?: boolean })
+              .requiresAction,
+            toolCallsEmitted,
+          });
+          // Process done.messages to:
+          // 1. Insert any server-side tool results missing from state
+          // 2. Merge OpenAI-format tool_calls into the finalized assistant message
+          if (chunk.messages?.length) {
+            const pendingIds = new Set(
+              ((pendingClientToolCalls ?? []) as Array<{ id?: string }>)
+                .filter((tc) => tc?.id)
+                .map((tc) => tc.id as string),
+            );
+            const messagesToInsert: T[] = [];
+            let clientAssistantToolCalls: unknown[] | undefined;
+
+            for (const msg of chunk.messages) {
+              // This is the client-tool assistant message already in state
+              // (finalized by message:end but without toolCalls).
+              // Capture its OpenAI-format tool_calls to merge into state.
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                pendingIds.size > 0 &&
+                (msg.tool_calls as Array<{ id?: string }>).every((tc) =>
+                  pendingIds.has(tc?.id ?? ""),
+                )
+              ) {
+                clientAssistantToolCalls = msg.tool_calls as unknown[];
+                continue; // Already in state — don't insert a duplicate
+              }
+              // Skip plain assistant text — already streamed
+              if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Everything else (server tool results) needs inserting
+              messagesToInsert.push({
+                id: generateMessageId(),
+                role: msg.role as T["role"],
+                content: msg.content ?? "",
+                toolCalls: msg.tool_calls as T["toolCalls"],
+                toolCallId: msg.tool_call_id,
+                createdAt: new Date(),
+              } as T);
+            }
+
+            // Merge OpenAI-format tool_calls into the existing last assistant message
+            if (clientAssistantToolCalls) {
+              const currentMessages = this.state.messages;
+              for (let i = currentMessages.length - 1; i >= 0; i--) {
+                if (currentMessages[i].role === "assistant") {
+                  this.state.updateMessageById(
+                    currentMessages[i].id,
+                    (m) =>
+                      ({
+                        ...m,
+                        toolCalls: clientAssistantToolCalls,
+                      }) as T,
+                  );
+                  break;
+                }
+              }
+            }
+
+            if (messagesToInsert.length > 0) {
+              // Insert server tool results before the last assistant message
+              const currentMessages = this.state.messages;
+              let insertIdx = currentMessages.length;
+              for (let i = currentMessages.length - 1; i >= 0; i--) {
+                if (currentMessages[i].role === "assistant") {
+                  insertIdx = i;
+                  break;
+                }
+              }
+              // Assign parentIds so inserted messages form a proper chain in the
+              // MessageTree. Without this they become orphan root-level children,
+              // which breaks the active-path walk and causes the visible message
+              // count to drop on subsequent turns.
+              const insertParentId =
+                insertIdx > 0 ? currentMessages[insertIdx - 1].id : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the message at insertIdx to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === insertIdx ? { ...m, parentId: lastInsertedId } : m,
+              );
+              this.state.setMessages([
+                ...updatedCurrent.slice(0, insertIdx),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(insertIdx),
+              ]);
+            }
+          }
+
+          // Emit client tool calls so ChatWithTools executes them
+          if (!toolCallsEmitted && pendingClientToolCalls?.length) {
+            toolCallsEmitted = true;
+            this.debug("emit toolCalls (post-message:end path)", {
+              count: pendingClientToolCalls.length,
+              names: pendingClientToolCalls.map(
+                (tc: { function?: { name: string }; name?: string }) =>
+                  tc.function?.name ?? tc.name,
+              ),
+            });
+            this.emit("toolCalls", { toolCalls: pendingClientToolCalls });
+          } else {
+            this.debug("skip emit toolCalls (post-message:end path)", {
+              toolCallsEmitted,
+              hasPending: !!pendingClientToolCalls?.length,
+            });
+          }
+          continue;
+        }
+
+        this.debug("warning", "streamState is null, skipping chunk");
+        continue;
+      }
       this.streamState = processStreamChunk(chunk, this.streamState);
+
+      // Emit server tool callbacks for action events
+      if (chunk.type === "action:start") {
+        this.callbacks.onServerToolStart?.({
+          id: chunk.id,
+          name: chunk.name,
+          hidden: chunk.hidden,
+        });
+      } else if (chunk.type === "action:args") {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(chunk.args);
+        } catch {
+          // Keep empty args
+        }
+        // Get name from toolResults (set by action:start)
+        const existingResult = this.streamState?.toolResults.get(chunk.id);
+        if (existingResult) {
+          this.callbacks.onServerToolArgs?.({
+            id: chunk.id,
+            name: existingResult.name,
+            args,
+          });
+        }
+      } else if (chunk.type === "action:end") {
+        this.callbacks.onServerToolEnd?.({
+          id: chunk.id,
+          name: chunk.name,
+          result: chunk.result,
+          error: chunk.error,
+        });
+      }
 
       // Update message in state BY ID (not last position)
       // This is critical: when tool calls trigger nested streams,
@@ -724,51 +1362,310 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       const updatedMessage = streamStateToMessage(this.streamState) as T;
       this.state.updateMessageById(
         this.streamState.messageId,
-        () => updatedMessage,
+        // Preserve parentId/childrenIds from the existing placeholder so the
+        // branch tree structure (activeChildMap) is not corrupted when
+        // setCurrentLeaf() walks up the chain later.
+        (existing) => ({
+          ...updatedMessage,
+          ...(existing.parentId !== undefined
+            ? { parentId: existing.parentId }
+            : {}),
+          ...(existing.childrenIds !== undefined
+            ? { childrenIds: existing.childrenIds }
+            : {}),
+        }),
       );
+
+      // Fire raw stream chunk callback — powers useCopilotEvent hook
+      this.callbacks.onStreamChunk?.({
+        ...chunk,
+        messageId: assistantMessage.id,
+      });
 
       // Notify delta callback
       if (chunk.type === "message:delta") {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
-      // Check for tool calls - only emit once per stream
-      if (requiresToolExecution(chunk) && !toolCallsEmitted) {
-        toolCallsEmitted = true;
-        this.debug("toolCalls", { toolCalls: updatedMessage.toolCalls });
-        this.emit("toolCalls", { toolCalls: updatedMessage.toolCalls });
-      }
-
       // Check for completion
       if (isStreamDone(chunk)) {
-        this.debug("streamDone", { chunk });
+        this.debug("streamDone", {
+          chunkType: chunk.type,
+          requiresAction: (chunk as { requiresAction?: boolean })
+            .requiresAction,
+          doneMessagesCount:
+            (chunk as { messages?: unknown[] }).messages?.length ?? 0,
+          streamToolCallsCount: this.streamState?.toolCalls?.length ?? 0,
+          toolCallsEmitted,
+          chunkCount,
+        });
+
+        // Adopt threadId from server storage adapter (if present)
+        if (
+          chunk.type === "done" &&
+          (chunk as { threadId?: string }).threadId
+        ) {
+          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+          if (
+            !this.config.threadId ||
+            this.config.threadId !== serverThreadId
+          ) {
+            this.config.threadId = serverThreadId;
+            this.sessionInitPromise = null;
+            this.setSessionStatus("ready");
+            this.callbacks.onThreadChange?.(serverThreadId);
+          }
+        }
+
+        // CRITICAL: Process messages from done event (server-side tool results)
+        // Without this, tool_call_id is lost and causes Anthropic API errors
+        if (chunk.type === "done" && chunk.messages?.length) {
+          this.debug("processDoneMessages", {
+            count: chunk.messages.length,
+            roles: chunk.messages.map(
+              (m) =>
+                `${m.role}${m.tool_calls?.length ? `[${(m.tool_calls as unknown[]).length}tc]` : ""}`,
+            ),
+          });
+
+          const currentStreamToolCallIds = new Set(
+            this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
+          );
+          const messagesToInsert: T[] = [];
+
+          // Build hidden map from stream state's toolResults
+          const toolCallsHidden: Record<string, boolean> = {};
+          if (this.streamState?.toolResults) {
+            for (const [id, result] of this.streamState.toolResults) {
+              if (result.hidden !== undefined) {
+                toolCallsHidden[id] = result.hidden;
+              }
+            }
+          }
+
+          for (const msg of chunk.messages) {
+            // Skip plain assistant text messages because they are already represented
+            // by streamed message:start/message:delta/message:end events. Preserve
+            // assistant messages that carry tool_calls so tool results keep a valid
+            // preceding assistant tool_call message in local state.
+            if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // The current streamed turn already becomes an assistant message from
+            // streamState/tool_calls handling. Skip the duplicate copy from the
+            // done payload, but keep assistant tool_call messages from earlier
+            // recursive turns (for example search_tools followed by a later client
+            // tool call).
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              (msg.tool_calls as Array<{ id: string }>).every((toolCall) =>
+                currentStreamToolCallIds.has(toolCall.id),
+              )
+            ) {
+              continue;
+            }
+
+            // For assistant messages with tool_calls, add hidden metadata
+            let metadata: Record<string, unknown> | undefined;
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              Object.keys(toolCallsHidden).length > 0
+            ) {
+              metadata = { toolCallsHidden };
+            }
+
+            const message = {
+              id: generateMessageId(),
+              role: msg.role as T["role"],
+              content: msg.content ?? "",
+              toolCalls: msg.tool_calls as T["toolCalls"],
+              toolCallId: msg.tool_call_id,
+              createdAt: new Date(),
+              metadata,
+            } as T;
+
+            messagesToInsert.push(message);
+          }
+
+          if (messagesToInsert.length > 0) {
+            const currentMessages = this.state.messages;
+            const currentStreamIndex = this.streamState
+              ? currentMessages.findIndex(
+                  (message) => message.id === this.streamState!.messageId,
+                )
+              : -1;
+
+            if (currentStreamIndex === -1) {
+              // Append at end — chain from the last existing message
+              const appendParentId =
+                currentMessages.length > 0
+                  ? currentMessages[currentMessages.length - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? appendParentId : messagesToInsert[i - 1].id,
+              }));
+              this.state.setMessages([...currentMessages, ...linkedToInsert]);
+            } else {
+              // Insert before the current streaming message — chain from the
+              // message immediately before it, then re-parent the streaming
+              // message to chain from the last inserted.
+              const insertParentId =
+                currentStreamIndex > 0
+                  ? currentMessages[currentStreamIndex - 1].id
+                  : undefined;
+              const linkedToInsert = messagesToInsert.map((msg, i) => ({
+                ...msg,
+                parentId: i === 0 ? insertParentId : messagesToInsert[i - 1].id,
+              }));
+              const lastInsertedId =
+                linkedToInsert[linkedToInsert.length - 1].id;
+              // Re-parent the streaming message to chain from the last inserted
+              const updatedCurrent = currentMessages.map((m, idx) =>
+                idx === currentStreamIndex
+                  ? { ...m, parentId: lastInsertedId }
+                  : m,
+              );
+              this.state.setMessages([
+                ...updatedCurrent.slice(0, currentStreamIndex),
+                ...linkedToInsert,
+                ...updatedCurrent.slice(currentStreamIndex),
+              ]);
+            }
+          }
+
+          // Only execute client tools once the full done payload has been
+          // merged into local state. Emitting earlier on the first tool_calls
+          // chunk can race with recursive server-tool turns and produce an
+          // invalid continuation order for OpenAI-compatible providers.
+          this.debug("requiresAction check", {
+            requiresAction: chunk.requiresAction,
+            toolCallsEmitted,
+            updatedMessageToolCallsCount: updatedMessage.toolCalls?.length ?? 0,
+            messagesToInsertCount: messagesToInsert.length,
+          });
+
+          if (chunk.requiresAction && !toolCallsEmitted) {
+            // When the server runs a multi-turn agent loop before handing off
+            // to the client, the client tool calls arrive via done.messages
+            // (messagesToInsert), NOT in the current streaming message's
+            // toolCalls (which is always empty because action:start/args/end
+            // chunks only fire callbacks and never update streamState.toolCalls).
+            // Find the last assistant message in the inserted batch that carries
+            // tool calls — that is the pending client tool dispatch.
+            let clientToolCalls = updatedMessage.toolCalls;
+            if (!clientToolCalls?.length && messagesToInsert.length > 0) {
+              for (let i = messagesToInsert.length - 1; i >= 0; i--) {
+                const m = messagesToInsert[i];
+                if (m.role === "assistant" && m.toolCalls?.length) {
+                  clientToolCalls = m.toolCalls;
+                  this.debug("clientToolCalls from messagesToInsert", {
+                    index: i,
+                    count: clientToolCalls?.length,
+                  });
+                  break;
+                }
+              }
+            }
+
+            if (clientToolCalls?.length) {
+              toolCallsEmitted = true;
+              this.debug("emit toolCalls (normal done path)", {
+                count: clientToolCalls.length,
+                names: (
+                  clientToolCalls as Array<{
+                    function?: { name: string };
+                    name?: string;
+                  }>
+                ).map((tc) => tc.function?.name ?? tc.name),
+              });
+              this.emit("toolCalls", { toolCalls: clientToolCalls });
+            } else {
+              this.debug("requiresAction=true but no clientToolCalls found", {
+                updatedMessageToolCalls: updatedMessage.toolCalls,
+                messagesToInsert: messagesToInsert.map((m) => ({
+                  role: m.role,
+                  hasToolCalls: !!m.toolCalls?.length,
+                })),
+              });
+            }
+          }
+        }
+
         break;
       }
     }
 
     this.debug("handleStreamResponse", `Processed ${chunkCount} chunks`);
 
-    // Finalize - update by ID to ensure we update the correct message
-    const finalMessage = streamStateToMessage(this.streamState) as T;
-    this.state.updateMessageById(
-      this.streamState.messageId,
-      () => finalMessage,
-    );
+    // If streamState was already finalized (via message:end mid-stream), skip finalization
+    if (!this.streamState) {
+      this.debug("streamState already finalized via message:end");
+    } else {
+      // Build hidden map from stream state's toolResults for final message metadata
+      const toolCallsHidden: Record<string, boolean> = {};
+      if (this.streamState.toolResults) {
+        for (const [id, result] of this.streamState.toolResults) {
+          if (result.hidden !== undefined) {
+            toolCallsHidden[id] = result.hidden;
+          }
+        }
+      }
 
-    // Check if we got any content
-    if (
-      !finalMessage.content &&
-      (!finalMessage.toolCalls || finalMessage.toolCalls.length === 0)
-    ) {
-      this.debug("warning", "Empty response - no content and no tool calls");
+      // Finalize - update by ID to ensure we update the correct message
+      const finalMessage = streamStateToMessage(this.streamState) as T;
+
+      // Add toolCallsHidden metadata if we have tool calls with hidden flags
+      if (
+        finalMessage.toolCalls?.length &&
+        Object.keys(toolCallsHidden).length > 0
+      ) {
+        (finalMessage as T & { metadata?: Record<string, unknown> }).metadata =
+          {
+            ...(finalMessage as T & { metadata?: Record<string, unknown> })
+              .metadata,
+            toolCallsHidden,
+          };
+      }
+
+      this.state.updateMessageById(this.streamState.messageId, (existing) => ({
+        ...finalMessage,
+        ...(existing.parentId !== undefined
+          ? { parentId: existing.parentId }
+          : {}),
+        ...(existing.childrenIds !== undefined
+          ? { childrenIds: existing.childrenIds }
+          : {}),
+      }));
+
+      // Check if we got any content
+      if (
+        !finalMessage.content &&
+        (!finalMessage.toolCalls || finalMessage.toolCalls.length === 0)
+      ) {
+        this.debug("warning", "Empty response - no content and no tool calls");
+      }
     }
 
-    this.callbacks.onMessageFinish?.(finalMessage);
-    this.callbacks.onMessagesChange?.(this.state.messages);
+    this.callbacks.onMessagesChange?.(this._allMessages());
+
+    // Stream completed successfully — placeholder is now a real message, clear tracker
+    this._activePlaceholderMessageId = undefined;
+
+    // Close the stream group opened at the start of handleStreamResponse
+    this.debugGroupEnd();
 
     // Only set status to "ready" if NO tool calls were emitted
     // If tool calls were emitted, the async handler will manage status
     // (it will set "submitted" then "streaming" for the continuation)
+    this.debug("stream end", {
+      toolCallsEmitted,
+      totalChunks: chunkCount,
+      messagesInState: this.state.messages.length,
+    });
     if (!toolCallsEmitted) {
       this.state.status = "ready";
       this.callbacks.onStatusChange?.("ready");
@@ -783,20 +1680,75 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    * Handle JSON (non-streaming) response
    */
   protected handleJsonResponse(response: ChatResponse): void {
+    // Adopt threadId from server storage adapter (if present)
+    if (
+      response.threadId &&
+      (!this.config.threadId || this.config.threadId !== response.threadId)
+    ) {
+      this.config.threadId = response.threadId;
+      this.sessionInitPromise = null;
+      this.setSessionStatus("ready");
+      this.callbacks.onThreadChange?.(response.threadId);
+    }
+
+    // Build a map of tool call hidden flags from response.toolCalls
+    const toolCallHiddenMap = new Map<string, boolean>();
+    if (response.toolCalls) {
+      for (const tc of response.toolCalls) {
+        if (tc.hidden !== undefined) {
+          toolCallHiddenMap.set(tc.id, tc.hidden);
+        }
+      }
+    }
+
     // Add response messages
+    // Track the current leaf as we insert messages so each message in a
+    // multi-message response is correctly chained (child of the previous).
+    let currentParentId: string | null | undefined =
+      this.state.messages.length > 0
+        ? this.state.messages[this.state.messages.length - 1].id
+        : undefined;
+
     for (const msg of response.messages ?? []) {
+      // For assistant messages with tool_calls, add hidden info to metadata
+      let metadata: Record<string, unknown> | undefined;
+      if (
+        msg.role === "assistant" &&
+        msg.tool_calls &&
+        toolCallHiddenMap.size > 0
+      ) {
+        const toolCallsHidden: Record<string, boolean> = {};
+        for (const tc of msg.tool_calls as Array<{ id: string }>) {
+          const hidden = toolCallHiddenMap.get(tc.id);
+          if (hidden !== undefined) {
+            toolCallsHidden[tc.id] = hidden;
+          }
+        }
+        if (Object.keys(toolCallsHidden).length > 0) {
+          metadata = { toolCallsHidden };
+        }
+      }
+
       const message = {
         id: generateMessageId(),
         role: msg.role as T["role"],
         content: msg.content ?? "",
         toolCalls: msg.tool_calls as T["toolCalls"],
+        // CRITICAL: Preserve toolCallId for tool messages (fixes Anthropic API errors)
+        toolCallId: msg.tool_call_id,
         createdAt: new Date(),
+        metadata,
+        // Preserve branch tree structure: each message is a child of the
+        // current leaf so the tree is not corrupted for non-streaming mode.
+        ...(currentParentId !== undefined ? { parentId: currentParentId } : {}),
       } as T;
 
       this.state.pushMessage(message);
+      // Next message in this batch is a child of the one we just pushed
+      currentParentId = message.id;
     }
 
-    this.callbacks.onMessagesChange?.(this.state.messages);
+    this.callbacks.onMessagesChange?.(this._allMessages());
 
     // Check for tool calls BEFORE setting status to ready
     // If tool calls exist, the async handler will manage status
@@ -823,6 +1775,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   protected handleError(error: Error): void {
     this.debug("error", error);
+
+    // Remove the pending loading placeholder so it doesn't stay frozen.
+    // The error is surfaced through state.error → UI banner only —
+    // never written into the message history.
+    if (this._activePlaceholderMessageId) {
+      this.state.popMessage();
+      this._activePlaceholderMessageId = undefined;
+      this.callbacks.onMessagesChange?.(this._allMessages());
+    }
+
     this.state.error = error;
     this.state.status = "error";
     this.callbacks.onError?.(error);
@@ -830,13 +1792,31 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.emit("error", { error });
   }
 
-  /**
-   * Debug logging
-   */
-  protected debug(action: string, data?: unknown): void {
-    if (this.config.debug) {
-      console.log(`[AbstractChat] ${action}`, data);
+  // ─── Debug helpers ────────────────────────────────────────────────────────
+
+  private _log?: import("../../core/utils/logger").ScopedLogger;
+
+  private get log(): import("../../core/utils/logger").ScopedLogger {
+    if (!this._log) {
+      this._log = createLogger("streaming", () => this.config.debug ?? false);
     }
+    return this._log;
+  }
+
+  protected debug(action: string, data?: unknown): void {
+    this.log(action, data);
+  }
+
+  protected debugGroup(label: string, collapsed = true): void {
+    if (collapsed) {
+      this.log.groupCollapsed(label);
+    } else {
+      this.log.group(label);
+    }
+  }
+
+  protected debugGroupEnd(): void {
+    this.log.groupEnd();
   }
 
   /**

@@ -2,6 +2,7 @@
  * HttpTransport - HTTP/SSE implementation of ChatTransport
  *
  * Uses fetch with streaming for SSE responses.
+ * Supports dynamic configuration via getter functions.
  */
 
 import type {
@@ -12,15 +13,29 @@ import type {
   TransportConfig,
 } from "../interfaces";
 import { parseSSELine } from "../functions";
+import { resolveValues } from "../../core/utils/resolvable";
 
 /**
  * HTTP Transport for chat API
  *
+ * Supports both static and dynamic configuration. When using getter functions,
+ * values are resolved fresh on every request.
+ *
  * @example
  * ```typescript
+ * // Static config
  * const transport = new HttpTransport({
  *   url: '/api/chat',
- *   headers: { ... },
+ *   headers: { "x-api-key": "static" },
+ * });
+ *
+ * // Dynamic config (recommended for auth/runtime values)
+ * const transport = new HttpTransport({
+ *   url: () => getApiEndpoint(),
+ *   headers: () => ({
+ *     Authorization: `Bearer ${getToken()}`,
+ *     ...getCustomHeaders(),
+ *   }),
  * });
  *
  * const stream = await transport.send(request);
@@ -44,6 +59,7 @@ export class HttpTransport implements ChatTransport {
 
   /**
    * Send a chat request
+   * Resolves dynamic config values (url, headers, body) fresh at request time
    */
   async send(
     request: ChatRequest,
@@ -53,11 +69,20 @@ export class HttpTransport implements ChatTransport {
     this.streaming = true;
 
     try {
-      const response = await fetch(this.config.url, {
+      // Resolve dynamic values at request time (not constructor time)
+      // This ensures fresh values on every request
+      // Optimized: skips async overhead if all values are static
+      const resolved = await resolveValues({
+        url: this.config.url,
+        headers: this.config.headers ?? {},
+        configBody: this.config.body ?? {},
+      });
+
+      const response = await fetch(resolved.url as string, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...this.config.headers,
+          ...(resolved.headers as Record<string, string>),
         },
         body: JSON.stringify({
           messages: request.messages,
@@ -67,14 +92,29 @@ export class HttpTransport implements ChatTransport {
           tools: request.tools,
           actions: request.actions,
           streaming: this.config.streaming,
+          __skills: request.__skills,
+          ...(resolved.configBody as Record<string, unknown>),
           ...request.body,
         }),
         signal: this.abortController.signal,
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          // Try user-provided parser first, then fall back to default extraction
+          const custom = this.config.parseError?.(response.status, errorBody);
+          errorMessage =
+            custom ??
+            errorBody?.message ??
+            errorBody?.error ??
+            JSON.stringify(errorBody);
+        } catch {
+          const text = await response.text();
+          if (text) errorMessage = text;
+        }
+        throw new Error(errorMessage);
       }
 
       const contentType = response.headers.get("content-type") || "";
@@ -116,6 +156,39 @@ export class HttpTransport implements ChatTransport {
    */
   isStreaming(): boolean {
     return this.streaming;
+  }
+
+  /**
+   * Update headers configuration
+   * Can be static headers or a getter function for dynamic resolution
+   *
+   * @example
+   * ```typescript
+   * // Static
+   * transport.setHeaders({ "x-api-key": "new-key" });
+   *
+   * // Dynamic (resolved fresh on each request)
+   * transport.setHeaders(() => ({ Authorization: `Bearer ${getToken()}` }));
+   * ```
+   */
+  setHeaders(headers: TransportConfig["headers"]): void {
+    this.config.headers = headers;
+  }
+
+  /**
+   * Update URL configuration
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl(url: TransportConfig["url"]): void {
+    this.config.url = url;
+  }
+
+  /**
+   * Update body configuration
+   * Additional properties merged into every request body
+   */
+  setBody(body: TransportConfig["body"]): void {
+    this.config.body = body;
   }
 
   /**

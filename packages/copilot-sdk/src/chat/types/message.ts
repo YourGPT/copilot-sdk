@@ -40,6 +40,15 @@ export interface UIMessage {
   createdAt: Date;
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+  /**
+   * Parent message ID for branching support.
+   * - null = root message (no parent)
+   * - undefined = legacy linear message (no branch awareness)
+   * - string = ID of parent message
+   */
+  parentId?: string | null;
+  /** Direct children IDs for O(1) sibling lookup */
+  childrenIds?: string[];
 }
 
 /**
@@ -52,6 +61,8 @@ export interface StreamToolResult {
   args?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  /** Whether this tool should be hidden from UI */
+  hidden?: boolean;
 }
 
 /**

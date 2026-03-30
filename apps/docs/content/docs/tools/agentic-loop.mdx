@@ -374,6 +374,65 @@ useTools({
 
 ---
 
+## Tracking Iteration Progress
+
+Use `agentIteration` from `useCopilot()` to show which reasoning step the AI is on in real time:
+
+```tsx
+function AgentStatus() {
+  const { isLoading, agentIteration } = useCopilot();
+
+  if (!isLoading) return null;
+
+  return (
+    <div className="text-sm text-muted-foreground">
+      {agentIteration > 0
+        ? `Reasoning... (step ${agentIteration})`
+        : 'Thinking...'}
+    </div>
+  );
+}
+```
+
+`agentIteration` increments by 1 each time the AI completes a tool call and continues reasoning. It resets to `0` at the start of each new user message.
+
+### Checkpoints
+
+`useMessageCheckpoints` lets you save and restore specific points in the conversation — useful for letting users branch off mid-task or undo multi-step AI actions:
+
+```tsx
+import { useMessageCheckpoints } from '@yourgpt/copilot-sdk/react';
+
+function CheckpointControls() {
+  const { saveCheckpoint, restoreCheckpoint, checkpoints } = useMessageCheckpoints();
+
+  return (
+    <div>
+      <button onClick={() => saveCheckpoint('before-bulk-edit')}>
+        Save checkpoint
+      </button>
+      {checkpoints.map((cp) => (
+        <button key={cp.id} onClick={() => restoreCheckpoint(cp.id)}>
+          Restore: {cp.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+```
+
+### Inline Editing
+
+Pass `allowEdit` to `CopilotChat` to let users edit any AI message and re-run from that point:
+
+```tsx
+<CopilotChat allowEdit />
+```
+
+Editing an AI message discards all subsequent messages in the thread and re-sends from the edited content, effectively branching the conversation from that point.
+
+---
+
 ## Callbacks (Advanced)
 
 Listen to agentic loop events:

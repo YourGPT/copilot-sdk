@@ -162,3 +162,26 @@ Google and xAI use OpenAI-compatible endpoints. Ollama runs locally and needs no
 | Google | Fast | Very Good | $ | Multimodal |
 | xAI | Ultra Fast | Excellent | $ | Speed-critical apps |
 | Ollama | Varies | Good-Excellent | Free | Privacy, offline, development |
+
+---
+
+## Fallback Chain
+
+Use multiple providers together for automatic failover and load distribution.
+
+```ts
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+
+const runtime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      openai.languageModel('gpt-5.4'),
+      anthropic.languageModel('claude-haiku-4-5'),
+    ],
+    strategy: 'round-robin',
+    retries: 2,
+  }),
+});
+```
+
+[Fallback Chain docs →](/docs/providers/fallback)

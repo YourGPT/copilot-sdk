@@ -170,6 +170,15 @@ export class AbstractAgentLoop implements AgentLoopActions {
   }
 
   private addToolExecution(execution: ToolExecution): void {
+    // Check for duplicate by ID - skip if already exists
+    const existingIndex = this._toolExecutions.findIndex(
+      (e) => e.id === execution.id,
+    );
+    if (existingIndex !== -1) {
+      // Skip duplicate - don't add or merge
+      return;
+    }
+
     this._toolExecutions = [...this._toolExecutions, execution];
 
     // Prune old executions if over limit (prevents memory leak)
@@ -182,10 +191,10 @@ export class AbstractAgentLoop implements AgentLoopActions {
     this.callbacks.onExecutionsChange?.(this._toolExecutions);
   }
 
-  private updateToolExecution(
-    id: string,
-    update: Partial<ToolExecution>,
-  ): void {
+  /**
+   * Update a tool execution with partial data
+   */
+  updateToolExecution(id: string, update: Partial<ToolExecution>): void {
     this._toolExecutions = this._toolExecutions.map((exec) =>
       exec.id === id ? { ...exec, ...update } : exec,
     );
@@ -268,23 +277,22 @@ export class AbstractAgentLoop implements AgentLoopActions {
     this._isProcessing = true;
 
     this.setIteration(this._iteration + 1);
-    const results: ToolResponse[] = [];
 
-    for (const toolCall of toolCalls) {
-      // Check if cancelled before each tool
-      if (this._isCancelled || this.abortController.signal.aborted) {
-        // Mark remaining tools as cancelled
-        results.push({
-          toolCallId: toolCall.id,
-          success: false,
-          error: "Tool execution cancelled",
-        });
-        continue;
-      }
-
-      const result = await this.executeSingleTool(toolCall);
-      results.push(result);
-    }
+    // Run all tools in parallel so approval-required tools don't block
+    // non-approval tools. All results are still collected together before
+    // returning (Anthropic API requires results for every tool_use block).
+    const results = await Promise.all(
+      toolCalls.map((toolCall) => {
+        if (this._isCancelled || this.abortController!.signal.aborted) {
+          return Promise.resolve<ToolResponse>({
+            toolCallId: toolCall.id,
+            success: false,
+            error: "Tool execution cancelled",
+          });
+        }
+        return this.executeSingleTool(toolCall);
+      }),
+    );
 
     this._isProcessing = false;
     return results;
@@ -307,6 +315,7 @@ export class AbstractAgentLoop implements AgentLoopActions {
       status: "pending",
       approvalStatus: "none",
       startedAt: new Date(),
+      hidden: tool?.hidden,
     };
 
     this.addToolExecution(execution);
@@ -332,16 +341,23 @@ export class AbstractAgentLoop implements AgentLoopActions {
 
     // Check if approval is needed
     if (tool.needsApproval && !this.config.autoApprove) {
-      // Get approval message (can be string or function)
+      // Get approval title and message (can be string or function)
+      const approvalTitle =
+        typeof tool.approvalTitle === "function"
+          ? tool.approvalTitle(toolCall.args)
+          : tool.approvalTitle;
+
       const approvalMessage =
         typeof tool.approvalMessage === "function"
           ? tool.approvalMessage(toolCall.args)
           : tool.approvalMessage;
 
       execution.approvalStatus = "required";
+      execution.approvalTitle = approvalTitle;
       execution.approvalMessage = approvalMessage;
       this.updateToolExecution(toolCall.id, {
         approvalStatus: "required",
+        approvalTitle,
         approvalMessage,
       });
       this.callbacks.onApprovalRequired?.(execution);
@@ -491,6 +507,55 @@ export class AbstractAgentLoop implements AgentLoopActions {
     this.setToolExecutions([]);
     this.setIteration(0);
     this._maxIterationsReached = false;
+  }
+
+  // ============================================
+  // Server-Side Tool Tracking
+  // ============================================
+
+  /**
+   * Add a server-side tool execution (from streaming action:start event)
+   * Used to track tools executed on the server (not client-side)
+   */
+  addServerToolExecution(info: {
+    id: string;
+    name: string;
+    hidden?: boolean;
+  }): void {
+    const execution: ToolExecution = {
+      id: info.id,
+      toolCallId: info.id,
+      name: info.name,
+      args: {},
+      status: "executing",
+      approvalStatus: "none",
+      startedAt: new Date(),
+      hidden: info.hidden,
+    };
+    this.addToolExecution(execution);
+  }
+
+  /**
+   * Update a server-side tool execution with args (from action:args event)
+   */
+  updateServerToolArgs(id: string, args: Record<string, unknown>): void {
+    this.updateToolExecution(id, { args });
+  }
+
+  /**
+   * Complete a server-side tool execution (from action:end event)
+   */
+  completeServerToolExecution(info: {
+    id: string;
+    result?: unknown;
+    error?: string;
+  }): void {
+    this.updateToolExecution(info.id, {
+      status: info.error ? "failed" : "completed",
+      result: info.result,
+      error: info.error,
+      completedAt: new Date(),
+    });
   }
 
   /**

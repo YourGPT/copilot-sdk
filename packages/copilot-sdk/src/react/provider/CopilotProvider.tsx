@@ -25,11 +25,20 @@ import type {
   ActionDefinition,
   MessageAttachment,
   PermissionLevel,
+  ToolOptimizationConfig,
+  ContextUsage,
 } from "../../core";
 
 import type { MCPServerConfig } from "../../mcp/types";
+import type { Resolvable } from "../../core/utils/resolvable";
+import { createLogger } from "../../core/utils/logger";
 
-import type { UIMessage, ToolExecution } from "../../chat";
+import type {
+  UIMessage,
+  ToolExecution,
+  StreamChunk,
+  YourGPTConfig,
+} from "../../chat";
 
 import {
   ReactChatWithTools,
@@ -42,6 +51,15 @@ import {
   type ContextTreeNode,
 } from "../utils/context-tree";
 import { useMCPTools } from "../hooks/useMCPTools";
+import {
+  MessageHistoryContext,
+  defaultMessageHistoryConfig,
+  useMessageHistoryContext,
+} from "../message-history/context";
+import { useMessageHistory } from "../message-history/useMessageHistory";
+import type { MessageHistoryConfig } from "../message-history/types";
+import { SkillProvider } from "../skill/SkillProvider";
+import type { SkillDefinition } from "../../skill-system/types";
 
 // ============================================
 // Internal MCP Connection Component
@@ -61,29 +79,257 @@ function MCPConnection({ config }: { config: MCPServerConfig }) {
 }
 
 // ============================================
+// MessageHistoryBridge — wires useMessageHistory into AbstractChat.buildRequest()
+// ============================================
+
+const COMPACTING_MARKER_ID = "__compacting-in-progress__";
+
+function MessageHistoryBridge({
+  chatRef,
+}: {
+  chatRef: React.MutableRefObject<InstanceType<
+    typeof ReactChatWithTools
+  > | null>;
+}) {
+  const { compactionState, tokenUsage } = useMessageHistory();
+  const ctx = useMessageHistoryContext();
+
+  // Track whether we've already added the loading marker for the current compaction cycle
+  const loaderAddedRef = useRef(false);
+  const prevCompactionCountRef = useRef(compactionState.compactionCount);
+
+  // When threshold is first crossed → add loading indicator
+  useEffect(() => {
+    if (!tokenUsage.isApproaching) {
+      loaderAddedRef.current = false;
+      return;
+    }
+    if (loaderAddedRef.current) return;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const alreadyAdded = chat.messages.some(
+      (m) => m.id === COMPACTING_MARKER_ID,
+    );
+    if (alreadyAdded) return;
+    loaderAddedRef.current = true;
+    const loading: UIMessage = {
+      id: COMPACTING_MARKER_ID,
+      role: "system",
+      content: "Compacting conversation…",
+      createdAt: new Date(),
+      metadata: { type: "compaction-marker", compacting: true },
+    };
+    chat.setMessages([...chat.messages, loading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenUsage.isApproaching]);
+
+  // When compaction count increases → replace loader with permanent marker
+  useEffect(() => {
+    if (compactionState.compactionCount <= prevCompactionCountRef.current)
+      return;
+    prevCompactionCountRef.current = compactionState.compactionCount;
+    loaderAddedRef.current = false;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const hasLoader = chat.messages.some((m) => m.id === COMPACTING_MARKER_ID);
+    const base = hasLoader
+      ? chat.messages.map((m) =>
+          m.id === COMPACTING_MARKER_ID
+            ? {
+                ...m,
+                id: `compaction-marker-${compactionState.compactionCount}`,
+                content: `Conversation compacted — context window refreshed`,
+                metadata: { type: "compaction-marker", compacting: false },
+              }
+            : m,
+        )
+      : [
+          ...chat.messages,
+          {
+            id: `compaction-marker-${compactionState.compactionCount}`,
+            role: "system" as const,
+            content: `Conversation compacted — context window refreshed`,
+            createdAt: new Date(),
+            metadata: { type: "compaction-marker", compacting: false },
+          },
+        ];
+    chat.setMessages(base);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compactionState.compactionCount]);
+
+  // Keep latest compaction state + config in refs so the transform
+  // (called synchronously inside AbstractChat) always sees fresh values.
+  const compactionStateRef = useRef(compactionState);
+  compactionStateRef.current = compactionState;
+  const configRef = useRef(ctx.config);
+  configRef.current = ctx.config;
+
+  useEffect(() => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (chat as any).setRequestMessageTransform((allMessages: UIMessage[]) => {
+      if (allMessages.length === 0) return allMessages;
+
+      // Find the last user message — everything from here is the "current turn"
+      // (user msg + any assistant tool-calls + tool results).
+      // This is ALWAYS kept verbatim so we never send an invalid payload.
+      let lastUserIdx = -1;
+      for (let i = allMessages.length - 1; i >= 0; i--) {
+        if (allMessages[i].role === "user") {
+          lastUserIdx = i;
+          break;
+        }
+      }
+
+      // No user message at all — pass through untouched (safety valve)
+      if (lastUserIdx === -1) return allMessages;
+
+      const historyMessages = allMessages.slice(0, lastUserIdx);
+      const currentTurn = allMessages.slice(lastUserIdx);
+
+      // Nothing to compact
+      if (historyMessages.length === 0) return allMessages;
+
+      const cfg = configRef.current;
+
+      // Apply summary-buffer windowing to history, keeping UIMessage format.
+      //
+      // WHY NOT buildSummaryBufferContext here:
+      // buildSummaryBufferContext returns LLMMessage[] (snake_case: tool_calls,
+      // tool_call_id). The optimizer's transformMessages() only reads camelCase
+      // (toolCalls, toolCallId), so mixing LLMMessage into this array causes it
+      // to silently strip tool call data → "Missing call_id" API errors.
+      // The optimizer must own the UIMessage → RequestMessage conversion.
+      const cs = compactionStateRef.current;
+      const recentBuffer = cfg.recentBuffer ?? 10;
+
+      // Identify compaction marker messages (UI-only, already represented by rollingSummary)
+      const isCompactionMsg = (m: UIMessage) =>
+        m.metadata?.["type"] === "compaction-marker";
+
+      const windowedHistory: UIMessage[] = [];
+
+      // 1. Working memory (always first)
+      if (cs.workingMemory.length > 0) {
+        windowedHistory.push({
+          id: "working-memory",
+          role: "system",
+          content: `[Working memory — always active]\n${cs.workingMemory.join("\n")}`,
+          createdAt: new Date(),
+        } as UIMessage);
+      }
+
+      // 2. Rolling summary replaces older history
+      if (cs.rollingSummary) {
+        windowedHistory.push({
+          id: "rolling-summary",
+          role: "system",
+          content: `[Previous conversation summary]\n${cs.rollingSummary}`,
+          createdAt: new Date(),
+        } as UIMessage);
+      }
+
+      // 3. Non-compaction system messages (e.g. injected context)
+      const systemMsgs = historyMessages.filter(
+        (m) => m.role === "system" && !isCompactionMsg(m),
+      );
+      windowedHistory.push(...systemMsgs);
+
+      // 4. Recent conversation messages (windowed to recentBuffer)
+      const conversationMsgs = historyMessages.filter(
+        (m) => m.role !== "system",
+      );
+      const recentStart = Math.max(0, conversationMsgs.length - recentBuffer);
+      windowedHistory.push(...conversationMsgs.slice(recentStart));
+
+      return [...windowedHistory, ...currentTurn];
+    });
+    return () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chatRef.current as any)?.setRequestMessageTransform(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
+}
+
+// ============================================
 // Types
 // ============================================
 
 export interface CopilotProviderProps {
   children: React.ReactNode;
-  /** Runtime API endpoint URL */
-  runtimeUrl: string;
+  /**
+   * Runtime API endpoint URL
+   * Can be static string or getter function for dynamic resolution.
+   */
+  runtimeUrl: Resolvable<string>;
   /** System prompt sent with each request */
   systemPrompt?: string;
   /** @deprecated Use useTools() hook instead */
   tools?: ToolsConfig;
   /** Thread ID for conversation persistence */
   threadId?: string;
+  /**
+   * Called once before the first message on a new thread to create a session.
+   * The returned value IS the thread ID — session and thread are the same identity.
+   * Only called when `threadId` is not set. If `threadId` is provided, this is skipped.
+   * Takes priority over `yourgptConfig`.
+   *
+   * @example
+   * ```tsx
+   * onCreateSession={async () => {
+   *   const res = await fetch('/api/sessions', { method: 'POST', headers })
+   *   return (await res.json()).id
+   * }}
+   * ```
+   */
+  onCreateSession?: () => string | Promise<string>;
+  /**
+   * Called when a new session/thread ID is assigned (new thread created).
+   * Use this to persist the session ID in your storage layer.
+   */
+  onThreadChange?: (id: string) => void;
+  /**
+   * YourGPT config — enables automatic session creation with zero boilerplate.
+   * The SDK calls YourGPT's createSession API before the first message and
+   * uses the returned session_uid as `threadId`.
+   *
+   * @example
+   * ```tsx
+   * yourgptConfig={{ apiKey: "your-api-key", widgetUid: widgetUid }}
+   * ```
+   */
+  yourgptConfig?: YourGPTConfig;
   /** Initial messages to populate the chat */
-  initialMessages?: Message[];
+  initialMessages?: UIMessage[];
   /** Callback when messages change */
   onMessagesChange?: (messages: Message[]) => void;
   /** Callback when an error occurs */
   onError?: (error: Error) => void;
+  /**
+   * Custom error message extractor for non-2xx API responses.
+   * Receives the HTTP status and parsed response body.
+   * Return a string to override the default message, or null to use the default.
+   *
+   * @example
+   * parseError: (status, body) => body?.errors?.[0]?.message ?? body?.detail ?? null
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
-  /** Custom headers to send with each request */
-  headers?: Record<string, string>;
+  /**
+   * Custom headers to send with each request
+   * Can be static object or getter function for dynamic resolution.
+   */
+  headers?: Resolvable<Record<string, string>>;
+  /**
+   * Additional body properties to include in each request
+   * Can be static object or getter function for dynamic resolution.
+   */
+  body?: Resolvable<Record<string, unknown>>;
   /** Enable debug logging */
   debug?: boolean;
   /** Max tool execution iterations (default: 20) */
@@ -92,6 +338,69 @@ export interface CopilotProviderProps {
   maxIterationsMessage?: string;
   /** MCP servers to connect to automatically */
   mcpServers?: MCPServerConfig[];
+  /** Optional prompt/tool optimization controls (tool profiles, context budgets, etc.) */
+  optimization?: ToolOptimizationConfig;
+  /**
+   * Context window management config. Controls compaction strategy, token budgets,
+   * session persistence, and working memory.
+   * @default strategy: 'none' — current behaviour, zero breaking changes
+   */
+  messageHistory?: MessageHistoryConfig;
+  /**
+   * Convenience prop to pre-register inline skills.
+   * Wraps children with <SkillProvider skills={skills}>.
+   * Only inline skills (source.type === "inline") are supported client-side.
+   */
+  skills?: SkillDefinition[];
+}
+
+// ============================================
+// MessageMetaStore — reactive per-message key-value store
+// ============================================
+
+export type StreamChunkWithMessageId = StreamChunk & { messageId?: string };
+export type StreamEventHandler = (chunk: StreamChunkWithMessageId) => void;
+
+/**
+ * Reactive store for custom per-message metadata.
+ * Powers useMessageMeta() — consumers write any shape they want,
+ * all components reading the same messageId react automatically.
+ */
+export class MessageMetaStore {
+  private store = new Map<string, Record<string, unknown>>();
+  private listeners = new Set<() => void>();
+  // Stable empty object — returned for unknown messageIds so useSyncExternalStore
+  // sees the same reference and doesn't trigger infinite re-renders.
+  private static readonly EMPTY: Record<string, unknown> = {};
+
+  subscribe = (cb: () => void): (() => void) => {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  };
+
+  getSnapshot = (): Map<string, Record<string, unknown>> => this.store;
+
+  getMeta = (messageId: string): Record<string, unknown> =>
+    this.store.get(messageId) ?? MessageMetaStore.EMPTY;
+
+  setMeta = (messageId: string, meta: Record<string, unknown>): void => {
+    this.store.set(messageId, meta);
+    this.listeners.forEach((cb) => cb());
+  };
+
+  updateMeta = (
+    messageId: string,
+    updater: (prev: Record<string, unknown>) => Record<string, unknown>,
+  ): void => {
+    const prev = this.store.get(messageId) ?? {};
+    this.store.set(messageId, updater(prev));
+    this.listeners.forEach((cb) => cb());
+  };
+
+  clear = (): void => {
+    this.store.clear();
+    this.listeners.forEach((cb) => cb());
+  };
 }
 
 export interface CopilotContextValue {
@@ -110,6 +419,16 @@ export interface CopilotContextValue {
   clearMessages: () => void;
   setMessages: (messages: UIMessage[]) => void;
   regenerate: (messageId?: string) => Promise<void>;
+
+  // Branching actions
+  switchBranch: (messageId: string) => void;
+  getBranchInfo: (
+    messageId: string,
+  ) => import("../../chat/branching").BranchInfo | null;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
+  hasBranches: boolean;
+  /** Get ALL messages across all branches (for persistence). Visible path only when no branches. */
+  getAllMessages: () => UIMessage[];
 
   // Tool execution
   registerTool: (tool: ToolDefinition) => void;
@@ -140,10 +459,72 @@ export interface CopilotContextValue {
   // System Prompt
   setSystemPrompt: (prompt: string) => void;
 
+  // Context stats (reactive — updates when useAIContext adds/removes context)
+  /** Total characters currently registered in the AI context tree (system prompt contribution). */
+  contextChars: number;
+  /**
+   * Live prompt context usage snapshot — updated on every message send.
+   * Includes token counts and percentages for systemPrompt, history, toolResults, tools buckets.
+   * null until the first message is sent.
+   */
+  contextUsage: ContextUsage | null;
+
+  // Skills (for SkillProvider — sends inline skills to server on every request)
+  setInlineSkills: (
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ) => void;
+
+  // Agent loop iteration (increments each time the AI calls a tool batch; resets on sendMessage)
+  agentIteration: number;
+
   // Config
   threadId?: string;
-  runtimeUrl: string;
+  /**
+   * Switch to a different thread (or start a new one).
+   * Pass the session/thread ID from persistence to reuse it (no new session call),
+   * or null to start a fresh thread (new session created on first sendMessage).
+   */
+  setActiveThread: (id: string | null) => void;
+  /**
+   * Force a new session to be created on the next sendMessage.
+   * Call when the current session has expired or credits are exhausted.
+   */
+  renewSession: () => void;
+  /** Current session creation status */
+  sessionStatus: "idle" | "creating" | "ready" | "error";
+  /**
+   * Runtime URL configuration.
+   * Can be a static string or getter function (matches what was passed to provider).
+   */
+  runtimeUrl: Resolvable<string>;
   toolsConfig?: ToolsConfig;
+
+  // ── Headless primitives ──────────────────────────────────────────────────
+
+  /**
+   * Subscribe to raw stream chunks as they arrive.
+   * Returns an unsubscribe function. Use useCopilotEvent() for the hook API.
+   *
+   * @example
+   * ```ts
+   * const unsub = subscribeToStreamEvents((chunk) => {
+   *   if (chunk.type === 'thinking:delta') { ... }
+   * })
+   * return unsub // cleanup
+   * ```
+   */
+  subscribeToStreamEvents: (handler: StreamEventHandler) => () => void;
+
+  /**
+   * Reactive per-message metadata store.
+   * Use useMessageMeta(messageId) for the hook API.
+   */
+  messageMeta: MessageMetaStore;
 }
 
 // ============================================
@@ -164,26 +545,56 @@ export function useCopilot(): CopilotContextValue {
 // Provider Component
 // ============================================
 
-export function CopilotProvider({
-  children,
-  runtimeUrl,
-  systemPrompt,
-  tools: toolsConfig,
-  threadId,
-  initialMessages,
-  onMessagesChange,
-  onError,
-  streaming,
-  headers,
-  debug = false,
-  maxIterations,
-  maxIterationsMessage,
-  mcpServers,
-}: CopilotProviderProps) {
-  // Debug logger
+export function CopilotProvider(props: CopilotProviderProps) {
+  const {
+    children,
+    runtimeUrl,
+    systemPrompt,
+    tools: toolsConfig,
+    threadId,
+    onCreateSession,
+    onThreadChange,
+    yourgptConfig,
+    initialMessages,
+    onMessagesChange,
+    onError,
+    parseError,
+    streaming,
+    headers,
+    body,
+    debug = false,
+    maxIterations,
+    maxIterationsMessage,
+    mcpServers,
+    optimization,
+    messageHistory,
+    skills,
+  } = props;
+  const isThreadIdControlled = Object.prototype.hasOwnProperty.call(
+    props,
+    "threadId",
+  );
+
+  // ── Headless primitives ──────────────────────────────────────────────────
+
+  // Stream event listeners — Set of handlers subscribed via useCopilotEvent()
+  const streamListenersRef = useRef<Set<StreamEventHandler>>(new Set());
+
+  const subscribeToStreamEvents = useCallback(
+    (handler: StreamEventHandler): (() => void) => {
+      streamListenersRef.current.add(handler);
+      return () => streamListenersRef.current.delete(handler);
+    },
+    [],
+  );
+
+  // Per-message metadata store — stable instance, never re-created
+  const messageMetaStoreRef = useRef<MessageMetaStore>(new MessageMetaStore());
+
+  // Debug logger — scoped to "provider" namespace
   const debugLog = useCallback(
-    (...args: unknown[]) => {
-      if (debug) console.log("[Copilot SDK]", ...args);
+    (action: string, data?: unknown) => {
+      createLogger("provider", () => debug ?? false)(action, data);
     },
     [debug],
   );
@@ -204,6 +615,23 @@ export function CopilotProvider({
   // Tool Executions State (for React reactivity)
   // ============================================
   const [toolExecutions, setToolExecutions] = useState<ToolExecution[]>([]);
+  const [sessionStatus, setSessionStatus] = useState<
+    "idle" | "creating" | "ready" | "error"
+  >(() => (threadId ? "ready" : "idle"));
+  const [agentIteration, setAgentIteration] = useState(0);
+  // Track the ACTUAL thread/session ID assigned by the chat instance.
+  // This is different from the `threadId` prop — it updates reactively when
+  // onCreateSession fires and a new session ID is assigned.
+  const [actualThreadId, setActualThreadId] = useState<string | undefined>(
+    threadId,
+  );
+  const lastControlledThreadIdRef = useRef<{
+    controlled: boolean;
+    value: string | undefined;
+  }>({
+    controlled: isThreadIdControlled,
+    value: threadId,
+  });
 
   // ============================================
   // ChatWithTools Instance
@@ -219,41 +647,58 @@ export function CopilotProvider({
   }
 
   if (chatRef.current === null) {
-    // Convert initial messages to UIMessage format
-    const uiInitialMessages: UIMessage[] | undefined = initialMessages?.map(
-      (m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content ?? "",
-        createdAt: m.created_at ?? new Date(),
-        attachments: m.metadata?.attachments as MessageAttachment[] | undefined,
-        toolCalls: m.tool_calls,
-        toolCallId: m.tool_call_id,
-      }),
-    );
+    const uiInitialMessages = initialMessages;
 
     chatRef.current = new ReactChatWithTools(
       {
         runtimeUrl,
         systemPrompt,
         threadId,
+        onCreateSession,
+        yourgptConfig,
         initialMessages: uiInitialMessages,
         streaming,
         headers,
+        body,
+        parseError,
         debug,
         maxIterations,
         maxIterationsMessage,
+        optimization,
       },
       {
         onToolExecutionsChange: (executions) => {
           debugLog("Tool executions changed:", executions.length);
           setToolExecutions(executions);
+          // Sync the agent loop iteration count at the same time — it increments
+          // once per executeToolCalls() call, which is what triggers this callback.
+          setAgentIteration(chatRef.current?.iteration ?? 0);
         },
         onApprovalRequired: (execution) => {
           debugLog("Tool approval required:", execution.name);
         },
+        onContextUsageChange: (usage) => {
+          setContextUsage(usage);
+        },
         onError: (error) => {
           if (error) onError?.(error);
+        },
+        onThreadChange: (id) => {
+          debugLog("Thread/session ID assigned:", id);
+          setActualThreadId(id);
+          onThreadChange?.(id);
+        },
+        onSessionStatusChange: (status) => {
+          debugLog("Session status:", status);
+          setSessionStatus(status);
+        },
+        onStreamChunk: (chunk) => {
+          // Broadcast to all useCopilotEvent() subscribers
+          if (streamListenersRef.current.size > 0) {
+            for (const handler of streamListenersRef.current) {
+              handler(chunk);
+            }
+          }
         },
       },
     );
@@ -271,22 +716,86 @@ export function CopilotProvider({
     }
   }, [systemPrompt, debugLog]);
 
+  // ============================================
+  // Headers & Body Reactivity
+  // ============================================
+
+  // Watch for headers prop changes and update chat
+  useEffect(() => {
+    if (chatRef.current && headers !== undefined) {
+      chatRef.current.setHeaders(headers);
+      debugLog("Headers config updated from prop");
+    }
+  }, [headers, debugLog]);
+
+  // Watch for body prop changes
+  useEffect(() => {
+    if (chatRef.current && body !== undefined) {
+      chatRef.current.setBody(body);
+      debugLog("Body config updated from prop");
+    }
+  }, [body, debugLog]);
+
+  // Watch for runtimeUrl prop changes
+  useEffect(() => {
+    if (chatRef.current && runtimeUrl !== undefined) {
+      chatRef.current.setUrl(runtimeUrl);
+      debugLog("URL config updated from prop");
+    }
+  }, [runtimeUrl, debugLog]);
+
+  // Keep the chat instance aligned with controlled threadId prop changes.
+  useEffect(() => {
+    const prev = lastControlledThreadIdRef.current;
+    const controlChanged = prev.controlled !== isThreadIdControlled;
+    const valueChanged = prev.value !== threadId;
+
+    if (!controlChanged && !valueChanged) {
+      return;
+    }
+
+    lastControlledThreadIdRef.current = {
+      controlled: isThreadIdControlled,
+      value: threadId,
+    };
+
+    if (!isThreadIdControlled) {
+      return;
+    }
+
+    chatRef.current?.setActiveThread(threadId ?? null);
+    setActualThreadId(threadId);
+    setSessionStatus(threadId ? "ready" : "idle");
+    debugLog("Thread/session synced from prop", { threadId });
+  }, [debugLog, isThreadIdControlled, threadId]);
+
+  // Stable snapshot callbacks for useSyncExternalStore
+  // getServerSnapshot must return a cached/stable value to avoid infinite loops
+  const EMPTY_MESSAGES = useRef<UIMessage[]>([]);
+  const getMessagesSnapshot = useCallback(() => chatRef.current!.messages, []);
+  const getServerMessagesSnapshot = useCallback(
+    () => EMPTY_MESSAGES.current,
+    [],
+  );
+  const getStatusSnapshot = useCallback(() => chatRef.current!.status, []);
+  const getErrorSnapshot = useCallback(() => chatRef.current!.error, []);
+
   // Subscribe to chat state with useSyncExternalStore
   const messages = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.messages,
-    () => chatRef.current!.messages,
+    getMessagesSnapshot,
+    getServerMessagesSnapshot,
   );
 
   const status = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.status,
+    getStatusSnapshot,
     () => "ready" as const,
   );
 
   const errorFromChat = useSyncExternalStore(
     chatRef.current.subscribe,
-    () => chatRef.current!.error,
+    getErrorSnapshot,
     () => undefined,
   );
   const error = errorFromChat ?? null;
@@ -296,6 +805,18 @@ export function CopilotProvider({
   // ============================================
   // Actions
   // ============================================
+
+  const setActiveThread = useCallback((id: string | null) => {
+    chatRef.current?.setActiveThread(id);
+    // Sync React state: known ID → expose it; null (new thread) → clear until onThreadChange fires
+    setActualThreadId(id ?? undefined);
+  }, []);
+
+  const renewSession = useCallback(() => {
+    chatRef.current?.renewSession();
+    setActualThreadId(undefined);
+    setSessionStatus("idle");
+  }, []);
 
   const registerTool = useCallback((tool: ToolDefinition) => {
     chatRef.current?.registerTool(tool);
@@ -323,9 +844,14 @@ export function CopilotProvider({
     [],
   );
 
-  const registeredTools = chatRef.current?.tools ?? [];
-  const pendingApprovals = toolExecutions.filter(
-    (e) => e.approvalStatus === "required",
+  const registeredTools = useMemo(
+    () => chatRef.current?.tools ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toolExecutions], // re-derive when tool executions change (tools change alongside)
+  );
+  const pendingApprovals = useMemo(
+    () => toolExecutions.filter((e) => e.approvalStatus === "required"),
+    [toolExecutions],
   );
 
   // ============================================
@@ -356,6 +882,8 @@ export function CopilotProvider({
 
   const contextTreeRef = useRef<ContextTreeNode[]>([]);
   const contextIdCounter = useRef(0);
+  const [contextChars, setContextChars] = useState(0);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
   const addContext = useCallback(
     (context: string, parentId?: string): string => {
@@ -368,6 +896,7 @@ export function CopilotProvider({
       // Update chat's context
       const contextString = printTree(contextTreeRef.current);
       chatRef.current?.setContext(contextString);
+      setContextChars(contextString.length);
       debugLog("Context added:", id);
       return id;
     },
@@ -380,6 +909,7 @@ export function CopilotProvider({
       // Update chat's context
       const contextString = printTree(contextTreeRef.current);
       chatRef.current?.setContext(contextString);
+      setContextChars(contextString.length);
       debugLog("Context removed:", id);
     },
     [debugLog],
@@ -397,6 +927,21 @@ export function CopilotProvider({
     [debugLog],
   );
 
+  const setInlineSkills = useCallback(
+    (
+      skills: Array<{
+        name: string;
+        description: string;
+        content: string;
+        strategy?: string;
+      }>,
+    ): void => {
+      chatRef.current?.setInlineSkills(skills);
+      debugLog("Inline skills updated", { count: skills.length });
+    },
+    [debugLog],
+  );
+
   // ============================================
   // Chat Actions
   // ============================================
@@ -404,6 +949,7 @@ export function CopilotProvider({
   const sendMessage = useCallback(
     async (content: string, attachments?: MessageAttachment[]) => {
       debugLog("Sending message:", content);
+      setAgentIteration(0); // reset before each new user message
       await chatRef.current?.sendMessage(content, attachments);
     },
     [debugLog],
@@ -425,6 +971,39 @@ export function CopilotProvider({
     await chatRef.current?.regenerate(messageId);
   }, []);
 
+  const switchBranch = useCallback((messageId: string) => {
+    chatRef.current?.switchBranch(messageId);
+  }, []);
+
+  const getBranchInfo = useCallback(
+    (messageId: string) => chatRef.current?.getBranchInfo(messageId) ?? null,
+    [],
+  );
+
+  const editMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      await chatRef.current?.sendMessage(newContent, undefined, {
+        editMessageId: messageId,
+      });
+    },
+    [],
+  );
+
+  const getHasBranchesSnapshot = useCallback(
+    () => chatRef.current!.hasBranches,
+    [],
+  );
+  const hasBranches = useSyncExternalStore(
+    chatRef.current.subscribe,
+    getHasBranchesSnapshot,
+    () => false,
+  );
+
+  const getAllMessages = useCallback(
+    () => chatRef.current?.getAllMessages?.() ?? [],
+    [],
+  );
+
   // ============================================
   // Callbacks
   // ============================================
@@ -432,13 +1011,17 @@ export function CopilotProvider({
   // Notify external callbacks
   useEffect(() => {
     if (onMessagesChange && messages.length > 0) {
-      const coreMessages: Message[] = messages.map((m) => ({
+      // Use getAllMessages() to persist all branches, not just the visible path
+      const allUIMessages = chatRef.current?.getAllMessages?.() ?? messages;
+      const coreMessages: Message[] = allUIMessages.map((m) => ({
         id: m.id,
         role: m.role,
         content: m.content,
         created_at: m.createdAt,
         tool_calls: m.toolCalls,
         tool_call_id: m.toolCallId,
+        parent_id: m.parentId,
+        children_ids: m.childrenIds,
         metadata: {
           attachments: m.attachments,
           thinking: m.thinking,
@@ -480,6 +1063,13 @@ export function CopilotProvider({
       setMessages,
       regenerate,
 
+      // Branching
+      switchBranch,
+      getBranchInfo,
+      editMessage,
+      hasBranches,
+      getAllMessages,
+
       // Tool execution
       registerTool,
       unregisterTool,
@@ -488,6 +1078,7 @@ export function CopilotProvider({
       pendingApprovals,
       approveToolExecution,
       rejectToolExecution,
+      agentIteration,
 
       // Actions
       registerAction,
@@ -497,14 +1088,26 @@ export function CopilotProvider({
       // AI Context
       addContext,
       removeContext,
+      contextChars,
+      contextUsage,
 
       // System Prompt
       setSystemPrompt,
 
+      // Skills
+      setInlineSkills,
+
       // Config
-      threadId,
+      threadId: actualThreadId,
+      setActiveThread,
+      renewSession,
+      sessionStatus,
       runtimeUrl,
       toolsConfig,
+
+      // Headless primitives
+      subscribeToStreamEvents,
+      messageMeta: messageMetaStoreRef.current,
     }),
     [
       messages,
@@ -516,6 +1119,11 @@ export function CopilotProvider({
       clearMessages,
       setMessages,
       regenerate,
+      switchBranch,
+      getBranchInfo,
+      editMessage,
+      hasBranches,
+      getAllMessages,
       registerTool,
       unregisterTool,
       registeredTools,
@@ -523,24 +1131,62 @@ export function CopilotProvider({
       pendingApprovals,
       approveToolExecution,
       rejectToolExecution,
+      agentIteration,
       registerAction,
       unregisterAction,
       registeredActions,
       addContext,
       removeContext,
+      contextChars,
+      contextUsage,
       setSystemPrompt,
-      threadId,
+      setInlineSkills,
+      actualThreadId,
+      setActiveThread,
+      renewSession,
+      sessionStatus,
       runtimeUrl,
       toolsConfig,
     ],
   );
 
+  const messageHistoryContextValue = React.useMemo(
+    () => ({
+      config: { ...defaultMessageHistoryConfig, ...messageHistory },
+      tokenUsage: {
+        current: 0,
+        max: messageHistory?.maxContextTokens ?? 128000,
+        percentage: 0,
+        isApproaching: false,
+      },
+      compactionState: {
+        rollingSummary: null,
+        lastCompactionAt: null,
+        compactionCount: 0,
+        totalTokensSaved: 0,
+        workingMemory: [],
+        displayMessageCount: 0,
+        llmMessageCount: 0,
+      },
+    }),
+    [messageHistory],
+  );
+
   return (
-    <CopilotContext.Provider value={contextValue}>
-      {mcpServers?.map((config) => (
-        <MCPConnection key={config.name} config={config} />
-      ))}
-      {children}
-    </CopilotContext.Provider>
+    <MessageHistoryContext.Provider value={messageHistoryContextValue}>
+      <CopilotContext.Provider value={contextValue}>
+        {mcpServers?.map((config) => (
+          <MCPConnection key={config.name} config={config} />
+        ))}
+        {messageHistory?.strategy && messageHistory.strategy !== "none" && (
+          <MessageHistoryBridge chatRef={chatRef} />
+        )}
+        {skills ? (
+          <SkillProvider skills={skills}>{children}</SkillProvider>
+        ) : (
+          children
+        )}
+      </CopilotContext.Provider>
+    </MessageHistoryContext.Provider>
   );
 }

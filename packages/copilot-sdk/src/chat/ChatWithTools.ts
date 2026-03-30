@@ -12,13 +12,16 @@
  */
 
 import type {
+  ContextUsage,
   ToolDefinition,
   MessageAttachment,
   PermissionLevel,
 } from "../core";
+import type { Resolvable } from "../core/utils/resolvable";
+import { createLogger } from "../core/utils/logger";
 import { AbstractChat } from "./classes/AbstractChat";
 import { AbstractAgentLoop } from "./AbstractAgentLoop";
-import type { ChatConfig, ChatCallbacks } from "./types";
+import type { ChatConfig, ChatCallbacks, YourGPTConfig } from "./types";
 import type { UIMessage } from "./types/message";
 import type { ToolExecution, AgentLoopCallbacks } from "./types/tool";
 import type { ChatState } from "./interfaces/ChatState";
@@ -26,21 +29,33 @@ import type { ChatTransport } from "./interfaces/ChatTransport";
 
 /**
  * Configuration for ChatWithTools
+ *
+ * Supports both static values and getter functions for dynamic configuration.
+ * Getter functions are resolved at request time, ensuring fresh values.
  */
 export interface ChatWithToolsConfig {
-  /** Runtime API endpoint */
-  runtimeUrl: string;
+  /** Runtime API endpoint - can be static or getter function */
+  runtimeUrl: Resolvable<string>;
   /** LLM configuration */
   llm?: ChatConfig["llm"];
   /** System prompt */
   systemPrompt?: string;
   /** Enable streaming (default: true) */
   streaming?: boolean;
-  /** Request headers */
-  headers?: Record<string, string>;
+  /** Request headers - can be static or getter function */
+  headers?: Resolvable<Record<string, string>>;
+  /** Additional body properties - can be static or getter function */
+  body?: Resolvable<Record<string, unknown>>;
   /** Thread ID for conversation persistence */
   threadId?: string;
-  /** Debug mode */
+  /**
+   * Called once before the first message on a new thread to create a session.
+   * The returned value IS the thread ID. Only called when threadId is not set.
+   */
+  onCreateSession?: () => string | Promise<string>;
+  /** YourGPT config — enables automatic session creation */
+  yourgptConfig?: YourGPTConfig;
+  /** Enable debug logging */
   debug?: boolean;
   /** Initial messages */
   initialMessages?: UIMessage[];
@@ -48,12 +63,16 @@ export interface ChatWithToolsConfig {
   tools?: ToolDefinition[];
   /** Max tool execution iterations (default: 20) */
   maxIterations?: number;
+  /** Optional prompt/tool optimization controls */
+  optimization?: ChatConfig["optimization"];
   /** Custom error message when max iterations reached (sent to AI as tool result) */
   maxIterationsMessage?: string;
   /** State implementation (injected by framework adapter) */
   state?: ChatState<UIMessage>;
   /** Transport implementation */
   transport?: ChatTransport;
+  /** Custom error message extractor for non-2xx API responses */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }
 
 /**
@@ -64,6 +83,8 @@ export interface ChatWithToolsCallbacks extends ChatCallbacks<UIMessage> {
   onToolExecutionsChange?: (executions: ToolExecution[]) => void;
   /** Called when a tool requires approval */
   onApprovalRequired?: (execution: ToolExecution) => void;
+  /** Called when prompt context usage changes */
+  onContextUsageChange?: (usage: ContextUsage) => void;
 }
 
 /**
@@ -125,11 +146,16 @@ export class ChatWithTools {
       systemPrompt: config.systemPrompt,
       streaming: config.streaming,
       headers: config.headers,
+      body: config.body,
+      optimization: config.optimization,
       threadId: config.threadId,
+      onCreateSession: config.onCreateSession,
+      yourgptConfig: config.yourgptConfig,
       debug: config.debug,
       initialMessages: config.initialMessages,
       state: config.state,
       transport: config.transport,
+      parseError: config.parseError,
       callbacks: {
         onMessagesChange: callbacks.onMessagesChange,
         onStatusChange: callbacks.onStatusChange,
@@ -139,6 +165,69 @@ export class ChatWithTools {
         onMessageFinish: callbacks.onMessageFinish,
         onToolCalls: callbacks.onToolCalls,
         onFinish: callbacks.onFinish,
+        onContextUsageChange: callbacks.onContextUsageChange,
+        onThreadChange: callbacks.onThreadChange,
+        onSessionStatusChange: callbacks.onSessionStatusChange,
+        // Server-side tool callbacks - track in agentLoop for UI display
+        // IMPORTANT: Only track tools that are NOT registered client-side
+        // Client-side tools are tracked via executeToolCalls() path
+        onServerToolStart: (info) => {
+          // Check if execution with this ID already exists
+          const existingExecution = this.agentLoop.toolExecutions.find(
+            (e) => e.id === info.id,
+          );
+          if (existingExecution) {
+            // Update hidden flag if this event has it (agent-loop sends hidden, adapter doesn't)
+            if (
+              info.hidden !== undefined &&
+              existingExecution.hidden !== info.hidden
+            ) {
+              this.debug(
+                "Updating hidden flag for existing execution:",
+                info.name,
+                info.hidden,
+              );
+              this.agentLoop.updateToolExecution(info.id, {
+                hidden: info.hidden,
+              });
+            }
+            return;
+          }
+          // Skip if this tool is registered client-side (will be tracked via executeToolCalls)
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) {
+            this.debug("Skipping server tracking for client tool:", info.name);
+            return;
+          }
+          this.debug("Server tool started:", info.name, {
+            hidden: info.hidden,
+            id: info.id,
+          });
+          this.agentLoop.addServerToolExecution(info);
+        },
+        onServerToolArgs: (info) => {
+          // Skip if this tool is registered client-side
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) return;
+          this.debug("Server tool args:", info.name, info.args);
+          this.agentLoop.updateServerToolArgs(info.id, info.args ?? {});
+        },
+        onServerToolEnd: (info) => {
+          // Skip if this tool is registered client-side
+          const isClientTool = this.agentLoop.tools.some(
+            (t) => t.name === info.name && t.location === "client",
+          );
+          if (isClientTool) return;
+          this.debug("Server tool ended:", info.name, {
+            error: info.error,
+            hasResult: !!info.result,
+          });
+          this.agentLoop.completeServerToolExecution(info);
+        },
       },
     });
 
@@ -202,9 +291,15 @@ export class ChatWithTools {
           this.agentLoop.maxIterationsReached &&
           toolCallInfos.length > 0
         ) {
-          // Max iterations reached - still need to add tool_result to prevent API errors
-          // Without this, the conversation has tool_use without tool_result
-          this.debug("Max iterations reached, adding blocked tool results");
+          // Max iterations reached — close out the pending tool_use blocks (so the
+          // conversation history stays valid for the next request) but do NOT trigger
+          // another LLM call.  Previously we called continueWithToolResults() here,
+          // which sent the error to the AI and started a new LLM request; the AI
+          // responded "let me retry" + new tool_use blocks → the same limit fired
+          // again → continueWithToolResults again → infinite loop.
+          this.debug(
+            "Max iterations reached, stopping loop without new LLM request",
+          );
 
           const errorMessage =
             this.config.maxIterationsMessage ||
@@ -218,7 +313,9 @@ export class ChatWithTools {
             },
           }));
 
-          await this.chat.continueWithToolResults(blockedResults);
+          // Adds tool_result messages + a final assistant stop-message, then sets
+          // status → "ready".  No new API request is made.
+          await this.chat.addToolResultMessages(blockedResults, errorMessage);
         }
       } catch (error) {
         this.debug("Error executing tools:", error);
@@ -300,10 +397,14 @@ export class ChatWithTools {
   /**
    * Send a message
    * Returns false if a request is already in progress
+   *
+   * @param options.editMessageId - Edit flow: new message branches from the
+   *   same parent as this message ID
    */
   async sendMessage(
     content: string,
     attachments?: MessageAttachment[],
+    options?: { editMessageId?: string },
   ): Promise<boolean> {
     // Guard: Don't send if already processing
     if (this.isLoading) {
@@ -313,7 +414,7 @@ export class ChatWithTools {
 
     // Reset iteration counter so user can continue after max iterations
     this.agentLoop.resetIterations();
-    return await this.chat.sendMessage(content, attachments);
+    return await this.chat.sendMessage(content, attachments, options);
   }
 
   /**
@@ -359,6 +460,28 @@ export class ChatWithTools {
   }
 
   /**
+   * Update prompt/tool optimization controls.
+   */
+  setOptimizationConfig(config?: ChatConfig["optimization"]): void {
+    this.config.optimization = config;
+    this.chat.setOptimizationConfig(config);
+  }
+
+  /**
+   * Set the active tool profile used for request-time tool selection.
+   */
+  setToolProfile(profile?: string): void {
+    this.chat.setToolProfile(profile);
+  }
+
+  /**
+   * Get the most recent prompt context usage snapshot.
+   */
+  getContextUsage(): ContextUsage | null {
+    return this.chat.getContextUsage();
+  }
+
+  /**
    * Set dynamic context (from useAIContext hook)
    */
   setContext(context: string): void {
@@ -366,10 +489,77 @@ export class ChatWithTools {
   }
 
   /**
+   * Switch to a different thread (or start a new one).
+   * Pass the session/thread ID from persistence to reuse it, or null to start fresh.
+   */
+  setActiveThread(id: string | null): void {
+    this.chat.setActiveThread(id);
+  }
+
+  /**
+   * Force a new session on the next sendMessage.
+   * Call this when the current session has expired or credits are exhausted.
+   */
+  renewSession(): void {
+    this.chat.renewSession();
+  }
+
+  /**
+   * Current session creation status.
+   */
+  getSessionStatus(): "idle" | "creating" | "ready" | "error" {
+    return this.chat.getSessionStatus();
+  }
+
+  /**
    * Set system prompt dynamically
    */
   setSystemPrompt(prompt: string): void {
     this.chat.setSystemPrompt(prompt);
+  }
+
+  /**
+   * Set headers configuration
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders(headers: ChatWithToolsConfig["headers"]): void {
+    this.chat.setHeaders(headers);
+  }
+
+  /**
+   * Set URL configuration
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl(url: ChatWithToolsConfig["runtimeUrl"]): void {
+    this.chat.setUrl(url);
+  }
+
+  /**
+   * Set body configuration
+   * Additional properties merged into every request body
+   */
+  setBody(body: ChatWithToolsConfig["body"]): void {
+    this.chat.setBody(body);
+  }
+
+  setRequestMessageTransform(
+    fn: ((messages: UIMessage[]) => UIMessage[]) | null,
+  ): void {
+    this.chat.setRequestMessageTransform(fn);
+  }
+
+  /**
+   * Set inline skills (forwarded to underlying chat instance)
+   */
+  setInlineSkills(
+    skills: Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>,
+  ): void {
+    this.chat.setInlineSkills(skills);
   }
 
   // ============================================
@@ -475,9 +665,10 @@ export class ChatWithTools {
   // ============================================
 
   private debug(message: string, ...args: unknown[]): void {
-    if (this.config.debug) {
-      console.log(`[ChatWithTools] ${message}`, ...args);
-    }
+    createLogger("tools", () => this.config.debug ?? false)(
+      message,
+      args.length === 1 ? args[0] : args.length > 1 ? args : undefined,
+    );
   }
 }
 

@@ -2,6 +2,7 @@
 
 import { useTheme } from "next-themes";
 import { CopilotChat, useCopilotChatContext } from "@yourgpt/copilot-sdk/ui";
+import { toast } from "sonner";
 import {
   Camera,
   ScrollText,
@@ -184,14 +185,18 @@ function SupportHome({ input }: { input?: React.ReactNode }) {
   );
 }
 
-export function SupportLayout({ theme, loaderVariant }: LayoutProps) {
+export function SupportLayout({
+  theme,
+  loaderVariant,
+  alphaConfig,
+}: LayoutProps) {
   return (
     <div
       className="h-full"
       data-csdk-theme={theme === "default" ? undefined : theme}
     >
       <CopilotChat.Root
-        persistence
+        persistence={alphaConfig.sessionPersistence || undefined}
         className="h-full"
         showPoweredBy={false}
         loaderVariant={loaderVariant}
@@ -203,6 +208,30 @@ export function SupportLayout({ theme, loaderVariant }: LayoutProps) {
           src: "https://api.dicebear.com/7.x/avataaars/svg?seed=user",
         }}
       >
+        {(alphaConfig.messageActions.copyEnabled ||
+          alphaConfig.messageActions.feedbackEnabled) && (
+          <CopilotChat.MessageActions role="assistant">
+            {alphaConfig.messageActions.copyEnabled && (
+              <CopilotChat.CopyAction tooltip="Copy message" />
+            )}
+            {alphaConfig.messageActions.feedbackEnabled && (
+              <CopilotChat.FeedbackAction
+                onFeedback={(message, type) =>
+                  toast.success(`Feedback: ${type}`, {
+                    duration: 2000,
+                    position: "top-center",
+                  })
+                }
+              />
+            )}
+          </CopilotChat.MessageActions>
+        )}
+        {(alphaConfig.messageActions.editEnabled ||
+          alphaConfig.branchingEnabled) && (
+          <CopilotChat.MessageActions role="user">
+            <CopilotChat.EditAction tooltip="Edit message" />
+          </CopilotChat.MessageActions>
+        )}
         {/* Custom Home View */}
         <CopilotChat.HomeView className="!gap-0 !p-0">
           <SupportHome

@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/llm-sdk",
-  "version": "2.1.0",
+  "version": "2.1.4-alpha.2",
   "description": "AI SDK for building AI Agents with any LLM",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -50,6 +50,16 @@
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.mjs",
       "require": "./dist/adapters/index.js"
+    },
+    "./yourgpt": {
+      "types": "./dist/yourgpt/index.d.ts",
+      "import": "./dist/yourgpt/index.mjs",
+      "require": "./dist/yourgpt/index.js"
+    },
+    "./fallback": {
+      "types": "./dist/fallback/index.d.ts",
+      "import": "./dist/fallback/index.mjs",
+      "require": "./dist/fallback/index.js"
     }
   },
   "homepage": "https://copilot-sdk.yourgpt.ai",

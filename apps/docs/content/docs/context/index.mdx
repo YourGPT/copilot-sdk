@@ -1,25 +1,27 @@
 ---
-title: Smart AI Context
-description: Make AI aware of your application state
+title: Context Management
+description: Make AI aware of your application state and manage the context window
 icon: Lightbulb
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Give the AI awareness of your application state so it can provide relevant, contextual responses.
+Give the AI awareness of your application state so it can provide relevant, contextual responses. The SDK also provides advanced context window management for long conversations.
 
 ---
 
-## Overview
+## Application Context
 
-Without context, AI doesn't know what's happening in your app:
+Inject your app state into the AI's context so it can answer questions about what's happening in your app.
+
+### Without context
 
 ```
 User: "Is this in stock?"
 AI: "I don't know what product you're referring to."
 ```
 
-With context:
+### With context
 
 ```tsx
 useAIContext({
@@ -125,13 +127,9 @@ Create parent-child relationships for complex data:
 
 ```tsx
 function TeamDashboard({ team }) {
-  // Parent context
   const teamContextId = useAIContext({
     key: 'team',
-    data: {
-      name: team.name,
-      memberCount: team.members.length,
-    },
+    data: { name: team.name, memberCount: team.members.length },
     description: 'The team being viewed',
   });
 
@@ -139,27 +137,18 @@ function TeamDashboard({ team }) {
     <div>
       <h1>{team.name}</h1>
       {team.members.map(member => (
-        <MemberCard
-          key={member.id}
-          member={member}
-          parentId={teamContextId}
-        />
+        <MemberCard key={member.id} member={member} parentId={teamContextId} />
       ))}
     </div>
   );
 }
 
 function MemberCard({ member, parentId }) {
-  // Child context - linked to team
   useAIContext({
     key: `member-${member.id}`,
-    data: {
-      name: member.name,
-      role: member.role,
-      tasks: member.tasks,
-    },
+    data: { name: member.name, role: member.role, tasks: member.tasks },
     description: `Team member: ${member.name}`,
-    parentId, // Links to team context
+    parentId,
   });
 
   return <div>{member.name}</div>;
@@ -167,7 +156,7 @@ function MemberCard({ member, parentId }) {
 ```
 
 <Callout type="info">
-Hierarchical contexts help AI understand relationships. When user asks about "John's tasks", AI knows John is part of the team context.
+Hierarchical contexts help AI understand relationships. When a user asks about "John's tasks", AI knows John is part of the team context.
 </Callout>
 
 ---
@@ -207,7 +196,6 @@ Contexts are automatically removed when components unmount:
 
 ```tsx
 function ConditionalContext({ showDetails }) {
-  // This context only exists when showDetails is true
   if (showDetails) {
     return <DetailedContext />;
   }
@@ -228,66 +216,8 @@ function DetailedContext() {
 
 ## What to Include in Context
 
-### Good Context Data
-
 ```tsx
-// User state
-{
-  name: 'John',
-  plan: 'pro',
-  permissions: ['read', 'write'],
-}
-
-// Current view
-{
-  page: 'checkout',
-  step: 2,
-  items: cart.items,
-}
-
-// Form state
-{
-  formType: 'contact',
-  fields: Object.keys(formData),
-  hasErrors: errors.length > 0,
-}
-```
-
-### Avoid Including
-
-```tsx
-// Too much data (token waste)
-{
-  allProducts: products, // Could be thousands
-  fullUserHistory: history, // Unnecessary detail
-}
-
-// Sensitive data
-{
-  password: user.password, // Never!
-  creditCard: payment.card, // Never!
-  apiKeys: config.keys, // Never!
-}
-
-// Irrelevant data
-{
-  buildHash: process.env.BUILD_ID, // AI doesn't need this
-  internalIds: uuids, // No user value
-}
-```
-
-<Callout type="warning">
-Never include sensitive data in AI context. The context is sent to the LLM provider.
-</Callout>
-
----
-
-## Best Practices
-
-### 1. Keep Context Focused
-
-```tsx
-// ✅ Good - relevant, scoped data
+// ✅ Good — relevant, scoped data
 useAIContext({
   key: 'order-details',
   data: {
@@ -297,113 +227,25 @@ useAIContext({
     total: order.total,
   },
 });
-
-// ❌ Bad - too much unnecessary detail
-useAIContext({
-  key: 'order',
-  data: order, // Full order object with internal fields
-});
 ```
 
-### 2. Use Descriptive Keys
-
-```tsx
-// ✅ Good
-useAIContext({ key: 'current-product', data });
-useAIContext({ key: 'user-preferences', data });
-useAIContext({ key: 'checkout-cart', data });
-
-// ❌ Bad
-useAIContext({ key: 'data1', data });
-useAIContext({ key: 'ctx', data });
-```
-
-### 3. Add Helpful Descriptions
-
-```tsx
-useAIContext({
-  key: 'filters',
-  data: { category: 'electronics', priceRange: [0, 500] },
-  description: 'Active product filters the user has applied',
-});
-```
-
-### 4. Structure for AI Understanding
-
-```tsx
-// ✅ Good - clear structure
-useAIContext({
-  key: 'selected-item',
-  data: {
-    name: 'Widget Pro',
-    canPurchase: true,
-    reasonIfNot: null,
-  },
-});
-
-// ❌ Bad - ambiguous
-useAIContext({
-  key: 'item',
-  data: {
-    n: 'Widget Pro',
-    p: true,
-  },
-});
-```
+<Callout type="warning">
+Never include sensitive data (passwords, API keys, credit cards) in AI context. The context is sent to the LLM provider.
+</Callout>
 
 ---
 
-## Full Example
+## Advanced Context Window Management
 
-```tsx
-function EcommercePage({ product, user, cart }) {
-  // Global contexts (in layout/provider)
-  useAIContexts([
-    {
-      key: 'user',
-      data: {
-        name: user.name,
-        memberSince: user.createdAt,
-        tier: user.loyaltyTier,
-      },
-      description: 'Logged-in user',
-    },
-    {
-      key: 'cart',
-      data: {
-        itemCount: cart.items.length,
-        subtotal: cart.subtotal,
-        hasDiscount: cart.discount > 0,
-      },
-      description: 'Shopping cart summary',
-    },
-  ]);
+For long conversations, the SDK provides tools to control what the AI sees and how history is managed.
 
-  // Page-specific context
-  useAIContext({
-    key: 'viewing-product',
-    data: {
-      name: product.name,
-      price: product.price,
-      rating: product.rating,
-      inStock: product.stock > 0,
-      stockLevel: product.stock > 10 ? 'high' : product.stock > 0 ? 'low' : 'none',
-    },
-    description: 'Product the user is currently viewing',
-  });
-
-  return <ProductPage product={product} />;
-}
-```
-
-Now AI can answer:
-- "Is this in stock?" → Uses viewing-product context
-- "What's in my cart?" → Uses cart context
-- "Am I eligible for member discounts?" → Uses user context
+- **[Compaction](/docs/context/compaction)** — auto-summarize old messages to stay within token limits
+- **[Token Tracking](/docs/context/token-tracking)** — monitor context window usage with `useContextStats`
+- **[Session Persistence](/docs/context/session)** — survive page reloads and compact on the server
 
 ---
 
 ## Next Steps
 
-- [Custom Tools](/docs/custom-tools) - Build tools that use context
-- [Agentic Loop](/docs/agentic-loop) - Multi-step AI reasoning
+- [Custom Tools](/docs/tools) - Build tools that use context
+- [Compaction](/docs/context/compaction) - Manage long conversation history

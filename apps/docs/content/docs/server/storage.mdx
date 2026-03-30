@@ -1,0 +1,336 @@
+---
+title: Storage & Persistence
+description: Automatic session creation and message persistence with pluggable storage adapters
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Overview
+
+The Storage Adapter system provides **automatic session creation and message persistence** for your copilot. When configured, the runtime handles everything — no manual save calls needed.
+
+```ts
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt';
+
+const runtime = createRuntime({
+  provider: anthropic,
+  model: 'claude-haiku-4-5',
+  storage: createYourGPT({ apiKey, widgetUid }),
+});
+
+// That's it. Sessions are created automatically.
+// Messages are persisted automatically.
+app.post('/api/copilot/chat', async (req, res) => {
+  const result = await runtime.chat(req.body);
+  res.json(result); // result.threadId is included
+});
+```
+
+---
+
+## YourGPT Adapter
+
+The built-in adapter for the YourGPT platform. Handles session creation, message persistence, and file uploads.
+
+### Setup
+
+```ts
+import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt';
+
+const yourgpt = createYourGPT({
+  apiKey: process.env.YOURGPT_API_KEY,
+  widgetUid: process.env.YOURGPT_WIDGET_UID,
+  // endpoint is optional — defaults to https://api.yourgpt.ai
+  // Override for dev/staging:
+  // endpoint: 'https://your-dev-server.example.com',
+});
+```
+
+### Configuration
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `apiKey` | Yes | — | YourGPT API key (server-side only, never expose to browser) |
+| `widgetUid` | Yes | — | Widget UID — scopes sessions to your project |
+| `endpoint` | No | `https://api.yourgpt.ai` | API base URL (override for dev/staging) |
+
+<Callout type="warn">
+  **Never expose `apiKey` to the browser.** The YourGPT adapter runs on your server only. The client communicates through your server endpoints.
+</Callout>
+
+### What it does automatically
+
+When plugged into `createRuntime({ storage: yourgpt })`:
+
+1. **First message (no threadId)** → Creates a session via YourGPT API → Returns `threadId` to client
+2. **Before LLM call** → Saves user message to the session
+3. **After LLM response** → Saves assistant response + tool calls to the session
+4. **File uploads** → Uploads media to YourGPT storage, returns URL
+
+### API Endpoints Used
+
+| Action | Endpoint | When |
+|--------|----------|------|
+| Create session | `/chatbot/v1/copilot-sdk/createSession` | First message without threadId |
+| Save message | `/chatbot/v1/copilot-sdk/createMessage` | Every user/assistant message |
+| Save tool call | `/chatbot/v1/copilot-sdk/createToolMessage` | Tool dispatches + results |
+| Upload file | `/chatbot/v1/copilot-sdk/uploadMedia` | File attachments |
+
+---
+
+## Custom Storage Adapter
+
+Build your own adapter for any backend — Supabase, Firebase, your own database, etc.
+
+### Interface
+
+```ts
+import type { StorageAdapter, StorageMessage, StorageFile } from '@yourgpt/llm-sdk';
+
+const myStorage: StorageAdapter = {
+  async createSession(data) {
+    const session = await db.sessions.create({ title: data?.title });
+    return { id: session.id };
+  },
+
+  async saveMessages(sessionId, messages) {
+    await db.messages.insertMany(
+      messages.map(msg => ({
+        sessionId,
+        role: msg.role,
+        content: msg.content,
+        toolCalls: msg.toolCalls,
+        toolCallId: msg.toolCallId,
+      }))
+    );
+  },
+
+  // Optional: file uploads
+  async uploadFile(file) {
+    const blob = Buffer.from(file.data, 'base64');
+    const url = await s3.upload(blob, file.mimeType, file.filename);
+    return { url };
+  },
+};
+
+const runtime = createRuntime({
+  provider: anthropic,
+  model: 'claude-haiku-4-5',
+  storage: myStorage,
+});
+```
+
+### StorageAdapter Interface
+
+```ts
+interface StorageAdapter {
+  /** Create a new session. Returns session ID. */
+  createSession(data?: {
+    title?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ id: string }>;
+
+  /** Append messages to a session. */
+  saveMessages(sessionId: string, messages: StorageMessage[]): Promise<void>;
+
+  /** Upload a file. Returns URL. (Optional) */
+  uploadFile?(file: StorageFile): Promise<{ url: string }>;
+
+  /** List sessions. (Optional — future use) */
+  getSessions?(): Promise<{ id: string; title?: string; updatedAt?: Date }[]>;
+
+  /** Get messages for a session. (Optional — future use) */
+  getMessages?(sessionId: string): Promise<StorageMessage[]>;
+}
+```
+
+### StorageMessage
+
+```ts
+interface StorageMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  toolCalls?: unknown[];
+  toolCallId?: string;
+  metadata?: Record<string, unknown>;
+}
+```
+
+---
+
+## How It Works
+
+### Session Creation Flow
+
+```
+Client sends first message (no threadId)
+  → Server runtime: storage.createSession()
+  → Server runtime: storage.saveMessages(threadId, [userMsg])
+  → LLM processes message
+  → Server runtime: storage.saveMessages(threadId, [assistantMsg])
+  → Response includes threadId
+  → Client adopts threadId for future requests
+```
+
+### Subsequent Messages
+
+```
+Client sends message (with threadId)
+  → Server runtime: storage.saveMessages(threadId, [userMsg])
+  → LLM processes message
+  → Server runtime: storage.saveMessages(threadId, [assistantMsg])
+```
+
+### Error Handling
+
+If `createSession` fails, the runtime:
+- Generates a fallback local thread ID (`local_xxx`)
+- Skips all storage calls for that request
+- Chat continues working normally (graceful degradation)
+- Error is logged once
+
+### Error Callback
+
+Register an `onError` handler to monitor all adapter operations:
+
+```ts
+const yourgpt = createYourGPT({
+  apiKey: process.env.YOURGPT_API_KEY,
+  widgetUid: process.env.YOURGPT_WIDGET_UID,
+  onError: (error, operation, params) => {
+    console.error(`[YourGPT:${operation}]`, error.message, params);
+    // Send to Sentry, Datadog, etc.
+    Sentry.captureException(error, {
+      tags: { operation },
+      extra: params,
+    });
+  },
+});
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `error` | `Error` | The error that occurred |
+| `operation` | `string` | `"createSession"` \| `"saveMessages"` \| `"uploadFile"` |
+| `params` | `object` | Context — varies by operation (sessionId, messageCount, filename, etc.) |
+
+The error is still re-thrown after `onError` runs, so the runtime's graceful degradation continues to work.
+
+---
+
+## File Uploads
+
+When the storage adapter has `uploadFile`, expose an upload endpoint on your server:
+
+```ts
+app.post('/api/copilot/upload', async (req, res) => {
+  const { data, mimeType, filename } = req.body;
+  const result = await yourgpt.uploadFile({ data, mimeType, filename });
+  res.json(result);
+});
+```
+
+Then on the client, use the `upload` prop:
+
+```tsx
+<CopilotChat upload="/api/copilot/upload" />
+```
+
+Files are uploaded to the server, which forwards them to the storage adapter. The returned URL is sent with the message instead of base64 data.
+
+See [Attachments](/docs/attachments) for more on file attachments.
+
+---
+
+## Complete Example
+
+<Tabs items={['YourGPT', 'Custom (Supabase)']}>
+  <Tab value="YourGPT">
+    ```ts title="server.ts"
+    import { createRuntime } from '@yourgpt/llm-sdk';
+    import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+    import { createYourGPT } from '@yourgpt/llm-sdk/yourgpt';
+    import express from 'express';
+
+    const app = express();
+    app.use(express.json({ limit: '10mb' }));
+
+    const yourgpt = createYourGPT({
+      apiKey: process.env.YOURGPT_API_KEY!,
+      widgetUid: process.env.YOURGPT_WIDGET_UID!,
+    });
+
+    const runtime = createRuntime({
+      provider: createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+      model: 'claude-haiku-4-5',
+      storage: yourgpt,
+    });
+
+    // Chat — sessions + messages handled automatically
+    app.post('/api/copilot/chat', async (req, res) => {
+      const result = await runtime.chat(req.body);
+      res.json(result);
+    });
+
+    // Stream — same automatic handling
+    app.post('/api/copilot/stream', async (req, res) => {
+      await runtime.stream(req.body).pipeToResponse(res);
+    });
+
+    // File upload — uses same YourGPT credentials
+    app.post('/api/copilot/upload', async (req, res) => {
+      const result = await yourgpt.uploadFile(req.body);
+      res.json(result);
+    });
+
+    app.listen(3001);
+    ```
+  </Tab>
+  <Tab value="Custom (Supabase)">
+    ```ts title="server.ts"
+    import { createRuntime, type StorageAdapter } from '@yourgpt/llm-sdk';
+    import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+    import { createClient } from '@supabase/supabase-js';
+    import express from 'express';
+
+    const supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_KEY!,
+    );
+
+    const storage: StorageAdapter = {
+      async createSession(data) {
+        const { data: session } = await supabase
+          .from('sessions')
+          .insert({ title: data?.title })
+          .select('id')
+          .single();
+        return { id: session!.id };
+      },
+      async saveMessages(sessionId, messages) {
+        await supabase.from('messages').insert(
+          messages.map(m => ({ session_id: sessionId, ...m }))
+        );
+      },
+    };
+
+    const runtime = createRuntime({
+      provider: createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+      model: 'claude-haiku-4-5',
+      storage,
+    });
+
+    const app = express();
+    app.use(express.json());
+
+    app.post('/api/copilot/chat', async (req, res) => {
+      const result = await runtime.chat(req.body);
+      res.json(result);
+    });
+
+    app.listen(3001);
+    ```
+  </Tab>
+</Tabs>

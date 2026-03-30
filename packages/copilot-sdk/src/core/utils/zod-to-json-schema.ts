@@ -188,9 +188,36 @@ function getZodEnumValues(
 // ============================================
 
 /**
- * Convert a Zod schema to JSON Schema property (supports Zod 3 and 4)
+ * Convert a Zod schema to JSON Schema property (supports Zod 3 and 4).
+ * When used with z.object(), the result is compatible with ToolInputSchema.
+ *
+ * @example
+ * ```ts
+ * // For tool input schemas
+ * useTool({
+ *   inputSchema: zodToJsonSchema(z.object({
+ *     name: z.string().describe("User name"),
+ *   })),
+ * });
+ * ```
  */
-export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
+export function zodToJsonSchema(schema: unknown): ToolInputSchema {
+  const result = _zodToJsonSchemaInternal(schema);
+  // If it's a oneOf/anyOf (discriminated union) without a type, wrap in type:object
+  // so LLMs receive a valid top-level object schema instead of inventing a wrapper property
+  if (!result.type && (result.oneOf || result.anyOf)) {
+    return {
+      type: "object",
+      ...(result.oneOf ? { oneOf: result.oneOf } : { anyOf: result.anyOf }),
+    } as unknown as ToolInputSchema;
+  }
+  return result as unknown as ToolInputSchema;
+}
+
+/**
+ * Internal implementation for recursive schema conversion
+ */
+function _zodToJsonSchemaInternal(schema: unknown): JSONSchemaProperty {
   if (!isZodSchema(schema)) {
     return { type: "string" };
   }
@@ -240,7 +267,9 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       const innerType = getZodInnerType(schema);
       const result: JSONSchemaProperty = {
         type: "array",
-        items: innerType ? zodToJsonSchema(innerType) : { type: "string" },
+        items: innerType
+          ? _zodToJsonSchemaInternal(innerType)
+          : { type: "string" },
       };
       if (description) result.description = description;
       return result;
@@ -256,7 +285,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       const required: string[] = [];
 
       for (const [key, value] of Object.entries(shapeObj)) {
-        properties[key] = zodToJsonSchema(value);
+        properties[key] = _zodToJsonSchemaInternal(value);
 
         // Check if the field is required (not optional/nullable)
         const fieldTypeName = getZodTypeName(value);
@@ -281,7 +310,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
     case "ZodNullable": {
       const innerType = getZodInnerType(schema);
       if (innerType) {
-        return zodToJsonSchema(innerType);
+        return _zodToJsonSchemaInternal(innerType);
       }
       return { type: "string", description };
     }
@@ -289,7 +318,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
     case "ZodDefault": {
       const innerType = getZodInnerType(schema);
       if (innerType) {
-        const result = zodToJsonSchema(innerType);
+        const result = _zodToJsonSchemaInternal(innerType);
         // Note: Default value extraction is complex in Zod 4, skip for now
         return result;
       }
@@ -326,8 +355,40 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       return { type: "string", description };
     }
 
+    case "ZodDiscriminatedUnion": {
+      const obj = schema as Record<string, unknown>;
+      let options: unknown[] | undefined;
+
+      if ("_zod" in obj) {
+        const zod = obj._zod as Record<string, unknown>;
+        const def = zod.def as Record<string, unknown> | undefined;
+        // Zod 4: options may be a Map or array
+        const raw = def?.options;
+        options =
+          raw instanceof Map
+            ? Array.from(raw.values())
+            : (raw as unknown[] | undefined);
+      }
+      if (!options) {
+        const def = obj._def as Record<string, unknown>;
+        const raw = def?.options;
+        options =
+          raw instanceof Map
+            ? Array.from(raw.values())
+            : (raw as unknown[] | undefined);
+      }
+
+      if (options && options.length > 0) {
+        const oneOf = options.map((opt) => _zodToJsonSchemaInternal(opt));
+        const result: JSONSchemaProperty = { oneOf };
+        if (description) result.description = description;
+        return result;
+      }
+      return { type: "object", description };
+    }
+
     case "ZodUnion": {
-      // For unions, we take the first option for simplicity
+      // For unions, generate oneOf with all options
       const obj = schema as Record<string, unknown>;
       let options: unknown[] | undefined;
 
@@ -342,7 +403,10 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
       }
 
       if (options && options.length > 0) {
-        return zodToJsonSchema(options[0]);
+        const oneOf = options.map((opt) => _zodToJsonSchemaInternal(opt));
+        const result: JSONSchemaProperty = { oneOf };
+        if (description) result.description = description;
+        return result;
       }
       return { type: "string", description };
     }
@@ -362,7 +426,7 @@ export function zodToJsonSchema(schema: unknown): JSONSchemaProperty {
  * This fallback implementation is for older Zod versions.
  */
 export function zodObjectToInputSchema(schema: unknown): ToolInputSchema {
-  const jsonSchema = zodToJsonSchema(schema);
+  const jsonSchema = _zodToJsonSchemaInternal(schema);
 
   if (jsonSchema.type !== "object" || !jsonSchema.properties) {
     const typeName = getZodTypeName(schema);

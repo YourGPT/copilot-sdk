@@ -40,6 +40,7 @@ export default function PlaygroundPage() {
     sdkConfig,
     selectedProvider,
     selectedOpenRouterModel,
+    alphaConfig,
     updateTheme,
     updateLayoutTemplate,
     updateSystemPrompt,
@@ -48,6 +49,7 @@ export default function PlaygroundPage() {
     updateSDKConfig,
     updateProvider,
     updateOpenRouterModel,
+    updateAlphaConfig,
   } = usePlaygroundConfig();
 
   // Local state
@@ -159,6 +161,8 @@ export default function PlaygroundPage() {
               onSelectPerson={handleSelectPerson}
               sdkConfig={sdkConfig}
               onUpdateSDKConfig={updateSDKConfig}
+              alphaConfig={alphaConfig}
+              onUpdateAlpha={updateAlphaConfig}
             />
           </div>
         </div>
@@ -177,6 +181,7 @@ export default function PlaygroundPage() {
           selectedOpenRouterModel={selectedOpenRouterModel}
           apiKeys={apiKeys}
           loaderVariant={sdkConfig.loaderVariant}
+          alphaConfig={alphaConfig}
         />
       </div>
 

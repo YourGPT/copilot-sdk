@@ -19,11 +19,15 @@ export function generateMessageId(): string {
  *
  * @param content - Message content
  * @param attachments - Optional attachments
+ * @param options - Optional branching options
  * @returns New user message
  */
 export function createUserMessage(
   content: string,
   attachments?: MessageAttachment[],
+  options?: {
+    parentId?: string | null;
+  },
 ): UIMessage {
   return {
     id: generateMessageId(),
@@ -31,6 +35,7 @@ export function createUserMessage(
     content,
     attachments,
     createdAt: new Date(),
+    ...(options?.parentId !== undefined ? { parentId: options.parentId } : {}),
   };
 }
 
@@ -156,13 +161,20 @@ export function streamStateToMessage(state: StreamingMessageState): UIMessage {
  * Create an empty assistant message (for streaming)
  *
  * @param id - Optional message ID
+ * @param options - Optional branching options
  * @returns Empty assistant message
  */
-export function createEmptyAssistantMessage(id?: string): UIMessage {
+export function createEmptyAssistantMessage(
+  id?: string,
+  options?: {
+    parentId?: string | null;
+  },
+): UIMessage {
   return {
     id: id ?? generateMessageId(),
     role: "assistant",
     content: "",
     createdAt: new Date(),
+    ...(options?.parentId !== undefined ? { parentId: options.parentId } : {}),
   };
 }

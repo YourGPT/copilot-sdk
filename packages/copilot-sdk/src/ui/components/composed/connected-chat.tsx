@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import {
   useCopilot,
   type UIMessage,
@@ -17,7 +17,10 @@ import type {
   ThreadStorageAdapter,
   AsyncThreadStorageAdapter,
 } from "../../../thread/adapters";
-import { createServerAdapter } from "../../../thread/adapters";
+import {
+  createServerAdapter,
+  createLocalStorageAdapter,
+} from "../../../thread/adapters";
 
 // ============================================
 // Persistence Configuration Types
@@ -28,6 +31,9 @@ import { createServerAdapter } from "../../../thread/adapters";
  */
 export interface LocalPersistenceConfig {
   type: "local";
+  /** Custom localStorage key to isolate thread storage between copilot instances.
+   *  Default: "copilot-sdk-store" */
+  localStorageKey?: string;
   /** Debounce delay for auto-save (ms). Default: 1000 */
   saveDebounce?: number;
   /** Whether to auto-restore the last active thread. Default: true */
@@ -187,6 +193,12 @@ export type CopilotChatProps = Omit<
    * Granular class names for sub-components including thread picker
    */
   classNames?: CopilotChatClassNames;
+
+  /**
+   * Allow inline editing of user messages.
+   * @default false
+   */
+  allowEdit?: boolean;
 };
 
 /**
@@ -301,15 +313,39 @@ function CopilotChatBase(
     classNames,
     header,
     children,
+    allowEdit = false,
     ...chatProps
   } = props;
 
+  // Create custom adapter once for localStorageKey (stable reference to avoid render loops)
+  const localStorageKey =
+    typeof persistence === "object" &&
+    "type" in persistence &&
+    persistence.type === "local"
+      ? persistence.localStorageKey
+      : undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const customAdapter = useMemo(
+    () =>
+      localStorageKey
+        ? createLocalStorageAdapter({ storageKey: localStorageKey })
+        : undefined,
+    [localStorageKey],
+  );
+
   // Parse persistence config
   const persistenceConfig = parsePersistenceConfig(persistence, onThreadChange);
+  // Inject memoized adapter if localStorageKey was provided
+  if (persistenceConfig && customAdapter) {
+    persistenceConfig.adapter = customAdapter;
+  }
 
-  // Use internal thread manager when persistence is enabled
+  // Use internal thread manager when persistence is enabled.
+  // When persistence is disabled, pass enabled:false so no sync/restore effects
+  // fire — prevents the shared singleton from being touched by a no-persistence instance
+  // and avoids stale async createThread calls overwriting messages on navigation.
   const threadManagerResult = useInternalThreadManager(
-    persistenceConfig ?? { autoRestoreLastThread: false },
+    persistenceConfig ?? { autoRestoreLastThread: false, enabled: false },
   );
 
   const isPersistenceEnabled = !!persistence;
@@ -324,6 +360,10 @@ function CopilotChatBase(
     approveToolExecution,
     rejectToolExecution,
     registeredTools,
+    switchBranch,
+    getBranchInfo,
+    editMessage,
+    error: chatError,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -337,6 +377,9 @@ function CopilotChatBase(
       error: exec.error,
       timestamp: exec.startedAt ? exec.startedAt.getTime() : Date.now(),
       approvalStatus: exec.approvalStatus,
+      approvalTitle: exec.approvalTitle,
+      approvalMessage: exec.approvalMessage,
+      hidden: exec.hidden,
     }),
   );
 
@@ -349,8 +392,15 @@ function CopilotChatBase(
     });
 
   // Filter out tool messages and merge results into parent assistant messages
+  // Keep compaction-markers (system messages with type='compaction-marker') visible
   const visibleMessages = messages
-    .filter((m: UIMessage) => m.role !== "tool") // Hide tool messages - results merged into assistant
+    .filter(
+      (m: UIMessage) =>
+        m.role !== "tool" &&
+        (m.role !== "system" ||
+          (m.metadata as Record<string, unknown>)?.type ===
+            "compaction-marker"),
+    ) // Hide tool/system messages except compaction markers
     .map((m: UIMessage) => {
       // For assistant messages with tool_calls, merge results
       let messageToolExecutions: ToolExecutionData[] | undefined;
@@ -376,7 +426,7 @@ function CopilotChatBase(
                 } catch {
                   return {
                     ...exec,
-                    result: { success: true, message: resultContent },
+                    result: { success: false, message: resultContent },
                   };
                 }
               }
@@ -385,6 +435,11 @@ function CopilotChatBase(
           );
         } else {
           // Build from stored tool_calls + tool messages (historical)
+          // Get hidden info from message metadata (set by handleJsonResponse)
+          const toolCallsHidden = (
+            m.metadata as { toolCallsHidden?: Record<string, boolean> }
+          )?.toolCallsHidden;
+
           messageToolExecutions = m.toolCalls.map(
             (tc: {
               id: string;
@@ -396,7 +451,7 @@ function CopilotChatBase(
                 try {
                   result = JSON.parse(resultContent);
                 } catch {
-                  result = { success: true, message: resultContent };
+                  result = { success: false, message: resultContent };
                 }
               }
               let args: Record<string, unknown> = {};
@@ -404,6 +459,15 @@ function CopilotChatBase(
                 args = JSON.parse(tc.function.arguments || "{}");
               } catch {
                 // Keep empty args
+              }
+              // Check hidden from metadata first (from server response),
+              // then fall back to registeredTools
+              let hidden = toolCallsHidden?.[tc.id];
+              if (hidden === undefined) {
+                const toolDef = registeredTools?.find(
+                  (t) => t.name === tc.function.name,
+                );
+                hidden = toolDef?.hidden;
               }
               return {
                 id: tc.id,
@@ -413,7 +477,11 @@ function CopilotChatBase(
                   ? "completed"
                   : "pending") as ToolExecutionData["status"],
                 result,
-                timestamp: Date.now(), // Historical - use current time
+                timestamp:
+                  m.createdAt instanceof Date
+                    ? m.createdAt.getTime()
+                    : Date.now(),
+                hidden,
               };
             },
           );
@@ -432,6 +500,11 @@ function CopilotChatBase(
         messageToolExecutions = savedExecutions;
       }
 
+      // Filter out hidden tool executions for the message
+      const visibleToolExecutions = messageToolExecutions?.filter(
+        (exec) => !exec.hidden,
+      );
+
       return {
         id: m.id,
         role: m.role as "user" | "assistant" | "system",
@@ -441,11 +514,27 @@ function CopilotChatBase(
         attachments: m.attachments,
         // Include tool_calls for assistant messages
         tool_calls: m.toolCalls,
-        // Attach matched tool executions to assistant messages
-        toolExecutions: messageToolExecutions,
+        // Attach matched tool executions to assistant messages (only visible ones)
+        toolExecutions: visibleToolExecutions,
         // Include metadata (citations from native web search, etc.)
         metadata: m.metadata,
+        // Mark if this message had only hidden tools (for filtering empty bubbles)
+        _hasOnlyHiddenTools:
+          messageToolExecutions &&
+          messageToolExecutions.length > 0 &&
+          (!visibleToolExecutions || visibleToolExecutions.length === 0),
       };
+    })
+    // Filter out empty assistant messages that only had hidden tools
+    .filter((m) => {
+      if (
+        m.role === "assistant" &&
+        !m.content &&
+        (m as { _hasOnlyHiddenTools?: boolean })._hasOnlyHiddenTools
+      ) {
+        return false;
+      }
+      return true;
     });
 
   // Show suggestions only when no messages
@@ -454,37 +543,49 @@ function CopilotChatBase(
       ? chatProps.suggestions
       : [];
 
-  // isProcessing: Show "Continuing..." loader ONLY when we're in an active tool flow
-  // Condition: Last message must be assistant with tool_calls (not user starting new request)
+  // isProcessing: Show "Continuing..." loader when tools finished and AI is about to respond
   const lastMessage = messages[messages.length - 1];
+
+  // Find the last assistant message with tool calls (may not be the very last message
+  // since tool result messages follow it)
+  const lastAssistantWithTools = [...messages]
+    .reverse()
+    .find(
+      (m) => m.role === "assistant" && (m as UIMessage).toolCalls?.length,
+    ) as UIMessage | undefined;
+
+  // In tool flow when: last msg is a tool result (tools ran, waiting for AI),
+  // OR last msg is assistant with tool calls (tools still executing)
   const isInToolFlow =
-    lastMessage?.role === "assistant" &&
-    (lastMessage as UIMessage).toolCalls?.length;
+    lastMessage?.role === "tool" ||
+    (lastMessage?.role === "assistant" &&
+      (lastMessage as UIMessage).toolCalls?.length);
 
   let isProcessingToolResults = false;
 
   if (isLoading && isInToolFlow) {
-    const currentToolCallIds = new Set(
-      (lastMessage as UIMessage).toolCalls?.map(
-        (tc: { id: string }) => tc.id,
-      ) || [],
-    );
-    const currentExecutions = toolExecutions.filter((exec) =>
-      currentToolCallIds.has(exec.id),
-    );
-
-    const hasCompletedTools = currentExecutions.some(
-      (exec) =>
-        exec.status === "completed" ||
-        exec.status === "error" ||
-        exec.status === "failed",
-    );
-    const hasExecutingTools = currentExecutions.some(
-      (exec) => exec.status === "executing" || exec.status === "pending",
-    );
-
-    // Show "Continuing..." only when tools completed and waiting for AI to continue
-    isProcessingToolResults = hasCompletedTools && !hasExecutingTools;
+    // Last message is a tool result → all tools for this turn are done, AI is continuing
+    if (lastMessage?.role === "tool") {
+      isProcessingToolResults = true;
+    } else if (lastAssistantWithTools) {
+      const currentToolCallIds = new Set(
+        lastAssistantWithTools.toolCalls?.map((tc: { id: string }) => tc.id) ||
+          [],
+      );
+      const currentExecutions = toolExecutions.filter((exec) =>
+        currentToolCallIds.has(exec.id),
+      );
+      const hasCompletedTools = currentExecutions.some(
+        (exec) =>
+          exec.status === "completed" ||
+          exec.status === "error" ||
+          exec.status === "failed",
+      );
+      const hasExecutingTools = currentExecutions.some(
+        (exec) => exec.status === "executing" || exec.status === "pending",
+      );
+      isProcessingToolResults = hasCompletedTools && !hasExecutingTools;
+    }
   }
 
   // Extract chat classNames (without thread picker classes)
@@ -553,6 +654,7 @@ function CopilotChatBase(
       onSendMessage={sendMessage}
       onStop={stop}
       isLoading={isLoading}
+      error={chatError}
       showPoweredBy={chatProps.showPoweredBy ?? true}
       suggestions={suggestions}
       isProcessing={isProcessingToolResults}
@@ -574,6 +676,10 @@ function CopilotChatBase(
       currentThreadId={threadManager.currentThreadId}
       onSwitchThread={isPersistenceEnabled ? handleSwitchThread : undefined}
       isThreadBusy={isBusy}
+      // Branching (auto-wired from context)
+      getBranchInfo={getBranchInfo}
+      onSwitchBranch={switchBranch}
+      onEditMessage={allowEdit ? editMessage : undefined}
     >
       {children}
     </Chat>
@@ -593,6 +699,12 @@ export const CopilotChat = Object.assign(CopilotChatBase, {
   Suggestions: Chat.Suggestions,
   BackButton: Chat.BackButton, // Navigation: start new chat
   ThreadPicker: Chat.ThreadPicker, // Thread switching
+  // Message actions compound components (alpha)
+  MessageActions: Chat.MessageActions,
+  CopyAction: Chat.CopyAction,
+  EditAction: Chat.EditAction,
+  FeedbackAction: Chat.FeedbackAction,
+  Action: Chat.Action,
 });
 
 // Alias for backwards compatibility

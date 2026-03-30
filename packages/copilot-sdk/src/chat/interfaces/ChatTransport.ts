@@ -6,6 +6,7 @@
  */
 
 import type { UIMessage } from "../types";
+import type { Resolvable } from "../../core/utils/resolvable";
 
 /**
  * Chat request to send
@@ -31,6 +32,16 @@ export interface ChatRequest {
   actions?: unknown[];
   /** Additional body properties */
   body?: Record<string, unknown>;
+  /**
+   * Inline client skills to send to the server for merging with server-side skills.
+   * Set by AbstractChat when useSkill() hooks are active.
+   */
+  __skills?: Array<{
+    name: string;
+    description: string;
+    content: string;
+    strategy?: string;
+  }>;
 }
 
 /**
@@ -42,9 +53,20 @@ export interface ChatResponse {
     role: string;
     content: string | null;
     tool_calls?: unknown[];
+    /** Tool call ID for tool result messages */
+    tool_call_id?: string;
   }>;
+  /** Session ID — present when server storage adapter created/resolved a session */
+  threadId?: string;
   /** Whether client needs to execute tools */
   requiresAction?: boolean;
+  /** Tool calls with metadata (includes hidden flag for server-side tools) */
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    hidden?: boolean;
+  }>;
 }
 
 /**
@@ -86,9 +108,20 @@ export type StreamChunk =
   | { type: "tool_calls"; toolCalls: unknown[]; assistantMessage: unknown }
   | { type: "source:add"; source: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; messages?: unknown[]; requiresAction?: boolean }
+  | {
+      type: "done";
+      messages?: Array<{
+        role: string;
+        content: string | null;
+        tool_calls?: unknown[];
+        tool_call_id?: string;
+      }>;
+      requiresAction?: boolean;
+      /** Session ID from server storage adapter */
+      threadId?: string;
+    }
   // Tool action events (from llm-sdk agent-loop)
-  | { type: "action:start"; id: string; name: string }
+  | { type: "action:start"; id: string; name: string; hidden?: boolean }
   | { type: "action:args"; id: string; args: string }
   | {
       type: "action:end";
@@ -150,18 +183,76 @@ export interface ChatTransport {
    * Check if currently streaming
    */
   isStreaming(): boolean;
+
+  /**
+   * Update headers configuration (optional)
+   * Can be static headers or a getter function for dynamic resolution
+   */
+  setHeaders?(headers: Resolvable<Record<string, string>>): void;
+
+  /**
+   * Update URL configuration (optional)
+   * Can be static URL or a getter function for dynamic resolution
+   */
+  setUrl?(url: Resolvable<string>): void;
+
+  /**
+   * Update body configuration (optional)
+   * Additional properties merged into every request body
+   */
+  setBody?(body: Resolvable<Record<string, unknown>>): void;
 }
 
 /**
  * Transport configuration
+ *
+ * Supports both static values and getter functions for dynamic configuration.
+ * Getter functions are resolved at request time, ensuring fresh values.
+ *
+ * @example
+ * ```typescript
+ * // Static config
+ * const config: TransportConfig = {
+ *   url: "/api/chat",
+ *   headers: { "x-api-key": "static-key" },
+ * };
+ *
+ * // Dynamic config (resolved fresh on each request)
+ * const config: TransportConfig = {
+ *   url: () => getApiUrl(),
+ *   headers: () => ({
+ *     Authorization: `Bearer ${getToken()}`,
+ *     ...getCustomHeaders(),
+ *   }),
+ * };
+ * ```
  */
 export interface TransportConfig {
-  /** API endpoint URL */
-  url: string;
-  /** Request headers */
-  headers?: Record<string, string>;
+  /** API endpoint URL - can be static or getter function */
+  url: Resolvable<string>;
+  /** Request headers - can be static or getter function */
+  headers?: Resolvable<Record<string, string>>;
+  /** Additional body properties - can be static or getter function */
+  body?: Resolvable<Record<string, unknown>>;
   /** Enable streaming (default: true) */
   streaming?: boolean;
   /** Request timeout in ms */
   timeout?: number;
+  /**
+   * Custom error message extractor for non-2xx responses.
+   * Receives the HTTP status code and the parsed response body.
+   * Return a string to use as the error message, or null/undefined to fall back to the default extraction.
+   *
+   * @example
+   * ```ts
+   * // Handle nested or array error formats
+   * parseError: (status, body) => {
+   *   if (Array.isArray(body?.errors)) return body.errors[0]?.message;
+   *   if (body?.detail) return body.detail;       // Django-style
+   *   if (body?.data?.message) return body.data.message; // nested
+   *   return null; // fall back to default (body.message || body.error)
+   * }
+   * ```
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }

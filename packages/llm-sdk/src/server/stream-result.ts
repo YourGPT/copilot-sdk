@@ -64,6 +64,8 @@ export interface OnFinishResult {
     completionTokens: number;
     totalTokens: number;
   };
+  /** Session ID — present when storage adapter created/resolved a session */
+  threadId?: string;
 }
 
 /**
@@ -91,6 +93,8 @@ export interface CollectedResult {
   requiresAction: boolean;
   /** Token usage for billing/tracking */
   usage?: TokenUsageRaw;
+  /** Session ID — present when storage adapter created/resolved a session */
+  threadId?: string;
   /** Raw events (for debugging) */
   events: StreamEvent[];
 }
@@ -510,6 +514,7 @@ export class StreamResult {
       toolCalls: [],
       requiresAction: false,
       usage: undefined,
+      threadId: undefined,
       events: [],
     };
   }
@@ -529,6 +534,29 @@ export class StreamResult {
         collected.toolCalls.push(...event.toolCalls);
         break;
 
+      case "action:start":
+        // Capture tool call with hidden flag (for server-side tools)
+        collected.toolCalls.push({
+          id: event.id,
+          name: event.name,
+          args: {},
+          hidden: event.hidden,
+        });
+        break;
+
+      case "action:args": {
+        // Update args for the tool call
+        const tc = collected.toolCalls.find((t) => t.id === event.id);
+        if (tc) {
+          try {
+            tc.args = JSON.parse(event.args || "{}");
+          } catch {
+            tc.args = {};
+          }
+        }
+        break;
+      }
+
       case "done":
         if (event.messages) {
           collected.messages.push(...event.messages);
@@ -540,6 +568,9 @@ export class StreamResult {
           // Capture usage before it might be stripped
           this.capturedUsage = event.usage;
           collected.usage = event.usage;
+        }
+        if (event.threadId) {
+          collected.threadId = event.threadId;
         }
         break;
     }
@@ -554,6 +585,7 @@ export class StreamResult {
         const usage = this.capturedUsage;
         await this.onFinishCallback({
           messages: collected.messages,
+          threadId: collected.threadId,
           usage: usage
             ? {
                 promptTokens: usage.prompt_tokens,

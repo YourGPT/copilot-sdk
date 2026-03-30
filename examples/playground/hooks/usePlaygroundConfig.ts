@@ -10,12 +10,14 @@ import type {
   SDKConfig,
   LayoutTemplate,
   ProviderId,
+  AlphaConfig,
 } from "@/lib/types";
 import {
   DEFAULT_SYSTEM_PROMPT,
   INITIAL_GENERATIVE_UI,
   INITIAL_TOOLS_ENABLED,
   INITIAL_SDK_CONFIG,
+  INITIAL_ALPHA_CONFIG,
   PLAYGROUND_CONFIG_STORAGE_KEY,
 } from "@/lib/constants";
 
@@ -31,6 +33,7 @@ interface PlaygroundConfigStorage {
   sdkConfig: SDKConfig;
   selectedProvider: ProviderId;
   selectedOpenRouterModel: string;
+  alphaConfig: AlphaConfig;
 }
 
 /**
@@ -45,6 +48,7 @@ const DEFAULT_CONFIG: PlaygroundConfigStorage = {
   sdkConfig: INITIAL_SDK_CONFIG,
   selectedProvider: "openai",
   selectedOpenRouterModel: "",
+  alphaConfig: INITIAL_ALPHA_CONFIG,
 };
 
 /**
@@ -107,6 +111,10 @@ export function usePlaygroundConfig() {
   const [selectedOpenRouterModel, setSelectedOpenRouterModel] =
     useState<string>(() => loadStoredConfig().selectedOpenRouterModel);
 
+  const [alphaConfig, setAlphaConfig] = useState<AlphaConfig>(
+    () => loadStoredConfig().alphaConfig,
+  );
+
   // Persist to localStorage whenever any config changes
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -120,6 +128,7 @@ export function usePlaygroundConfig() {
       sdkConfig,
       selectedProvider,
       selectedOpenRouterModel,
+      alphaConfig,
     };
     localStorage.setItem(PLAYGROUND_CONFIG_STORAGE_KEY, JSON.stringify(config));
   }, [
@@ -131,6 +140,7 @@ export function usePlaygroundConfig() {
     sdkConfig,
     selectedProvider,
     selectedOpenRouterModel,
+    alphaConfig,
   ]);
 
   // Theme setters
@@ -176,6 +186,14 @@ export function usePlaygroundConfig() {
     setSelectedOpenRouterModel(model);
   }, []);
 
+  // Alpha config updater
+  const updateAlphaConfig = useCallback(
+    <K extends keyof AlphaConfig>(key: K, value: AlphaConfig[K]) => {
+      setAlphaConfig((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
+
   return {
     // State
     copilotTheme,
@@ -186,6 +204,7 @@ export function usePlaygroundConfig() {
     sdkConfig,
     selectedProvider,
     selectedOpenRouterModel,
+    alphaConfig,
     // Actions
     updateTheme,
     updateLayoutTemplate,
@@ -195,6 +214,7 @@ export function usePlaygroundConfig() {
     updateSDKConfig,
     updateProvider,
     updateOpenRouterModel,
+    updateAlphaConfig,
     // Direct setters (for advanced use cases)
     setCopilotTheme,
     setLayoutTemplate,

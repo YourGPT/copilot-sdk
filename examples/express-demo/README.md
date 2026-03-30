@@ -19,6 +19,8 @@
 - Error handling
 - CORS configuration
 - Request/response streaming
+- Tool profiles and selective loading
+- Provider-aware tool hints for Anthropic/OpenAI
 
 ## Quick Start
 
@@ -74,6 +76,44 @@ export OPENAI_API_KEY=your-api-key-here
 | `/api/chat/collect` | `collect()`            | Non-streaming JSON          |
 | `/api/chat/events`  | Event handlers         | With `on('text', ...)`      |
 | `/api/chat/web`     | `toResponse()`         | Web Response conversion     |
+
+## Tool Selection Demo
+
+The demo runtime tags tools with profiles and categories, then enables `agentLoop.toolSelection`.
+
+- Default profile: `support`
+- Alternate profile: `utility`
+- Tool search over deferred tools: enabled
+- Dynamic selection: enabled
+- Native hints:
+  - Anthropic: single-tool preference + no parallel tool use
+  - OpenAI: single-tool preference + parallel tool calls disabled
+
+Example request using the utility profile:
+
+```bash
+curl -X POST http://localhost:3001/api/copilot/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toolProfile": "utility",
+    "messages": [
+      { "role": "user", "content": "What time is it on the server?" }
+    ]
+  }'
+```
+
+Example request using the support profile:
+
+```bash
+curl -X POST http://localhost:3001/api/copilot/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toolProfile": "support",
+    "messages": [
+      { "role": "user", "content": "What does the Copilot SDK support?" }
+    ]
+  }'
+```
 
 ## Test Commands
 

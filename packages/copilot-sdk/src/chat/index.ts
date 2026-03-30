@@ -30,6 +30,7 @@ export type {
   ChatCallbacks,
   ChatInit,
   SendMessageOptions,
+  YourGPTConfig,
   // Tool types
   ToolCallInfo,
   RawToolCall,
@@ -75,6 +76,7 @@ export { AbstractChat, type ChatEvent, type ChatEventHandler } from "./classes";
 
 // AbstractAgentLoop (tool execution)
 export { AbstractAgentLoop } from "./AbstractAgentLoop";
+export { ChatContextOptimizer } from "./optimizations";
 
 // ChatWithTools (coordinated chat + tools - recommended)
 export {
@@ -83,6 +85,12 @@ export {
   type ChatWithToolsConfig,
   type ChatWithToolsCallbacks,
 } from "./ChatWithTools";
+
+// ============================================
+// Branching
+// ============================================
+
+export { MessageTree, type BranchInfo } from "./branching";
 
 // ============================================
 // Pure Functions

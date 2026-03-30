@@ -59,6 +59,10 @@ export type {
   TokenUsage,
   FinishReason,
   ResponseOptions,
+  // Storage
+  StorageAdapter,
+  StorageMessage,
+  StorageFile,
 } from "./types";
 
 export { DEFAULT_CAPABILITIES } from "./types";

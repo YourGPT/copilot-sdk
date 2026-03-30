@@ -2,6 +2,7 @@
 export { Runtime, createRuntime } from "./runtime";
 export type {
   RuntimeConfig,
+  ToolSearchConfig,
   ChatRequest,
   ActionRequest,
   RequestContext,
@@ -52,3 +53,15 @@ export {
   DEFAULT_MAX_ITERATIONS,
   type AgentLoopOptions,
 } from "./agent-loop";
+
+// Tool selection
+export {
+  selectTools,
+  searchTools,
+  shouldExposeToolSearch,
+  buildProviderToolOptions,
+} from "./tool-selection";
+export type { ToolSearchMatch } from "./tool-selection";
+
+// Storage helpers (used internally by Runtime, exposed for custom server setups)
+export { extractInputMessages, mapOutputMessages } from "./storage-helpers";

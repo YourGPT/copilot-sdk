@@ -41,7 +41,7 @@ export type ToolSource = "mcp" | "native" | "custom";
  * JSON Schema property definition
  */
 export interface JSONSchemaProperty {
-  type:
+  type?:
     | "string"
     | "number"
     | "boolean"
@@ -60,16 +60,20 @@ export interface JSONSchemaProperty {
   minimum?: number;
   maximum?: number;
   pattern?: string;
+  oneOf?: JSONSchemaProperty[];
+  anyOf?: JSONSchemaProperty[];
 }
 
 /**
  * JSON Schema for tool input
  */
 export interface ToolInputSchema {
-  type: "object";
-  properties: Record<string, JSONSchemaProperty>;
+  type?: "object";
+  properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   additionalProperties?: boolean;
+  oneOf?: JSONSchemaProperty[];
+  anyOf?: JSONSchemaProperty[];
 }
 
 /**
@@ -173,6 +177,153 @@ export type AIResponseMode = "none" | "brief" | "full";
 export type AIContent =
   | { type: "image"; data: string; mediaType: string }
   | { type: "text"; text: string };
+
+/**
+ * How large tool results should be trimmed before they are sent back to the AI.
+ */
+export type ToolTruncationStrategy = "head" | "head-tail" | "smart";
+
+/**
+ * Truncation controls for tool results.
+ */
+export interface ToolResultTruncationConfig {
+  enabled?: boolean;
+  maxContextShare?: number;
+  hardMaxChars?: number;
+  minKeepChars?: number;
+  strategy?: ToolTruncationStrategy;
+  preserveErrors?: boolean;
+}
+
+/**
+ * Global or per-tool controls for how tool results are represented in prompts.
+ */
+export interface ToolResultConfig {
+  truncation?: ToolResultTruncationConfig;
+}
+
+/**
+ * Named tool profile for selective loading.
+ */
+export interface ToolProfile {
+  name: string;
+  description?: string;
+  include?: string[];
+  exclude?: string[];
+}
+
+/**
+ * Tool profile configuration.
+ */
+export interface ToolProfileConfig {
+  enabled?: boolean;
+  defaultProfile?: string;
+  profiles?: Record<string, ToolProfile>;
+  /** When false, active profiles exclude tools that do not declare profile membership. */
+  includeUnprofiled?: boolean;
+  dynamicSelection?: {
+    enabled?: boolean;
+    maxTools?: number;
+  };
+}
+
+/**
+ * History compaction behavior for long-running sessions.
+ */
+export interface ContextHistoryConfig {
+  maxMessages?: number;
+  maxTokens?: number;
+  maxContextShare?: number;
+  pruneStrategy?: "oldest" | "least-relevant" | "summarize";
+}
+
+/**
+ * Optional summarization controls used during history compaction.
+ */
+export interface ContextSummarizationConfig {
+  enabled?: boolean;
+  triggerAt?: number;
+  chunkSize?: number;
+  preserveRecent?: number;
+  fallbackBehavior?: "truncate" | "statistical" | "error";
+}
+
+/**
+ * Token estimation controls.
+ */
+export interface TokenEstimationConfig {
+  safetyMargin?: number;
+  charsPerToken?: number;
+}
+
+/**
+ * Conversation context management.
+ */
+export interface ContextManagementConfig {
+  enabled?: boolean;
+  history?: ContextHistoryConfig;
+  summarization?: ContextSummarizationConfig;
+  tokenEstimation?: TokenEstimationConfig;
+}
+
+/**
+ * One budget bucket in the prompt context.
+ */
+export interface ContextUsagePart {
+  tokens: number;
+  percent: number;
+}
+
+/**
+ * Prompt context usage snapshot.
+ */
+export interface ContextUsage {
+  total: ContextUsagePart;
+  breakdown: {
+    systemPrompt: ContextUsagePart;
+    history: ContextUsagePart;
+    toolResults: ContextUsagePart;
+    tools: ContextUsagePart;
+  };
+  budget: {
+    available: number;
+    remaining: number;
+  };
+  warnings: string[];
+}
+
+/**
+ * Real-time context budget configuration.
+ */
+export interface ContextBudgetConfig {
+  enabled?: boolean;
+  budget?: {
+    contextWindowTokens?: number;
+    inputHeadroomRatio?: number;
+    systemPromptShare?: number;
+    historyShare?: number;
+    toolResultsShare?: number;
+    toolDefinitionsShare?: number;
+  };
+  enforcement?: {
+    mode?: "warn" | "truncate" | "error";
+    onBudgetExceeded?: (info: ContextUsage) => void;
+  };
+  monitoring?: {
+    enabled?: boolean;
+    onUsageUpdate?: (usage: ContextUsage) => void;
+  };
+}
+
+/**
+ * Framework-agnostic optimization controls for tool-heavy chat sessions.
+ */
+export interface ToolOptimizationConfig {
+  toolProfiles?: ToolProfileConfig;
+  toolResultConfig?: ToolResultConfig;
+  contextManagement?: ContextManagementConfig;
+  contextBudget?: ContextBudgetConfig;
+}
 
 /**
  * Tool response format
@@ -368,6 +519,18 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * @default "custom"
    */
   source?: ToolSource;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Optional group for profile-based tool selection */
+  group?: string;
+  /** Deferred tools are discoverable but need not be sent on every request */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool selection */
+  searchKeywords?: string[];
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
 
   // ============================================
   // Display Configuration
@@ -437,6 +600,12 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * Similar to Vercel AI SDK v6's needsApproval pattern.
    */
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
+
+  /**
+   * Custom title shown in the approval UI.
+   * If not provided, the tool name is used.
+   */
+  approvalTitle?: string | ((params: TParams) => string);
 
   /**
    * Custom message shown in the approval UI.
@@ -647,10 +816,18 @@ export interface ToolExecution {
 
   /** Approval status for this execution */
   approvalStatus: ToolApprovalStatus;
+  /** Title shown in approval UI (from tool's approvalTitle) */
+  approvalTitle?: string;
   /** Message shown in approval UI (from tool's approvalMessage) */
   approvalMessage?: string;
   /** Timestamp when user responded to approval request */
   approvalTimestamp?: number;
+
+  /**
+   * Whether this tool execution should be hidden from the UI.
+   * Server-side tools can set this to hide internal operations from users.
+   */
+  hidden?: boolean;
 }
 
 // ============================================
@@ -667,6 +844,8 @@ export interface AgentLoopConfig {
   debug?: boolean;
   /** Whether to enable the agentic loop (default: true) */
   enabled?: boolean;
+  /** Optional prompt/tool optimization controls */
+  optimization?: ToolOptimizationConfig;
 }
 
 /**
@@ -690,17 +869,35 @@ export interface AgentLoopState {
 // ============================================
 
 /**
+ * A tool definition without the name (name is derived from the key in ToolSet)
+ */
+export type ToolSetEntry<TParams = Record<string, unknown>> = Omit<
+  ToolDefinition<TParams>,
+  "name"
+>;
+
+/**
  * A set of tools, keyed by tool name
+ *
+ * The key becomes the tool name, so tool definitions don't need a name property.
+ * Use with the `tool()` helper for clean syntax.
  *
  * @example
  * ```typescript
  * const myTools: ToolSet = {
- *   capture_screenshot: screenshotTool,
- *   get_weather: weatherTool,
+ *   capture_screenshot: tool({
+ *     description: 'Capture screenshot',
+ *     handler: async () => ({ success: true }),
+ *   }),
+ *   get_weather: tool({
+ *     description: 'Get weather',
+ *     inputSchema: { type: 'object', properties: { city: { type: 'string' } } },
+ *     handler: async ({ city }) => ({ success: true, data: { temp: 72 } }),
+ *   }),
  * };
  * ```
  */
-export type ToolSet = Record<string, ToolDefinition>;
+export type ToolSet = Record<string, ToolSetEntry>;
 
 // ============================================
 // Tool Helper Function (Vercel AI SDK pattern)
@@ -714,6 +911,18 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   description: string;
   /** Where the tool executes (default: 'client') */
   location?: ToolLocation;
+  /** Optional category for search, filtering, and budgets */
+  category?: string;
+  /** Optional group for profile-based tool selection */
+  group?: string;
+  /** Deferred tools are discoverable but omitted from the default prompt */
+  deferLoading?: boolean;
+  /** Profile memberships for selective tool loading */
+  profiles?: string[];
+  /** Extra keywords for dynamic tool selection */
+  searchKeywords?: string[];
+  /** Per-tool prompt/result shaping controls */
+  resultConfig?: ToolResultConfig;
 
   // Display Configuration
   /** Human-readable title for UI display */
@@ -738,6 +947,8 @@ export interface ToolConfig<TParams = Record<string, unknown>> {
   hidden?: boolean;
   /** Require user approval before execution */
   needsApproval?: boolean | ((params: TParams) => boolean | Promise<boolean>);
+  /** Custom title shown in the approval UI */
+  approvalTitle?: string | ((params: TParams) => string);
   /** Custom message shown in the approval UI */
   approvalMessage?: string | ((params: TParams) => string);
   /** AI response mode for this tool (default: 'full') */
@@ -775,6 +986,12 @@ export function tool<TParams = Record<string, unknown>>(
   return {
     description: config.description,
     location: config.location ?? "client",
+    category: config.category,
+    group: config.group,
+    deferLoading: config.deferLoading,
+    profiles: config.profiles,
+    searchKeywords: config.searchKeywords,
+    resultConfig: config.resultConfig,
     // Display configuration
     title: config.title,
     executingTitle: config.executingTitle,

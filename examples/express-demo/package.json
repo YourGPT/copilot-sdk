@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@yourgpt/llm-sdk": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",

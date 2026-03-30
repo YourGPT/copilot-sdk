@@ -53,6 +53,9 @@ export {
   type UseToolConfig,
   type UseToolWithSchemaConfig,
   type UseToolExecutorReturn,
+  // Thread/Session
+  useThread,
+  type UseThreadReturn,
 } from "./hooks";
 
 // Knowledge Base
@@ -160,6 +163,13 @@ export {
   type UseMCPUIIntentsReturn,
 } from "./hooks";
 
+// Message Checkpoints — undo / restore conversation to before any user message
+export {
+  useMessageCheckpoints,
+  type MessageCheckpoint,
+  type UseMessageCheckpointsReturn,
+} from "./hooks";
+
 // Re-export core types for convenience
 export type {
   Message,
@@ -189,9 +199,99 @@ export type {
   ToolExecutionStatus,
   UnifiedToolCall,
   AgentLoopConfig,
+  // ToolSet types (for useTools)
+  ToolSet,
+  ToolSetEntry,
+  ToolConfig,
   // Permission types
   PermissionLevel,
   ToolPermission,
   PermissionStorageConfig,
   PermissionStorageAdapter,
 } from "../core";
+
+// Re-export tool helper function (Vercel AI SDK pattern)
+export { tool } from "../core";
+
+// Skills System
+export { SkillProvider, type SkillProviderProps } from "./skill/SkillProvider";
+export { defineSkill } from "./skill/define-skill";
+export { useSkill } from "./hooks/useSkill";
+export {
+  useSkillStatus,
+  type UseSkillStatusReturn,
+} from "./hooks/useSkillStatus";
+export type {
+  SkillDefinition,
+  SkillSource,
+  SkillStrategy,
+  ResolvedSkill,
+  ClientInlineSkill,
+} from "../skill-system/types";
+
+// Message History (Context Management)
+export {
+  useMessageHistory,
+  MessageHistoryContext,
+  useMessageHistoryContext,
+  defaultMessageHistoryConfig,
+  toDisplayMessage,
+  toLLMMessage,
+  toLLMMessages,
+  keepToolPairsAtomic,
+  isCompactionMarker,
+} from "./message-history";
+export type {
+  DisplayMessage,
+  CompactionMarker,
+  LLMMessage,
+  CompactedToolResult,
+  SessionCompactionState,
+  TokenUsage,
+  CompactionEvent,
+  CompactionStrategy,
+  MessageHistoryConfig,
+  UseMessageHistoryOptions,
+  UseMessageHistoryReturn,
+  MessageHistoryContextValue,
+} from "./message-history";
+
+// Context Stats Hook
+export {
+  useContextStats,
+  type ContextStats,
+  type MessageTokenUsage,
+} from "./hooks/useContextStats";
+
+// Re-export ContextUsage for useContextStats consumers
+export type { ContextUsage, ContextUsagePart } from "../core";
+
+// Branching
+export { MessageTree, type BranchInfo } from "../chat/branching";
+
+// ── Headless primitives ───────────────────────────────────────────────────────
+
+/**
+ * useCopilotEvent — subscribe to raw stream chunks as they arrive.
+ * Build any custom real-time UI (thinking steps, tool badges, loop counters)
+ * without depending on built-in SDK components.
+ */
+export { useCopilotEvent } from "./hooks/useCopilotEvent";
+
+/**
+ * useMessageMeta — reactive per-message custom metadata store.
+ * Attach any shape of data to a message ID; all readers react automatically.
+ * Pair with useCopilotEvent to build thinking steps, artifact tracking,
+ * plan state, or any other per-message feature.
+ */
+export {
+  useMessageMeta,
+  type UseMessageMetaReturn,
+} from "./hooks/useMessageMeta";
+
+// Types for advanced consumers building on top of headless primitives
+export type {
+  StreamChunkWithMessageId,
+  StreamEventHandler,
+  MessageMetaStore,
+} from "./provider/CopilotProvider";

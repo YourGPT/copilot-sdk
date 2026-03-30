@@ -38,6 +38,14 @@ import type { ChatProps, PendingAttachment, MessageAttachment } from "./types";
 import type { ToolExecutionData } from "../tools";
 import type { Thread } from "../../../../core/types/thread";
 import { ThreadPicker, type ThreadPickerProps } from "../../ui/thread-picker";
+import { MessageActionsProvider } from "./message-actions-context";
+import {
+  MessageActions,
+  CopyAction,
+  EditAction,
+  FeedbackAction,
+  Action as MessageAction,
+} from "./message-actions-compound";
 
 // ============================================================================
 // Internal Context for Compound Components
@@ -50,6 +58,9 @@ interface CopilotChatInternalContext {
   onStop?: () => void;
   attachmentsEnabled: boolean;
   placeholder: string;
+  // Messages (for Chat.MessageList primitive)
+  messages: import("./types").ChatMessage[];
+  registeredTools?: import("../../../../core").ToolDefinition[];
   // Thread management
   onNewChat?: () => void;
   threads?: Thread[];
@@ -482,6 +493,7 @@ function ChatComponent({
   onSendMessage,
   onStop,
   isLoading = false,
+  error,
   // Compound children
   children,
   // Labels
@@ -508,7 +520,8 @@ function ChatComponent({
   allowedFileTypes = DEFAULT_ALLOWED_TYPES,
   attachmentsEnabled = true,
   attachmentsDisabledTooltip = "Attachments not supported by this model",
-  processAttachment: processAttachmentProp,
+  upload: uploadProp,
+  processAttachment: deprecatedProcessAttachment,
   // Suggestions
   suggestions = [],
   onSuggestionClick,
@@ -523,6 +536,7 @@ function ChatComponent({
   registeredTools,
   toolRenderers,
   mcpToolRenderer,
+  fallbackToolRenderer,
   onApproveToolExecution,
   onRejectToolExecution,
   // Follow-up Questions
@@ -532,9 +546,13 @@ function ChatComponent({
   // Citations/Sources
   citations,
   // Custom rendering
+  messageView,
   renderMessage,
+  wrapMessage,
   renderInput,
   renderHeader,
+  // Avatar grouping
+  groupConsecutiveMessages = false,
   // Styling
   className,
   classNames = {},
@@ -544,6 +562,10 @@ function ChatComponent({
   currentThreadId,
   onSwitchThread,
   isThreadBusy,
+  // Branching
+  getBranchInfo,
+  onSwitchBranch,
+  onEditMessage,
 }: ChatProps) {
   // Merge avatar props with defaults (so user can pass partial config)
   const userAvatar = { fallback: "U", ...userAvatarProp };
@@ -554,6 +576,19 @@ function ChatComponent({
     PendingAttachment[]
   >([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const [displayedError, setDisplayedError] = useState<Error | null>(null);
+
+  // Track error changes: new error → show it; error clears → keep displayedError for exit animation
+  React.useEffect(() => {
+    if (error) {
+      setDisplayedError(error);
+      setIsDismissed(false);
+    }
+  }, [error]);
+
+  // Banner is visible when: there's an error prop AND not dismissed
+  const showErrorBanner = !!error && !isDismissed;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId(); // Unique ID for this Chat instance's file input
 
@@ -622,9 +657,43 @@ function ChatComponent({
             filename?: string;
           };
 
-          if (processAttachmentProp) {
-            // Use provided processor (e.g., cloud storage upload)
-            attachment = await processAttachmentProp(file);
+          // Resolve upload handler: upload prop > deprecated processAttachment > base64 fallback
+          const uploader = uploadProp ?? deprecatedProcessAttachment;
+
+          if (typeof uploader === "function") {
+            // Function — full custom handler
+            attachment = await uploader(file);
+          } else if (uploader) {
+            // String or object — server upload endpoint
+            const config =
+              typeof uploader === "string" ? { url: uploader } : uploader;
+            const extraHeaders =
+              typeof config.headers === "function"
+                ? config.headers()
+                : config.headers;
+            const extraBody =
+              typeof config.body === "function" ? config.body() : config.body;
+            const data = await fileToBase64(file);
+            const res = await fetch(config.url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...extraHeaders },
+              body: JSON.stringify({
+                data,
+                mimeType: file.type,
+                filename: file.name,
+                ...extraBody,
+              }),
+            });
+            if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+            const result = await res.json();
+            const url = result.url ?? result.data?.url;
+            if (!url) throw new Error("Upload returned no URL");
+            attachment = {
+              type: getAttachmentType(file.type),
+              url,
+              mimeType: file.type,
+              filename: file.name,
+            };
           } else {
             // Default: convert to base64
             const data = await fileToBase64(file);
@@ -658,7 +727,13 @@ function ChatComponent({
         }
       }
     },
-    [attachmentsEnabled, maxFileSize, isFileTypeAllowed, processAttachmentProp],
+    [
+      attachmentsEnabled,
+      maxFileSize,
+      isFileTypeAllowed,
+      uploadProp,
+      deprecatedProcessAttachment,
+    ],
   );
 
   // Handle file input change
@@ -768,6 +843,17 @@ function ChatComponent({
     ChatView,
   );
 
+  // Behavior children: non-layout compound types (MessageActions registrars, custom hook components)
+  // These always mount so their useLayoutEffect registrations run regardless of view state.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layoutTypes: any[] = [HomeView, Home, ChatView, Header, Footer];
+  const behaviorChildren = React.Children.toArray(children).filter(
+    (child) =>
+      React.isValidElement(child) &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      !layoutTypes.includes(child.type as any),
+  ) as React.ReactElement[];
+
   // Check if ChatView has no children or only Header/Footer children (should render default)
   const chatViewElement = findCompoundChild(children, ChatView);
   const chatViewNeedsDefault =
@@ -799,6 +885,9 @@ function ChatComponent({
       onStop,
       attachmentsEnabled,
       placeholder,
+      // Messages for Chat.MessageList primitive
+      messages,
+      registeredTools,
       // Thread management - passed from connected-chat
       onNewChat,
       threads,
@@ -814,6 +903,8 @@ function ChatComponent({
       onStop,
       attachmentsEnabled,
       placeholder,
+      messages,
+      registeredTools,
       onNewChat,
       threads,
       currentThreadId,
@@ -824,358 +915,505 @@ function ChatComponent({
   );
 
   return (
-    <CopilotChatContext.Provider value={contextValue}>
-      <div
-        className={cn(
-          "flex h-full flex-col bg-background relative",
-          className,
-          classNames.root,
-        )}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {/* Drag overlay */}
-        {isDragging && (
-          <div className="absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
-            <div className="text-primary font-medium text-lg">
-              Drop files here
+    <MessageActionsProvider>
+      <CopilotChatContext.Provider value={contextValue}>
+        <div
+          className={cn(
+            "flex h-full flex-col bg-background relative",
+            className,
+            classNames.root,
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {/* Drag overlay — only for built-in input; custom renderInput handles its own */}
+          {isDragging && !renderInput && (
+            <div className="csdk-dropzone-overlay absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary flex items-center justify-center">
+              <div className="text-primary font-medium text-lg">
+                Drop files here
+              </div>
             </div>
-          </div>
-        )}
-        {/* Built-in Header (from showHeader prop) */}
-        {showHeader &&
-          (renderHeader ? (
-            renderHeader()
-          ) : (
-            <ChatHeader
-              logo={header?.logo ?? logo}
-              name={header?.name ?? name}
-              title={title}
-              threadPicker={threadPicker}
-              onClose={header?.onClose ?? onClose}
-              className={classNames.header}
+          )}
+          {/* Built-in Header (from showHeader prop) */}
+          {showHeader &&
+            (renderHeader ? (
+              renderHeader()
+            ) : (
+              <ChatHeader
+                logo={header?.logo ?? logo}
+                name={header?.name ?? name}
+                title={title}
+                threadPicker={threadPicker}
+                onClose={header?.onClose ?? onClose}
+                className={classNames.header}
+              />
+            ))}
+
+          {/* Root-level custom Header (shows in both views) */}
+          {rootHeader}
+
+          {/* Behavior children — always mounted (MessageActions registrars, hook components) */}
+          {behaviorChildren.length > 0 && behaviorChildren}
+
+          {/* Custom compound children - view components self-filter based on current view */}
+          {hasCustomLayout && viewChildren}
+
+          {showDefaultWelcome ? (
+            /* Default Welcome Screen (centered input) */
+            <ChatWelcome
+              config={welcomeConfig}
+              suggestions={suggestions}
+              recentThreads={recentThreads}
+              onSendMessage={(msg, attachments) =>
+                onSendMessage?.(msg, attachments)
+              }
+              onSelectThread={onSelectThread}
+              onDeleteThread={onDeleteThread}
+              onViewMoreThreads={onViewMoreThreads}
+              isLoading={isLoading}
+              onStop={onStop}
+              placeholder={placeholder}
+              attachmentsEnabled={attachmentsEnabled}
+              attachmentsDisabledTooltip={attachmentsDisabledTooltip}
+              maxFileSize={maxFileSize}
+              allowedFileTypes={allowedFileTypes}
+              processAttachment={
+                typeof uploadProp === "function"
+                  ? uploadProp
+                  : deprecatedProcessAttachment
+              }
             />
-          ))}
+          ) : null}
 
-        {/* Root-level custom Header (shows in both views) */}
-        {rootHeader}
-
-        {/* Custom compound children - view components self-filter based on current view */}
-        {hasCustomLayout && viewChildren}
-
-        {showDefaultWelcome ? (
-          /* Default Welcome Screen (centered input) */
-          <ChatWelcome
-            config={welcomeConfig}
-            suggestions={suggestions}
-            recentThreads={recentThreads}
-            onSendMessage={(msg, attachments) =>
-              onSendMessage?.(msg, attachments)
-            }
-            onSelectThread={onSelectThread}
-            onDeleteThread={onDeleteThread}
-            onViewMoreThreads={onViewMoreThreads}
-            isLoading={isLoading}
-            onStop={onStop}
-            placeholder={placeholder}
-            attachmentsEnabled={attachmentsEnabled}
-            attachmentsDisabledTooltip={attachmentsDisabledTooltip}
-            maxFileSize={maxFileSize}
-            allowedFileTypes={allowedFileTypes}
-            processAttachment={processAttachmentProp}
-          />
-        ) : null}
-
-        {/* Normal Chat UI (messages + input at bottom) - show when there are messages */}
-        {/* Renders when: view is chat AND (no explicit ChatView OR ChatView needs default content) */}
-        {view === "chat" && (!hasCustomChatView || chatViewNeedsDefault) && (
-          <>
-            {/* Messages wrapper - relative for scroll button positioning */}
-            <div className="flex-1 min-h-0 flex flex-col">
-              <ChatContainerRoot
-                className={cn("flex-1 relative", classNames.container)}
-              >
-                <ChatContainerContent
-                  className={cn("gap-4 p-4", classNames.messageList)}
+          {/* Normal Chat UI (messages + input at bottom) - show when there are messages */}
+          {/* Renders when: view is chat AND (no explicit ChatView OR ChatView needs default content) */}
+          {view === "chat" && (!hasCustomChatView || chatViewNeedsDefault) && (
+            <>
+              {/* Messages wrapper - relative for scroll button positioning */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                <ChatContainerRoot
+                  className={cn("flex-1 relative", classNames.container)}
                 >
-                  {/* Welcome message */}
-                  {messages.length === 0 && (
-                    <div className="py-8 text-center text-muted-foreground">
-                      {welcomeMessage ||
-                        "Send a message to start the conversation"}
+                  <ChatContainerContent
+                    className={cn("gap-4 p-4", classNames.messageList)}
+                  >
+                    {/* Welcome message */}
+                    {messages.length === 0 && (
+                      <div className="py-8 text-center text-muted-foreground">
+                        {welcomeMessage ||
+                          "Send a message to start the conversation"}
+                      </div>
+                    )}
+
+                    {/* Messages */}
+                    {(() => {
+                      const messageElements = messages.map((message, index) => {
+                        const isLastMessage = index === messages.length - 1;
+
+                        const GROUP_THRESHOLD_MS = 5 * 60 * 1000;
+                        const shouldHideAvatar = (() => {
+                          if (!groupConsecutiveMessages || index === 0)
+                            return false;
+                          let prevIdx = index - 1;
+                          while (prevIdx >= 0) {
+                            const prev = messages[prevIdx];
+                            const isToolMsg = prev.role === "tool";
+                            const isInvisibleSystem =
+                              prev.role === "system" &&
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              (prev.metadata as Record<string, unknown>)
+                                ?.type !== "compaction-marker";
+                            if (!isToolMsg && !isInvisibleSystem) break;
+                            prevIdx--;
+                          }
+                          if (prevIdx < 0) return false;
+                          const prevVisible = messages[prevIdx];
+                          if (prevVisible.role !== message.role) return false;
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          const curTs = (message as any).timestamp as
+                            | number
+                            | undefined;
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          const prevTs = (prevVisible as any).timestamp as
+                            | number
+                            | undefined;
+                          if (
+                            curTs &&
+                            prevTs &&
+                            curTs - prevTs > GROUP_THRESHOLD_MS
+                          )
+                            return false;
+                          return true;
+                        })();
+
+                        const isEmptyAssistant =
+                          message.role === "assistant" &&
+                          !message.content?.trim();
+
+                        // Check if message has tool_calls or toolExecutions
+                        const hasToolCalls =
+                          message.tool_calls && message.tool_calls.length > 0;
+                        const hasToolExecutions =
+                          message.toolExecutions &&
+                          message.toolExecutions.length > 0;
+
+                        // Check if this message has pending tool approvals
+                        const hasPendingApprovals =
+                          message.toolExecutions?.some(
+                            (exec) => exec.approvalStatus === "required",
+                          );
+
+                        // Hide empty assistant messages that aren't loading and have no content to show
+                        if (isEmptyAssistant) {
+                          const shouldShowMessage =
+                            hasToolCalls ||
+                            hasToolExecutions ||
+                            hasPendingApprovals ||
+                            (isLastMessage && (isLoading || isProcessing));
+
+                          if (!shouldShowMessage) {
+                            return null;
+                          }
+                          // Otherwise, continue to render via DefaultMessage
+                        }
+
+                        // Check for saved executions in metadata (historical)
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const savedExecutions = (message as any).metadata
+                          ?.toolExecutions as ToolExecutionData[] | undefined;
+                        const messageToolExecutions =
+                          message.toolExecutions || savedExecutions;
+
+                        const messageWithExecutions = messageToolExecutions
+                          ? {
+                              ...message,
+                              toolExecutions: messageToolExecutions,
+                            }
+                          : message;
+
+                        // Handle follow-up click - use onSendMessage if available
+                        const handleFollowUpClick = (question: string) => {
+                          if (onSuggestionClick) {
+                            onSuggestionClick(question);
+                          } else {
+                            onSendMessage?.(question);
+                          }
+                        };
+
+                        if (renderMessage) {
+                          return (
+                            <React.Fragment key={message.id}>
+                              {renderMessage(messageWithExecutions, index)}
+                            </React.Fragment>
+                          );
+                        }
+
+                        const defaultMsg = (
+                          <DefaultMessage
+                            key={message.id}
+                            message={messageWithExecutions}
+                            userAvatar={
+                              shouldHideAvatar && message.role === "user"
+                                ? { ...userAvatar, className: "invisible" }
+                                : userAvatar
+                            }
+                            assistantAvatar={
+                              shouldHideAvatar && message.role === "assistant"
+                                ? { ...assistantAvatar, className: "invisible" }
+                                : assistantAvatar
+                            }
+                            showUserAvatar={showUserAvatar}
+                            userMessageClassName={classNames.userMessage}
+                            assistantMessageClassName={
+                              classNames.assistantMessage
+                            }
+                            size={fontSize}
+                            isLastMessage={isLastMessage}
+                            isLoading={isLoading}
+                            isProcessing={isProcessing}
+                            loaderVariant={loaderVariant}
+                            registeredTools={registeredTools}
+                            toolRenderers={toolRenderers}
+                            mcpToolRenderer={mcpToolRenderer}
+                            fallbackToolRenderer={fallbackToolRenderer}
+                            onApproveToolExecution={onApproveToolExecution}
+                            onRejectToolExecution={onRejectToolExecution}
+                            showFollowUps={showFollowUps}
+                            onFollowUpClick={handleFollowUpClick}
+                            followUpClassName={followUpClassName}
+                            followUpButtonClassName={followUpButtonClassName}
+                            citations={
+                              citations === false
+                                ? { enabled: false }
+                                : citations
+                            }
+                            branchInfo={
+                              message.role === "user"
+                                ? (getBranchInfo?.(message.id) ?? null)
+                                : null
+                            }
+                            onSwitchBranch={onSwitchBranch}
+                            onEditMessage={onEditMessage}
+                          />
+                        );
+
+                        return wrapMessage ? (
+                          <React.Fragment key={message.id}>
+                            {wrapMessage(
+                              defaultMsg,
+                              messageWithExecutions,
+                              index,
+                            )}
+                          </React.Fragment>
+                        ) : (
+                          defaultMsg
+                        );
+                      });
+                      return messageView?.children
+                        ? messageView.children({ messages, messageElements })
+                        : messageElements;
+                    })()}
+
+                    {/* Loading indicator for non-streaming - when last message is user and no assistant message yet */}
+                    {isLoading &&
+                      !isProcessing &&
+                      messages.length > 0 &&
+                      messages[messages.length - 1]?.role === "user" && (
+                        <DefaultMessage
+                          message={{
+                            id: "loading-placeholder",
+                            role: "assistant",
+                            content: "",
+                          }}
+                          userAvatar={userAvatar}
+                          assistantAvatar={assistantAvatar}
+                          showUserAvatar={false}
+                          size={fontSize}
+                          isLastMessage={true}
+                          isLoading={true}
+                          isProcessing={false}
+                          loaderVariant={loaderVariant}
+                        />
+                      )}
+
+                    <ChatContainerScrollAnchor />
+                  </ChatContainerContent>
+
+                  {/* Scroll to bottom button - inside ChatContainerRoot for context, outside ChatContainerContent so it doesn't scroll */}
+                  <div className="csdk-scroll-btn-layer absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
+                    <ScrollButton className="shadow-md pointer-events-auto" />
+                  </div>
+                </ChatContainerRoot>
+              </div>
+
+              {/* Suggestions */}
+              {suggestions.length > 0 && !isLoading && (
+                <Suggestions
+                  suggestions={suggestions}
+                  onSuggestionClick={handleSuggestionClick}
+                  className={classNames.suggestions}
+                />
+              )}
+
+              {/* Error banner — always in DOM while displayedError exists, animated via max-height/opacity */}
+              {displayedError && (
+                <div
+                  className={cn(
+                    "mx-2 mb-1 overflow-hidden transition-all duration-200 ease-in-out",
+                    showErrorBanner
+                      ? "max-h-20 opacity-100"
+                      : "max-h-0 opacity-0 mb-0",
+                  )}
+                  onTransitionEnd={() => {
+                    // Clean up displayedError after exit animation finishes
+                    if (!showErrorBanner) setDisplayedError(null);
+                  }}
+                >
+                  <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    <svg
+                      className="mt-0.5 h-3.5 w-3.5 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                      />
+                    </svg>
+                    <span className="flex-1 leading-relaxed">
+                      {displayedError.message}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsDismissed(true)}
+                      className="flex-shrink-0 opacity-60 hover:opacity-100"
+                      aria-label="Dismiss error"
+                    >
+                      <svg
+                        className="h-3 w-3"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Input */}
+              {renderInput ? (
+                renderInput()
+              ) : (
+                <div className={cn("p-2 pt-0", classNames.input)}>
+                  {/* Pending Attachments Preview */}
+                  {pendingAttachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 p-2 mb-2 bg-muted/30 rounded-lg">
+                      {pendingAttachments.map((att) => (
+                        <div key={att.id} className="relative group">
+                          {att.attachment.type === "image" ? (
+                            <img
+                              src={att.previewUrl}
+                              alt={att.file.name}
+                              className="w-16 h-16 object-cover rounded-lg border"
+                            />
+                          ) : (
+                            <div className="w-16 h-16 bg-muted rounded-lg border flex flex-col items-center justify-center p-1">
+                              <svg
+                                className="w-6 h-6 text-muted-foreground"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={1.5}
+                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                              </svg>
+                              <span className="text-[10px] text-muted-foreground truncate w-full text-center mt-1">
+                                {att.file.name.length > 10
+                                  ? att.file.name.slice(0, 8) + "..."
+                                  : att.file.name}
+                              </span>
+                            </div>
+                          )}
+                          {/* Loading overlay */}
+                          {att.status === "processing" && (
+                            <div className="csdk-attachment-loading absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
+                              <Loader variant="dots" size="sm" />
+                            </div>
+                          )}
+                          {/* Error overlay */}
+                          {att.status === "error" && (
+                            <div className="csdk-attachment-error absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
+                              <span className="text-destructive text-xs">
+                                Error
+                              </span>
+                            </div>
+                          )}
+                          {/* Remove button */}
+                          <button
+                            onClick={() => removePendingAttachment(att.id)}
+                            className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                            type="button"
+                          >
+                            <XIcon className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {/* Messages */}
-                  {messages.map((message, index) => {
-                    const isLastMessage = index === messages.length - 1;
-                    const isEmptyAssistant =
-                      message.role === "assistant" && !message.content?.trim();
-
-                    // Check if message has tool_calls or toolExecutions
-                    const hasToolCalls =
-                      message.tool_calls && message.tool_calls.length > 0;
-                    const hasToolExecutions =
-                      message.toolExecutions &&
-                      message.toolExecutions.length > 0;
-
-                    // Check if this message has pending tool approvals
-                    const hasPendingApprovals = message.toolExecutions?.some(
-                      (exec) => exec.approvalStatus === "required",
-                    );
-
-                    // Hide empty assistant messages that aren't loading and have no content to show
-                    if (isEmptyAssistant) {
-                      const shouldShowMessage =
-                        hasToolCalls ||
-                        hasToolExecutions ||
-                        hasPendingApprovals ||
-                        (isLastMessage && (isLoading || isProcessing));
-
-                      if (!shouldShowMessage) {
-                        return null;
-                      }
-                      // Otherwise, continue to render via DefaultMessage
-                    }
-
-                    // Check for saved executions in metadata (historical)
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const savedExecutions = (message as any).metadata
-                      ?.toolExecutions as ToolExecutionData[] | undefined;
-                    const messageToolExecutions =
-                      message.toolExecutions || savedExecutions;
-
-                    const messageWithExecutions = messageToolExecutions
-                      ? { ...message, toolExecutions: messageToolExecutions }
-                      : message;
-
-                    // Handle follow-up click - use onSendMessage if available
-                    const handleFollowUpClick = (question: string) => {
-                      if (onSuggestionClick) {
-                        onSuggestionClick(question);
-                      } else {
-                        onSendMessage?.(question);
-                      }
-                    };
-
-                    return renderMessage ? (
-                      <React.Fragment key={message.id}>
-                        {renderMessage(messageWithExecutions, index)}
-                      </React.Fragment>
-                    ) : (
-                      <DefaultMessage
-                        key={message.id}
-                        message={messageWithExecutions}
-                        userAvatar={userAvatar}
-                        assistantAvatar={assistantAvatar}
-                        showUserAvatar={showUserAvatar}
-                        userMessageClassName={classNames.userMessage}
-                        assistantMessageClassName={classNames.assistantMessage}
-                        size={fontSize}
-                        isLastMessage={isLastMessage}
-                        isLoading={isLoading}
-                        isProcessing={isProcessing}
-                        loaderVariant={loaderVariant}
-                        registeredTools={registeredTools}
-                        toolRenderers={toolRenderers}
-                        mcpToolRenderer={mcpToolRenderer}
-                        onApproveToolExecution={onApproveToolExecution}
-                        onRejectToolExecution={onRejectToolExecution}
-                        showFollowUps={showFollowUps}
-                        onFollowUpClick={handleFollowUpClick}
-                        followUpClassName={followUpClassName}
-                        followUpButtonClassName={followUpButtonClassName}
-                        citations={
-                          citations === false ? { enabled: false } : citations
-                        }
-                      />
-                    );
-                  })}
-
-                  {/* Loading indicator for non-streaming - when last message is user and no assistant message yet */}
-                  {isLoading &&
-                    !isProcessing &&
-                    messages.length > 0 &&
-                    messages[messages.length - 1]?.role === "user" && (
-                      <DefaultMessage
-                        message={{
-                          id: "loading-placeholder",
-                          role: "assistant",
-                          content: "",
-                        }}
-                        userAvatar={userAvatar}
-                        assistantAvatar={assistantAvatar}
-                        showUserAvatar={false}
-                        size={fontSize}
-                        isLastMessage={true}
-                        isLoading={true}
-                        isProcessing={false}
-                        loaderVariant={loaderVariant}
-                      />
-                    )}
-
-                  <ChatContainerScrollAnchor />
-                </ChatContainerContent>
-
-                {/* Scroll to bottom button - inside ChatContainerRoot for context, outside ChatContainerContent so it doesn't scroll */}
-                <div className="absolute inset-0 pointer-events-none z-10 flex items-end justify-end p-4">
-                  <ScrollButton className="shadow-md pointer-events-auto" />
-                </div>
-              </ChatContainerRoot>
-            </div>
-
-            {/* Suggestions */}
-            {suggestions.length > 0 && !isLoading && (
-              <Suggestions
-                suggestions={suggestions}
-                onSuggestionClick={handleSuggestionClick}
-                className={classNames.suggestions}
-              />
-            )}
-
-            {/* Input */}
-            {renderInput ? (
-              renderInput()
-            ) : (
-              <div className={cn("p-2 pt-0", classNames.input)}>
-                {/* Pending Attachments Preview */}
-                {pendingAttachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 p-2 mb-2 bg-muted/30 rounded-lg">
-                    {pendingAttachments.map((att) => (
-                      <div key={att.id} className="relative group">
-                        {att.attachment.type === "image" ? (
-                          <img
-                            src={att.previewUrl}
-                            alt={att.file.name}
-                            className="w-16 h-16 object-cover rounded-lg border"
-                          />
-                        ) : (
-                          <div className="w-16 h-16 bg-muted rounded-lg border flex flex-col items-center justify-center p-1">
-                            <svg
-                              className="w-6 h-6 text-muted-foreground"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={1.5}
-                                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                              />
-                            </svg>
-                            <span className="text-[10px] text-muted-foreground truncate w-full text-center mt-1">
-                              {att.file.name.length > 10
-                                ? att.file.name.slice(0, 8) + "..."
-                                : att.file.name}
-                            </span>
-                          </div>
-                        )}
-                        {/* Loading overlay */}
-                        {att.status === "processing" && (
-                          <div className="absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
-                            <Loader variant="dots" size="sm" />
-                          </div>
-                        )}
-                        {/* Error overlay */}
-                        {att.status === "error" && (
-                          <div className="absolute inset-0 bg-destructive/20 rounded-lg flex items-center justify-center">
-                            <span className="text-destructive text-xs">
-                              Error
-                            </span>
-                          </div>
-                        )}
-                        {/* Remove button */}
-                        <button
-                          onClick={() => removePendingAttachment(att.id)}
-                          className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                          type="button"
-                        >
-                          <XIcon className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <PromptInput
-                  value={input}
-                  onValueChange={setInput}
-                  isLoading={isLoading}
-                  onSubmit={handleSubmit}
-                  className=""
-                >
-                  <PromptInputTextarea placeholder={placeholder} />
-                  <PromptInputActions className="flex justify-between">
-                    <div>
-                      <PromptInputAction
-                        tooltip={
-                          attachmentsEnabled
-                            ? "Attach files"
-                            : attachmentsDisabledTooltip
-                        }
-                      >
-                        <label
-                          htmlFor={fileInputId}
-                          className={cn(
-                            "csdk-button-attach flex h-8 w-8 items-center justify-center rounded-2xl",
+                  <PromptInput
+                    value={input}
+                    onValueChange={setInput}
+                    isLoading={isLoading}
+                    onSubmit={handleSubmit}
+                    className=""
+                  >
+                    <PromptInputTextarea placeholder={placeholder} />
+                    <PromptInputActions className="flex justify-between">
+                      <div>
+                        <PromptInputAction
+                          tooltip={
                             attachmentsEnabled
-                              ? "hover:bg-secondary-foreground/10 cursor-pointer"
-                              : "opacity-50 cursor-not-allowed",
-                          )}
-                        >
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            accept={acceptString}
-                            onChange={handleInputChange}
-                            className="hidden"
-                            id={fileInputId}
-                            disabled={!attachmentsEnabled}
-                          />
-                          <PlusIcon className="text-primary size-5" />
-                        </label>
-                      </PromptInputAction>
-                    </div>
-                    <PromptInputAction tooltip={isLoading ? "Stop" : "Send"}>
-                      {isLoading ? (
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="csdk-button-stop rounded-full size-9"
-                          onClick={onStop}
-                        >
-                          <StopIcon className="h-4 w-4" />
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          className="csdk-button-send rounded-full size-9"
-                          onClick={handleSubmit}
-                          disabled={
-                            !input.trim() &&
-                            !pendingAttachments.some(
-                              (att) => att.status === "ready",
-                            )
+                              ? "Attach files"
+                              : attachmentsDisabledTooltip
                           }
                         >
-                          <ArrowUpIcon className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </PromptInputAction>
-                  </PromptInputActions>
-                </PromptInput>
-              </div>
-            )}
-          </>
-        )}
+                          <label
+                            htmlFor={fileInputId}
+                            className={cn(
+                              "csdk-button-attach flex h-8 w-8 items-center justify-center rounded-2xl",
+                              attachmentsEnabled
+                                ? "hover:bg-secondary-foreground/10 cursor-pointer"
+                                : "opacity-50 cursor-not-allowed",
+                            )}
+                          >
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              multiple
+                              accept={acceptString}
+                              onChange={handleInputChange}
+                              className="hidden"
+                              id={fileInputId}
+                              disabled={!attachmentsEnabled}
+                            />
+                            <PlusIcon className="text-primary size-5" />
+                          </label>
+                        </PromptInputAction>
+                      </div>
+                      <PromptInputAction tooltip={isLoading ? "Stop" : "Send"}>
+                        {isLoading ? (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="csdk-button-stop rounded-full size-9"
+                            onClick={onStop}
+                          >
+                            <StopIcon className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="csdk-button-send rounded-full size-9"
+                            onClick={handleSubmit}
+                            disabled={
+                              !input.trim() &&
+                              !pendingAttachments.some(
+                                (att) => att.status === "ready",
+                              )
+                            }
+                          >
+                            <ArrowUpIcon className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </PromptInputAction>
+                    </PromptInputActions>
+                  </PromptInput>
+                </div>
+              )}
+            </>
+          )}
 
-        {/* Root-level custom Footer (shows in both views) */}
-        {rootFooter}
-      </div>
-    </CopilotChatContext.Provider>
+          {/* Root-level custom Footer (shows in both views) */}
+          {rootFooter}
+        </div>
+      </CopilotChatContext.Provider>
+    </MessageActionsProvider>
   );
 }
 
@@ -1241,6 +1479,12 @@ export const Chat = Object.assign(ChatComponent, {
   Suggestions: SuggestionsCompound,
   BackButton, // Navigation: start new chat
   ThreadPicker: ThreadPickerCompound, // Thread switching
+  // Message actions compound components
+  MessageActions,
+  CopyAction,
+  EditAction,
+  FeedbackAction,
+  Action: MessageAction,
 });
 
 // Re-export compound components for direct access and TypeScript declarations

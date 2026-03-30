@@ -15,7 +15,11 @@ import type {
   ChatCompletionRequest,
   CompletionResult,
 } from "./base";
-import { formatMessagesForOpenAI, formatTools } from "./base";
+import {
+  formatMessagesForOpenAI,
+  formatTools,
+  logProviderPayload,
+} from "./base";
 
 // ============================================
 // Types
@@ -147,14 +151,16 @@ export class XAIAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
-      const stream = await client.chat.completions.create({
+      const payload = {
         model: request.config?.model || this.model,
         messages,
         tools,
         temperature: request.config?.temperature ?? this.config.temperature,
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
-      });
+      };
+      logProviderPayload("xai", "request payload", payload, request.debug);
+      const stream = await client.chat.completions.create(payload);
 
       let currentToolCall: {
         id: string;
@@ -163,6 +169,7 @@ export class XAIAdapter implements LLMAdapter {
       } | null = null;
 
       for await (const chunk of stream) {
+        logProviderPayload("xai", "stream chunk", chunk, request.debug);
         // Check for abort
         if (request.signal?.aborted) {
           break;
@@ -261,13 +268,16 @@ export class XAIAdapter implements LLMAdapter {
       ? formatTools(request.actions)
       : undefined;
 
-    const response = await client.chat.completions.create({
+    const payload = {
       model: request.config?.model || this.model,
       messages,
       tools,
       temperature: request.config?.temperature ?? this.config.temperature,
       max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
-    });
+    };
+    logProviderPayload("xai", "request payload", payload, request.debug);
+    const response = await client.chat.completions.create(payload);
+    logProviderPayload("xai", "response payload", response, request.debug);
 
     const choice = response.choices[0];
     const message = choice?.message;
