@@ -118,6 +118,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       debug: init.debug,
       optimization: init.optimization,
       yourgptConfig: init.yourgptConfig,
+      streamMode: init.streamMode,
     };
 
     // Use provided state or create default
@@ -1492,6 +1493,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             // assistant messages that carry tool_calls so tool results keep a valid
             // preceding assistant tool_call message in local state.
             if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // single-turn: ALL assistant content (including intermediate tool-calling
+            // messages from earlier server iterations) is already accumulated into the
+            // one streaming message via message:delta. Inserting them from done.messages
+            // creates duplicate bubbles after streaming ends. Skip ALL assistant messages
+            // in single-turn mode — tool execution display is driven by streamState.toolResults.
+            if (
+              this.config.streamMode === "single-turn" &&
+              msg.role === "assistant"
+            ) {
               continue;
             }
 
