@@ -99,10 +99,24 @@ export interface ChatConfig {
   yourgptConfig?: YourGPTConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Controls how multi-turn agent responses appear in the UI.
+   *
+   * - `'multi-step'` (default) — each server agent iteration gets its own
+   *   assistant bubble. Mirrors OpenAI / LiteLLM multi-turn structure.
+   * - `'single-turn'` — all iterations are accumulated into one bubble,
+   *   finalized when the server sends `done`. Same as Vercel AI SDK / Claude.ai.
+   */
+  streamMode?: "multi-step" | "single-turn";
   /** Available tools (passed to LLM) */
   tools?: ToolDefinition[];
   /** Optional prompt/tool optimization controls */
   optimization?: ToolOptimizationConfig;
+  /**
+   * Custom error message extractor for non-2xx API responses.
+   * Receives HTTP status and parsed body — return a string or null to fall back to default.
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }
 
 /**

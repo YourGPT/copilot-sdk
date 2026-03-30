@@ -143,3 +143,115 @@ messageMeta.updateMeta(messageId, prev => ({ ...prev, count: (prev.count as numb
 - Metadata is **in-memory only** — resets when the provider unmounts. Sync to your own storage in event handlers if you need persistence.
 - Multiple components can read the same `messageId` — all re-render on any write.
 - Handlers in `useCopilotEvent` run synchronously during streaming — keep them fast.
+
+---
+
+## Attachment Primitives
+
+Build custom file upload UIs with the `useAttachments` hook and companion components.
+
+### `useAttachments`
+
+Core hook for file upload management — handles validation, upload progress, cancellation, retry, and drag-drop.
+
+```tsx
+import { useAttachments, AttachmentStrip, DropZoneOverlay } from "@yourgpt/copilot-sdk/ui";
+
+function MyCustomInput() {
+  const { send } = useCopilotChatContext();
+
+  const {
+    attachments,           // PendingAttachment[] — current files
+    addFiles,              // (files: FileList | File[]) => void
+    removeAttachment,      // (id: string) => void
+    cancelUpload,          // (id: string) => void
+    retryUpload,           // (id: string) => void
+    clearAll,              // () => void
+    getReadyAttachments,   // () => MessageAttachment[]
+    hasAttachments,        // boolean
+    isUploading,           // boolean
+    canSend,               // boolean (has ready files, none uploading)
+    dragHandlers,          // spread on container for drag-drop
+    isDragging,            // boolean
+    openFilePicker,        // () => void
+    fileInputRef,          // ref for hidden <input type="file">
+    onFileInputChange,     // onChange handler for file input
+  } = useAttachments({
+    // Server upload URL (string), URL + options (object), or custom handler (function)
+    upload: "/api/copilot/upload",
+    maxFiles: 5,                                    // default: 5
+    maxFileSize: 10 * 1024 * 1024,                  // default: 10MB
+    allowedFileTypes: ["image/*", "application/pdf"], // default
+  });
+
+  const handleSend = (text: string) => {
+    const files = getReadyAttachments();
+    send(text, files.length ? files : undefined);
+    clearAll();
+  };
+
+  return (
+    <div {...dragHandlers} className="relative">
+      <DropZoneOverlay isDragging={isDragging} />
+      <AttachmentStrip
+        attachments={attachments}
+        onRemove={removeAttachment}
+        onRetry={retryUpload}
+      />
+      <textarea ... />
+      <button onClick={openFilePicker}>Attach</button>
+      <input ref={fileInputRef} type="file" hidden multiple onChange={onFileInputChange} />
+      <button onClick={() => handleSend(text)}>Send</button>
+    </div>
+  );
+}
+```
+
+#### Config
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `upload` | `string \| object \| function` | — | Upload handler (see [Attachments](/docs/attachments)) |
+| `maxFiles` | `number` | `5` | Maximum concurrent files |
+| `maxFileSize` | `number` | `10MB` | Max file size in bytes |
+| `allowedFileTypes` | `string[]` | `["image/*", "application/pdf", ...]` | Allowed MIME types |
+
+#### PendingAttachment
+
+Each item in the `attachments` array:
+
+```ts
+{
+  id: string;
+  file: File;
+  preview?: string;       // object URL for image thumbnails
+  status: "uploading" | "ready" | "error";
+  progress: number;       // 0-100
+  error?: string;
+  attachment?: MessageAttachment; // final result when ready
+}
+```
+
+### `AttachmentStrip`
+
+Compact horizontal strip showing pending attachments. Each file shows a thumbnail (images) or type icon, filename, upload progress bar, and remove/retry button.
+
+```tsx
+<AttachmentStrip
+  attachments={attachments}
+  onRemove={removeAttachment}
+  onRetry={retryUpload}
+  className="mb-2"
+/>
+```
+
+### `DropZoneOverlay`
+
+Overlay that appears when files are dragged over the container. Spread `dragHandlers` from `useAttachments` on the parent element.
+
+```tsx
+<div {...dragHandlers} className="relative">
+  <DropZoneOverlay isDragging={isDragging} />
+  {/* your input */}
+</div>
+```

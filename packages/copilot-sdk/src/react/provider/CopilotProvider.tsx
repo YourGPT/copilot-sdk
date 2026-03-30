@@ -309,8 +309,26 @@ export interface CopilotProviderProps {
   onMessagesChange?: (messages: Message[]) => void;
   /** Callback when an error occurs */
   onError?: (error: Error) => void;
+  /**
+   * Custom error message extractor for non-2xx API responses.
+   * Receives the HTTP status and parsed response body.
+   * Return a string to override the default message, or null to use the default.
+   *
+   * @example
+   * parseError: (status, body) => body?.errors?.[0]?.message ?? body?.detail ?? null
+   */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
+  /**
+   * Controls how multi-turn agent responses appear in the UI.
+   *
+   * - `'multi-step'` (default) — each server agent iteration gets its own
+   *   assistant bubble. Mirrors OpenAI / LiteLLM multi-turn structure.
+   * - `'single-turn'` — all iterations are accumulated into one bubble,
+   *   finalized when the server sends `done`. Same as Vercel AI SDK / Claude.ai.
+   */
+  streamMode?: "multi-step" | "single-turn";
   /**
    * Custom headers to send with each request
    * Can be static object or getter function for dynamic resolution.
@@ -549,7 +567,9 @@ export function CopilotProvider(props: CopilotProviderProps) {
     initialMessages,
     onMessagesChange,
     onError,
+    parseError,
     streaming,
+    streamMode,
     headers,
     body,
     debug = false,
@@ -648,8 +668,10 @@ export function CopilotProvider(props: CopilotProviderProps) {
         yourgptConfig,
         initialMessages: uiInitialMessages,
         streaming,
+        streamMode,
         headers,
         body,
+        parseError,
         debug,
         maxIterations,
         maxIterationsMessage,

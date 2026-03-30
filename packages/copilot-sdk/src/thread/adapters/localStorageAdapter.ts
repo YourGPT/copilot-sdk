@@ -6,7 +6,7 @@
  */
 
 import type { ThreadData } from "../../core/types/thread";
-import type { ThreadStorageAdapter } from "./types";
+import type { ThreadStorageAdapter, AsyncThreadStorageAdapter } from "./types";
 
 const DEFAULT_STORAGE_KEY = "copilot-sdk-store";
 const STORE_VERSION = 1;
@@ -70,15 +70,17 @@ export interface LocalStorageAdapterConfig {
 /**
  * Check if localStorage is available (SSR-safe)
  */
+let _localStorageAvailable: boolean | null = null;
 function isLocalStorageAvailable(): boolean {
-  if (typeof window === "undefined") return false;
+  if (_localStorageAvailable !== null) return _localStorageAvailable;
+  if (typeof window === "undefined") return (_localStorageAvailable = false);
   try {
-    const testKey = "__copilot_test__";
-    window.localStorage.setItem(testKey, testKey);
+    const testKey = "__copilot_ls_check__";
+    window.localStorage.setItem(testKey, "1");
     window.localStorage.removeItem(testKey);
-    return true;
+    return (_localStorageAvailable = true);
   } catch {
-    return false;
+    return (_localStorageAvailable = false);
   }
 }
 
@@ -263,7 +265,7 @@ function updateStore(
  */
 export function createLocalStorageAdapter(
   config?: LocalStorageAdapterConfig,
-): ThreadStorageAdapter {
+): AsyncThreadStorageAdapter {
   const storageKey = config?.storageKey ?? DEFAULT_STORAGE_KEY;
 
   return {
@@ -296,6 +298,12 @@ export function createLocalStorageAdapter(
     setLastActiveThreadId: async (threadId: string | null): Promise<void> => {
       updateStore(storageKey, () => ({
         lastActiveThreadId: threadId,
+      }));
+    },
+
+    deleteThread: async (id: string): Promise<void> => {
+      updateStore(storageKey, (store) => ({
+        threads: store.threads.filter((t) => t.id !== id),
       }));
     },
   };

@@ -191,6 +191,33 @@ If `createSession` fails, the runtime:
 - Chat continues working normally (graceful degradation)
 - Error is logged once
 
+### Error Callback
+
+Register an `onError` handler to monitor all adapter operations:
+
+```ts
+const yourgpt = createYourGPT({
+  apiKey: process.env.YOURGPT_API_KEY,
+  widgetUid: process.env.YOURGPT_WIDGET_UID,
+  onError: (error, operation, params) => {
+    console.error(`[YourGPT:${operation}]`, error.message, params);
+    // Send to Sentry, Datadog, etc.
+    Sentry.captureException(error, {
+      tags: { operation },
+      extra: params,
+    });
+  },
+});
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `error` | `Error` | The error that occurred |
+| `operation` | `string` | `"createSession"` \| `"saveMessages"` \| `"uploadFile"` |
+| `params` | `object` | Context — varies by operation (sessionId, messageCount, filename, etc.) |
+
+The error is still re-thrown after `onError` runs, so the runtime's graceful degradation continues to work.
+
 ---
 
 ## File Uploads
@@ -213,7 +240,7 @@ Then on the client, use the `upload` prop:
 
 Files are uploaded to the server, which forwards them to the storage adapter. The returned URL is sent with the message instead of base64 data.
 
-See [Multimodal](/docs/multimodal) for more on file attachments.
+See [Attachments](/docs/attachments) for more on file attachments.
 
 ---
 

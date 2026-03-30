@@ -32,6 +32,24 @@ export interface YourGPTConfig {
   widgetUid: string;
   /** Override API base URL. Defaults to https://api.yourgpt.ai */
   endpoint?: string;
+  /**
+   * Error handler — called when any adapter operation fails.
+   * Receives the error and the operation name (createSession, saveMessages, uploadFile).
+   * If not provided, errors are thrown to the caller.
+   *
+   * @example
+   * ```ts
+   * onError: (error, operation, params) => {
+   *   logger.error(`[YourGPT] ${operation} failed:`, error, params);
+   *   Sentry.captureException(error, { tags: { operation }, extra: params });
+   * }
+   * ```
+   */
+  onError?: (
+    error: Error,
+    operation: string,
+    params?: Record<string, unknown>,
+  ) => void;
 }
 
 /** @deprecated Use `YourGPTConfig` instead */
@@ -78,6 +96,7 @@ export function createYourGPT(config: YourGPTConfig): YourGPT {
     "Content-Type": "application/json",
     "api-key": config.apiKey,
   };
+  const onError = config.onError;
 
   async function call<T = unknown>(
     path: string,
@@ -96,108 +115,183 @@ export function createYourGPT(config: YourGPTConfig): YourGPT {
     return res.json() as Promise<T>;
   }
 
+  /** Wrap an operation with onError handler + param logging */
+  async function safe<T>(
+    operation: string,
+    params: Record<string, unknown>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (onError) {
+        onError(error, operation, params);
+      }
+      throw error;
+    }
+  }
+
   return {
     async createSession(data = {}) {
-      const raw = await call<any>(
-        "/chatbot/v1/copilot-sdk/createSession",
-        data,
-      );
-      const d = raw.data ?? raw;
-      return {
-        id: String(d.session_uid ?? d.id),
-        title: d.title ?? undefined,
-        createdAt: new Date(d.createdAt ?? d.created_at),
-        updatedAt: new Date(d.updatedAt ?? d.updated_at),
-      };
+      return safe("createSession", { title: data.title }, async () => {
+        const raw = await call<any>(
+          "/chatbot/v1/copilot-sdk/createSession",
+          data,
+        );
+        const d = raw.data ?? raw;
+        return {
+          id: String(d.session_uid ?? d.id),
+          title: d.title ?? undefined,
+          createdAt: new Date(d.createdAt ?? d.created_at),
+          updatedAt: new Date(d.updatedAt ?? d.updated_at),
+        };
+      });
     },
 
     async saveMessages(sessionId, messages) {
-      // Keep as string if too large for JS safe integer (avoids precision loss)
-      const num = Number(sessionId);
-      const sessionUid = Number.isSafeInteger(num) ? num : sessionId;
+      return safe(
+        "saveMessages",
+        {
+          sessionId,
+          messageCount: messages.length,
+          roles: messages.map((m) => m.role),
+        },
+        async () => {
+          // Keep as string if too large for JS safe integer (avoids precision loss)
+          const num = Number(sessionId);
+          const sessionUid = Number.isSafeInteger(num) ? num : sessionId;
 
-      // Build a lookup: tool_call_id → tool result content (for merging dispatch + result)
-      const toolResults = new Map<string, string>();
-      for (const msg of messages) {
-        if (msg.role === "tool" && msg.toolCallId) {
-          toolResults.set(msg.toolCallId, msg.content ?? "");
-        }
-      }
-
-      for (const msg of messages) {
-        if (msg.role === "tool") {
-          // Tool results are merged into the dispatch record below — skip standalone save
-          continue;
-        } else if (msg.role === "assistant" && msg.toolCalls?.length) {
-          // Assistant dispatching tool calls — one completed record per call (cold storage)
-          for (const tc of msg.toolCalls as Array<{
-            id?: string;
-            function?: { name?: string; arguments?: string };
-          }>) {
-            const toolName = tc.function?.name ?? "unknown";
-            let toolArgs: unknown = {};
-            try {
-              toolArgs =
-                typeof tc.function?.arguments === "string"
-                  ? JSON.parse(tc.function.arguments)
-                  : (tc.function?.arguments ?? {});
-            } catch {
-              /* leave as empty object */
+          // Build a lookup: tool_call_id → tool result content (for merging dispatch + result)
+          const toolResults = new Map<string, string>();
+          for (const msg of messages) {
+            if (msg.role === "tool" && msg.toolCallId) {
+              toolResults.set(msg.toolCallId, msg.content ?? "");
             }
-
-            // Merge: find matching tool result by call ID
-            const response = tc.id ? (toolResults.get(tc.id) ?? null) : null;
-
-            await call("/chatbot/v1/copilot-sdk/createToolMessage", {
-              session_uid: sessionUid,
-              skill: "copilot-tool",
-              extra_data: {
-                tool_name: toolName,
-                tool_arguments: toolArgs,
-                tool_call_id: tc.id ?? null,
-                status: "completed",
-                tool_response: response,
-              },
-            });
           }
 
-          // Also save the assistant text content if present alongside tool calls
-          if (msg.content) {
-            await call("/chatbot/v1/copilot-sdk/createMessage", {
-              session_uid: sessionUid,
-              message: msg.content,
-              send_by: "assistant",
-            });
+          for (const msg of messages) {
+            if (msg.role === "tool") {
+              // Tool results are merged into the dispatch record below — skip standalone save
+              continue;
+            } else if (msg.role === "assistant" && msg.toolCalls?.length) {
+              // Save assistant text FIRST (before tool calls) to preserve display order
+              if (msg.content) {
+                await call("/chatbot/v1/copilot-sdk/createMessage", {
+                  session_uid: sessionUid,
+                  message: msg.content,
+                  send_by: "assistant",
+                  content_type: "text",
+                });
+              }
+
+              // Then save tool calls — one completed record per call (cold storage)
+              for (const tc of msg.toolCalls as Array<{
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }>) {
+                const toolName = tc.function?.name ?? "unknown";
+                let toolArgs: unknown = {};
+                try {
+                  toolArgs =
+                    typeof tc.function?.arguments === "string"
+                      ? JSON.parse(tc.function.arguments)
+                      : (tc.function?.arguments ?? {});
+                } catch {
+                  /* leave as empty object */
+                }
+
+                // Merge: find matching tool result by call ID
+                const response = tc.id
+                  ? (toolResults.get(tc.id) ?? null)
+                  : null;
+
+                await call("/chatbot/v1/copilot-sdk/createToolMessage", {
+                  session_uid: sessionUid,
+                  skill: "copilot-tool",
+                  extra_data: {
+                    tool_name: toolName,
+                    tool_arguments: toolArgs,
+                    tool_call_id: tc.id ?? null,
+                    status: "completed",
+                    tool_response: response,
+                  },
+                });
+              }
+            } else if (msg.role === "user" || msg.role === "assistant") {
+              // Regular user / assistant message — include content_type + url if present
+              await call("/chatbot/v1/copilot-sdk/createMessage", {
+                session_uid: sessionUid,
+                message: msg.content,
+                send_by: msg.role === "user" ? "user" : "assistant",
+                content_type: msg.contentType || "text",
+                ...(msg.url ? { url: msg.url } : {}),
+              });
+            }
+            // system messages are skipped — not stored
           }
-        } else if (msg.role === "user" || msg.role === "assistant") {
-          // Regular user / assistant message
-          await call("/chatbot/v1/copilot-sdk/createMessage", {
-            session_uid: sessionUid,
-            message: msg.content,
-            send_by: msg.role === "user" ? "user" : "assistant",
-          });
-        }
-        // system messages are skipped — not stored
-      }
+        },
+      );
     },
 
     async uploadFile(file: StorageFile) {
-      // Strip data URI prefix if present (e.g., "data:image/png;base64,...")
-      let rawData = file.data;
-      const dataUriMatch = rawData.match(/^data:[^;]+;base64,(.+)$/);
-      if (dataUriMatch) rawData = dataUriMatch[1];
+      return safe(
+        "uploadFile",
+        {
+          filename: file.filename,
+          mimeType: file.mimeType,
+          dataLength: file.data?.length,
+        },
+        async () => {
+          // Step 1: Get pre-signed upload URL from YourGPT
+          const raw = await call<any>("/chatbot/v1/copilot-sdk/getSignedUrl", {
+            file_name: file.filename || `upload_${Date.now()}`,
+          });
+          const signedUrl = raw.data?.upload_url ?? raw.data?.url ?? raw.url;
+          const successUrl =
+            raw.data?.file_url ?? raw.data?.success_url ?? raw.success_url;
+          if (!signedUrl) {
+            throw new Error(
+              "uploadFile: no signed URL in response — " + JSON.stringify(raw),
+            );
+          }
 
-      const raw = await call<any>("/chatbot/v1/copilot-sdk/uploadMedia", {
-        file_data: rawData,
-        mime_type: file.mimeType,
-        filename: file.filename,
-      });
-      const url = raw.data?.url ?? raw.url;
-      if (!url)
-        throw new Error(
-          "uploadFile failed: no URL in response — " + JSON.stringify(raw),
-        );
-      return { url };
+          // Step 2: Upload file directly to cloud storage via signed URL
+          let body: Blob | Buffer;
+          let rawData = file.data;
+          // Strip data URI prefix if present
+          const dataUriMatch = rawData.match(/^data:[^;]+;base64,(.+)$/);
+          if (dataUriMatch) rawData = dataUriMatch[1];
+
+          if (typeof Buffer !== "undefined") {
+            // Node.js
+            body = Buffer.from(rawData, "base64");
+          } else {
+            // Browser
+            const binary = atob(rawData);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++)
+              bytes[i] = binary.charCodeAt(i);
+            body = new Blob([bytes], { type: file.mimeType });
+          }
+
+          const uploadRes = await fetch(signedUrl, {
+            method: "PUT",
+            headers: { "Content-Type": file.mimeType },
+            body,
+          });
+
+          if (!uploadRes.ok) {
+            throw new Error(
+              `uploadFile: PUT to signed URL failed with ${uploadRes.status}`,
+            );
+          }
+
+          // Step 3: Return the CDN/success URL
+          const finalUrl = successUrl || signedUrl.split("?")[0];
+          return { url: finalUrl };
+        },
+      );
     },
   };
 }

@@ -218,3 +218,17 @@ export {
   generateToolCallId,
   generateThreadId,
 } from "./core/utils";
+
+// ============================================
+// Fallback Chain & Routing (types only from root)
+// ============================================
+// Full implementation: import from '@yourgpt/llm-sdk/fallback'
+export type {
+  RoutingStore,
+  RoutingStrategy,
+  RetryBackoff,
+  FallbackChainConfig,
+  FallbackFailure,
+  FallbackInfo,
+  RetryInfo,
+} from "./fallback/types";

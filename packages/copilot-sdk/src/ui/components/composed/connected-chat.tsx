@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import {
   useCopilot,
   type UIMessage,
@@ -17,7 +17,10 @@ import type {
   ThreadStorageAdapter,
   AsyncThreadStorageAdapter,
 } from "../../../thread/adapters";
-import { createServerAdapter } from "../../../thread/adapters";
+import {
+  createServerAdapter,
+  createLocalStorageAdapter,
+} from "../../../thread/adapters";
 
 // ============================================
 // Persistence Configuration Types
@@ -28,6 +31,9 @@ import { createServerAdapter } from "../../../thread/adapters";
  */
 export interface LocalPersistenceConfig {
   type: "local";
+  /** Custom localStorage key to isolate thread storage between copilot instances.
+   *  Default: "copilot-sdk-store" */
+  localStorageKey?: string;
   /** Debounce delay for auto-save (ms). Default: 1000 */
   saveDebounce?: number;
   /** Whether to auto-restore the last active thread. Default: true */
@@ -311,8 +317,28 @@ function CopilotChatBase(
     ...chatProps
   } = props;
 
+  // Create custom adapter once for localStorageKey (stable reference to avoid render loops)
+  const localStorageKey =
+    typeof persistence === "object" &&
+    "type" in persistence &&
+    persistence.type === "local"
+      ? persistence.localStorageKey
+      : undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const customAdapter = useMemo(
+    () =>
+      localStorageKey
+        ? createLocalStorageAdapter({ storageKey: localStorageKey })
+        : undefined,
+    [localStorageKey],
+  );
+
   // Parse persistence config
   const persistenceConfig = parsePersistenceConfig(persistence, onThreadChange);
+  // Inject memoized adapter if localStorageKey was provided
+  if (persistenceConfig && customAdapter) {
+    persistenceConfig.adapter = customAdapter;
+  }
 
   // Use internal thread manager when persistence is enabled.
   // When persistence is disabled, pass enabled:false so no sync/restore effects
@@ -337,6 +363,7 @@ function CopilotChatBase(
     switchBranch,
     getBranchInfo,
     editMessage,
+    error: chatError,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -627,6 +654,7 @@ function CopilotChatBase(
       onSendMessage={sendMessage}
       onStop={stop}
       isLoading={isLoading}
+      error={chatError}
       showPoweredBy={chatProps.showPoweredBy ?? true}
       suggestions={suggestions}
       isProcessing={isProcessingToolResults}

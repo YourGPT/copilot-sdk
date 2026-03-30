@@ -42,6 +42,7 @@ function App() {
 | `initialMessages` | `Message[]` | No | Initial messages to populate the chat |
 | `onMessagesChange` | `(messages: Message[]) => void` | No | Callback when messages change |
 | `onError` | `(error: Error) => void` | No | Callback when an error occurs |
+| `parseError` | `(status: number, body: unknown) => string \| null` | No | Extract message from custom server error formats |
 | `streaming` | `boolean` | No | Enable/disable streaming (default: true) |
 | `debug` | `boolean` | No | Enable debug logging |
 
@@ -136,3 +137,4 @@ function ChatApp() {
   <CopilotChat />
 </CopilotProvider>
 ```
+

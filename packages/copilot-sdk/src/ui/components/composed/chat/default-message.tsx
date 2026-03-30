@@ -457,38 +457,36 @@ export function DefaultMessage({
             </div>
           ) : (
             <>
-              {/* Combined media + text bubble (WhatsApp/Telegram style) */}
               <div className="relative">
-                {/* Images (if any) — in their own bubble */}
-                {hasAttachments && (
-                  <div
-                    className={cn(
-                      "csdk-message-media rounded-2xl overflow-hidden bg-primary p-[2px]",
-                      !message.content && "max-w-[260px]",
-                      message.content && "max-w-[280px] mb-[3px]",
-                      userMessageClassName,
-                    )}
-                  >
+                <div
+                  className={cn(
+                    "csdk-message-user rounded-2xl overflow-hidden bg-primary text-primary-foreground",
+                    hasAttachments && "p-[3px]",
+                    hasAttachments && !message.content && "max-w-[260px]",
+                    hasAttachments && message.content && "max-w-[280px]",
+                    !hasAttachments && "",
+                    userMessageClassName,
+                  )}
+                >
+                  {/* Media (images + files) */}
+                  {hasAttachments && (
                     <MessageMedia
                       attachments={message.attachments!}
                       hasText={!!message.content}
                       align="end"
                     />
-                  </div>
-                )}
-                {/* Text content — same style as original, padding on MessageContent */}
-                {message.content && (
-                  <MessageContent
-                    className={cn(
-                      "csdk-message-user rounded-2xl px-4 py-2 bg-primary text-primary-foreground",
-                      userMessageClassName,
-                    )}
-                    markdown
-                    size={size}
-                  >
-                    {message.content}
-                  </MessageContent>
-                )}
+                  )}
+                  {/* Text — px-4 py-2 passed to MessageContent, tailwind-merge overrides its internal p-2 */}
+                  {message.content && (
+                    <MessageContent
+                      className={cn("px-4 py-2")}
+                      markdown
+                      size={size}
+                    >
+                      {message.content}
+                    </MessageContent>
+                  )}
+                </div>
                 {/* Edit button — hover reveal */}
                 {showEditBtn && (
                   <button
@@ -1128,100 +1126,127 @@ function ImageThumb({
 }
 
 /**
- * File attachment card — compact, non-image files
+ * File attachment card — inline within message bubble.
+ * Compact row: colored icon + filename + download/open button.
+ * Styled to sit inside the bubble bg (slightly darker inner card).
+ *
+ * PDF gets red accent, audio green, video purple, generic blue.
  */
 function FileCard({ attachment }: { attachment: MessageAttachment }) {
-  const iconType =
-    attachment.type === "audio"
-      ? "audio"
-      : attachment.type === "video"
-        ? "video"
-        : "file";
-  const colors = {
-    audio: "text-emerald-500 bg-emerald-500/10",
-    video: "text-purple-500 bg-purple-500/10",
-    file: "text-blue-500 bg-blue-500/10",
-  };
-  const icons = {
-    audio: (
-      <path d="M9 18V5l12-2v13M6 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-    ),
-    video: (
-      <>
-        <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11" />
-        <rect width="14" height="12" x="2" y="6" rx="2" />
-      </>
-    ),
-    file: (
-      <>
-        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-      </>
-    ),
-  };
+  const isPdfFile = isPdf(attachment);
+  const isAudio = attachment.type === "audio";
+  const isVideo = attachment.type === "video";
 
+  // Accent colors per type
+  const accent = isPdfFile
+    ? { color: "#ef4444", bg: "rgba(239,68,68,0.12)" }
+    : isAudio
+      ? { color: "#10b981", bg: "rgba(16,185,129,0.12)" }
+      : isVideo
+        ? { color: "#8b5cf6", bg: "rgba(139,92,246,0.12)" }
+        : { color: "#3b82f6", bg: "rgba(59,130,246,0.12)" };
+
+  const label = isPdfFile
+    ? "PDF"
+    : attachment.mimeType?.split("/")[1]?.toUpperCase() ||
+      attachment.type?.toUpperCase() ||
+      "FILE";
+  const filename = attachment.filename || "Attachment";
   const href =
     attachment.url ||
     (attachment.data?.startsWith("data:") ? attachment.data : null);
+  const cssClass = isPdfFile ? "csdk-attachment-pdf" : "csdk-attachment-file";
 
   return (
-    <div
+    <a
+      href={href ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={isPdfFile ? undefined : attachment.filename}
       className={cn(
-        "csdk-attachment-file flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2 min-w-0 max-w-full",
+        cssClass,
+        "flex items-center gap-2 rounded-lg min-w-0 w-full",
+        "px-2 py-1.5 cursor-pointer transition-opacity duration-150 hover:opacity-80",
+        "no-underline",
       )}
+      style={{ backgroundColor: "rgba(255,255,255,0.92)", color: "#1a1a1a" }}
+      onClick={(e) => {
+        if (!href) e.preventDefault();
+      }}
     >
+      {/* Icon */}
       <div
-        className={cn(
-          "size-8 rounded-md flex items-center justify-center shrink-0",
-          colors[iconType],
-        )}
+        className="size-8 rounded-md flex items-center justify-center shrink-0"
+        style={{ backgroundColor: accent.bg }}
       >
         <svg
           className="size-4"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
+          stroke={accent.color}
+          strokeWidth={1.8}
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          {icons[iconType]}
+          {isPdfFile || (!isAudio && !isVideo) ? (
+            <>
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+            </>
+          ) : isAudio ? (
+            <>
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </>
+          ) : (
+            <>
+              <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11" />
+              <rect width="14" height="12" x="2" y="6" rx="2" />
+            </>
+          )}
         </svg>
       </div>
+      {/* Name + type */}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium truncate">
-          {attachment.filename || "Attachment"}
+        <p className="text-[11px] font-medium truncate leading-tight">
+          {filename}
         </p>
-        <p className="text-[10px] text-muted-foreground uppercase">
-          {attachment.mimeType?.split("/")[1] || attachment.type}
+        <p
+          className="text-[9px] font-semibold uppercase tracking-wider leading-tight mt-0.5"
+          style={{ color: accent.color }}
+        >
+          {label}
         </p>
       </div>
+      {/* Download / open icon */}
       {href && (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          download={attachment.filename}
-          className="shrink-0 text-muted-foreground/50 hover:text-foreground transition-colors"
+        <div
+          className="size-6 rounded-md flex items-center justify-center shrink-0"
+          style={{ backgroundColor: "rgba(0,0,0,0.05)" }}
         >
           <svg
-            className="size-3.5"
+            className="size-3"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth={2}
+            strokeWidth={2.5}
             strokeLinecap="round"
             strokeLinejoin="round"
+            style={{ opacity: 0.35 }}
           >
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" x2="12" y1="15" y2="3" />
           </svg>
-        </a>
+        </div>
       )}
-    </div>
+    </a>
   );
 }
+
+/** @deprecated Use FileCard which now handles all types including PDF */
+const PdfCard = FileCard;
 
 /**
  * Image grid — WhatsApp/Telegram-style layout
@@ -1340,6 +1365,13 @@ function ImageGrid({
  * - Images at top of bubble (no padding), text below with padding
  * - Files shown as compact cards below text
  */
+function isPdf(a: MessageAttachment): boolean {
+  return (
+    a.mimeType === "application/pdf" ||
+    a.filename?.toLowerCase().endsWith(".pdf") === true
+  );
+}
+
 function MessageMedia({
   attachments,
   hasText,
@@ -1350,7 +1382,8 @@ function MessageMedia({
   align?: "start" | "end";
 }) {
   const images = attachments.filter((a) => a.type === "image");
-  const files = attachments.filter((a) => a.type !== "image");
+  const pdfs = attachments.filter((a) => isPdf(a));
+  const files = attachments.filter((a) => a.type !== "image" && !isPdf(a));
 
   return (
     <>
@@ -1359,15 +1392,14 @@ function MessageMedia({
           <ImageGrid images={images} bubbleRadius="0.5rem" />
         </div>
       )}
-      {files.length > 0 && (
+      {(pdfs.length > 0 || files.length > 0) && (
         <div
           className={cn(
             "csdk-attachment-files flex flex-col gap-1",
-            hasText || images.length > 0 ? "px-3 pb-2 pt-1" : "p-1.5",
-            align === "end" ? "items-end" : "items-start",
+            hasText || images.length > 0 ? "px-1.5 pb-1.5 pt-1" : "p-1.5",
           )}
         >
-          {files.map((file, i) => (
+          {[...pdfs, ...files].map((file, i) => (
             <FileCard key={i} attachment={file} />
           ))}
         </div>

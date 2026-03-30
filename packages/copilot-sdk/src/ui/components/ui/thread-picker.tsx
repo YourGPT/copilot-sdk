@@ -187,12 +187,19 @@ export function ThreadPicker({
   newButtonClassName,
 }: ThreadPickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  // Optimistic local list — immediately reflects deletions without waiting for async state
+  const [displayedThreads, setDisplayedThreads] = React.useState(threads);
+
+  // Sync when external threads prop changes (e.g. after async store update or new thread)
+  React.useEffect(() => {
+    setDisplayedThreads(threads);
+  }, [threads]);
 
   // Find selected thread
   const selectedThread = React.useMemo(() => {
     if (!value) return null;
-    return threads.find((t) => t.id === value) ?? null;
-  }, [value, threads]);
+    return displayedThreads.find((t) => t.id === value) ?? null;
+  }, [value, displayedThreads]);
 
   const handleSelect = (threadId: string) => {
     onSelect?.(threadId);
@@ -204,126 +211,137 @@ export function ThreadPicker({
     setIsOpen(false);
   };
 
+  const handleDelete = (threadId: string) => {
+    // Optimistically remove from local list immediately
+    setDisplayedThreads((prev) => prev.filter((t) => t.id !== threadId));
+    onDeleteThread?.(threadId);
+  };
+
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <PopoverTrigger
-        disabled={disabled || loading}
-        className={cn(
-          "flex items-center gap-1 w-full",
-          disabled && "opacity-50 cursor-not-allowed",
-          className,
-          buttonClassName,
-        )}
-      >
-        <div className="flex items-center gap-1 text-xs ">
-          {loading ? (
-            <span className="text-muted-foreground">Loading...</span>
-          ) : selectedThread ? (
-            <span className="truncate font-medium text-muted-foreground hover:text-foreground">
-              {selectedThread.title || "Untitled conversation"}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{placeholder}</span>
-          )}
-        </div>
-
-        <ChevronIcon
+    <div className={cn("relative w-44", className)}>
+      <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <PopoverTrigger
+          disabled={disabled || loading}
           className={cn(
-            "flex-shrink-0 size-3 text-muted-foreground transition-transform",
-            isOpen && "rotate-180",
+            "flex items-center gap-1.5 w-full rounded-md px-1.5 py-0.5",
+            "hover:bg-muted/70 transition-colors duration-150",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            disabled && "opacity-50 cursor-not-allowed pointer-events-none",
+            buttonClassName,
           )}
-        />
-      </PopoverTrigger>
-
-      <PopoverContent
-        align="start"
-        className={cn(
-          "w-[var(--anchor-width)] min-w-[250px] p-0 max-h-[300px] overflow-auto",
-          dropdownClassName,
-        )}
-      >
-        {/* New conversation button */}
-        {onNewThread && (
-          <button
-            type="button"
-            onClick={handleNewThread}
-            className={cn(
-              "flex items-center gap-2 w-full px-2.5 py-1.5 text-left",
-              "hover:bg-accent hover:text-accent-foreground",
-              "focus:bg-accent focus:text-accent-foreground focus:outline-none",
-              "border-b",
-              newButtonClassName,
+        >
+          <div className="flex items-center gap-1 text-xs min-w-0 flex-1">
+            {loading ? (
+              <span className="text-muted-foreground truncate">Loading...</span>
+            ) : selectedThread ? (
+              <span className="truncate font-medium text-muted-foreground">
+                {selectedThread.title || "Untitled conversation"}
+              </span>
+            ) : (
+              <span className="text-muted-foreground/70 truncate">
+                {placeholder}
+              </span>
             )}
-          >
-            <PlusIcon className="text-primary size-3" />
-            <span className="font-medium text-xs">{newThreadLabel}</span>
-          </button>
-        )}
+          </div>
 
-        {/* Thread list */}
-        {threads.length > 0 ? (
-          threads.map((thread) => (
-            <div
-              key={thread.id}
+          <ChevronIcon
+            className={cn(
+              "flex-shrink-0 size-3 text-muted-foreground/60 transition-transform duration-150",
+              isOpen && "rotate-180",
+            )}
+          />
+        </PopoverTrigger>
+
+        <PopoverContent
+          align="start"
+          className={cn(
+            "p-0 w-56 max-h-[280px] overflow-auto",
+            dropdownClassName,
+          )}
+        >
+          {/* New conversation button */}
+          {onNewThread && (
+            <button
+              type="button"
+              onClick={handleNewThread}
               className={cn(
-                "group flex items-center gap-1 w-full px-2.5 py-1.5",
+                "flex items-center gap-2 w-full px-2.5 py-1.5 text-left",
                 "hover:bg-accent hover:text-accent-foreground",
-                "focus-within:bg-accent focus-within:text-accent-foreground",
-                value === thread.id && "bg-accent",
-                itemClassName,
+                "focus:bg-accent focus:text-accent-foreground focus:outline-none",
+                "border-b",
+                newButtonClassName,
               )}
             >
-              <button
-                type="button"
-                onClick={() => handleSelect(thread.id)}
-                className="flex-1 flex flex-col gap-0.5 text-left focus:outline-none min-w-0"
+              <PlusIcon className="text-primary size-3" />
+              <span className="font-medium text-xs">{newThreadLabel}</span>
+            </button>
+          )}
+
+          {/* Thread list */}
+          {displayedThreads.length > 0 ? (
+            displayedThreads.map((thread) => (
+              <div
+                key={thread.id}
+                className={cn(
+                  "group flex items-center gap-1 w-full px-2.5 py-1.5",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  "focus-within:bg-accent focus-within:text-accent-foreground",
+                  value === thread.id && "bg-accent",
+                  itemClassName,
+                )}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-xs truncate">
-                    {thread.title || "Untitled conversation"}
-                  </span>
-                  {value === thread.id && (
-                    <CheckIcon className="flex-shrink-0 text-primary size-3" />
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  {thread.preview && (
-                    <span className="truncate max-w-[180px]">
-                      {thread.preview}
-                    </span>
-                  )}
-                  {thread.preview && thread.updatedAt && (
-                    <span className="flex-shrink-0">·</span>
-                  )}
-                  {thread.updatedAt && (
-                    <span className="flex-shrink-0">
-                      {formatDate(thread.updatedAt)}
-                    </span>
-                  )}
-                </div>
-              </button>
-              {/* Delete button - appears on hover */}
-              {onDeleteThread && (
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteThread(thread.id);
-                  }}
-                  className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all focus:opacity-100 focus:outline-none"
-                  aria-label="Delete thread"
+                  onClick={() => handleSelect(thread.id)}
+                  className="flex-1 flex flex-col gap-0.5 text-left focus:outline-none min-w-0"
                 >
-                  <TrashIcon className="size-3" />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-xs truncate">
+                      {thread.title || "Untitled conversation"}
+                    </span>
+                    {value === thread.id && (
+                      <CheckIcon className="flex-shrink-0 text-primary size-3" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    {thread.preview && (
+                      <span className="truncate max-w-[180px]">
+                        {thread.preview}
+                      </span>
+                    )}
+                    {thread.preview && thread.updatedAt && (
+                      <span className="flex-shrink-0">·</span>
+                    )}
+                    {thread.updatedAt && (
+                      <span className="flex-shrink-0">
+                        {formatDate(thread.updatedAt)}
+                      </span>
+                    )}
+                  </div>
                 </button>
-              )}
+                {/* Delete button - appears on hover */}
+                {onDeleteThread && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(thread.id);
+                    }}
+                    className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all focus:opacity-100 focus:outline-none"
+                    aria-label="Delete thread"
+                  >
+                    <TrashIcon className="size-3" />
+                  </button>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="px-2.5 py-3 text-center text-xs text-muted-foreground">
+              No conversations yet
             </div>
-          ))
-        ) : (
-          <div className="px-2.5 py-3 text-center text-xs text-muted-foreground">
-            No conversations yet
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+          )}
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }

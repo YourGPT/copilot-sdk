@@ -33,15 +33,29 @@ export function extractInputMessages(reqMessages: unknown[]): StorageMessage[] {
   if (!lastMeaningful) return [];
 
   if (lastMeaningful.role === "user") {
-    return [
-      {
-        role: "user",
-        content:
-          typeof lastMeaningful.content === "string"
-            ? lastMeaningful.content
-            : JSON.stringify(lastMeaningful.content),
-      },
-    ];
+    const textContent =
+      typeof lastMeaningful.content === "string"
+        ? lastMeaningful.content
+        : JSON.stringify(lastMeaningful.content);
+
+    const attachments = lastMeaningful.attachments as
+      | Array<{ type?: string; url?: string; filename?: string }>
+      | undefined;
+    const imageAtt = attachments?.find((a) => a.type === "image" && a.url);
+    const fileAtt = attachments?.find((a) => a.type === "file" && a.url);
+
+    // Single message — text + attachment info combined
+    const msg: StorageMessage = { role: "user", content: textContent || "" };
+
+    if (imageAtt?.url) {
+      msg.contentType = "image";
+      msg.url = imageAtt.url;
+    } else if (fileAtt?.url) {
+      msg.contentType = "file";
+      msg.url = fileAtt.url;
+    }
+
+    return [msg];
   }
 
   if (lastMeaningful.role === "tool" || lastMeaningful.role === "function") {

@@ -57,6 +57,12 @@ export interface ChatWithToolsConfig {
   yourgptConfig?: YourGPTConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Controls how multi-turn agent responses appear in the UI.
+   * - `'multi-step'` (default) — one bubble per server agent iteration.
+   * - `'single-turn'` — all iterations collapsed into one bubble per user turn.
+   */
+  streamMode?: "multi-step" | "single-turn";
   /** Initial messages */
   initialMessages?: UIMessage[];
   /** Initial tools to register */
@@ -71,6 +77,8 @@ export interface ChatWithToolsConfig {
   state?: ChatState<UIMessage>;
   /** Transport implementation */
   transport?: ChatTransport;
+  /** Custom error message extractor for non-2xx API responses */
+  parseError?: (status: number, body: unknown) => string | null | undefined;
 }
 
 /**
@@ -150,9 +158,11 @@ export class ChatWithTools {
       onCreateSession: config.onCreateSession,
       yourgptConfig: config.yourgptConfig,
       debug: config.debug,
+      streamMode: config.streamMode,
       initialMessages: config.initialMessages,
       state: config.state,
       transport: config.transport,
+      parseError: config.parseError,
       callbacks: {
         onMessagesChange: callbacks.onMessagesChange,
         onStatusChange: callbacks.onStatusChange,

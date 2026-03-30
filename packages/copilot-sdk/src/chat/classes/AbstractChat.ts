@@ -100,6 +100,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   // Current streaming state
   private streamState: StreamingMessageState | null = null;
 
+  // ID of the pending assistant placeholder pushed before a request.
+  // Used by handleError() to pop (remove) the placeholder on failure so it
+  // doesn't stay frozen. Error is surfaced via state.error only — never written
+  // into message history.
+  private _activePlaceholderMessageId: string | undefined = undefined;
+
   constructor(init: ChatInit<T>) {
     this.config = {
       runtimeUrl: init.runtimeUrl,
@@ -112,6 +118,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       debug: init.debug,
       optimization: init.optimization,
       yourgptConfig: init.yourgptConfig,
+      streamMode: init.streamMode,
     };
 
     // Use provided state or create default
@@ -128,6 +135,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         headers: init.headers,
         body: init.body,
         streaming: init.streaming ?? true,
+        parseError: init.parseError,
       });
 
     // Store callbacks
@@ -226,6 +234,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       // Create user message with parentId for correct tree placement
+      // Text file attachments (CSV, TXT, etc.) are kept as attachments for UI display.
+      // The optimizer inlines their content into the message text before sending to the LLM.
       const userMessage = createUserMessage(content, attachments, {
         parentId: newParentId,
       }) as T;
@@ -252,6 +262,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         }) as T;
         this.state.pushMessage(preMsg);
         preCreatedMessageId = preMsg.id;
+        this._activePlaceholderMessageId = preMsg.id;
       }
 
       // Notify callbacks (single batch: user message + status + optional placeholder)
@@ -464,6 +475,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       this.state.status = "submitted";
+      this.state.error = undefined;
       this.callbacks.onMessagesChange?.(this._allMessages());
       this.callbacks.onStatusChange?.("submitted");
 
@@ -699,6 +711,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       this.state.pushMessage(preMsg);
       this.callbacks.onMessagesChange?.(this._allMessages());
       preCreatedMessageId = preMsg.id;
+      this._activePlaceholderMessageId = preMsg.id;
     }
 
     // Send request
@@ -706,6 +719,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     // Check if streaming or JSON
     if (this.isAsyncIterable(response)) {
+      // _activePlaceholderMessageId stays set throughout streaming so that
+      // handleError() can pop the placeholder if an error chunk arrives mid-stream.
+      // handleStreamResponse clears it on successful completion.
       await this.handleStreamResponse(response, preCreatedMessageId);
     } else {
       // Non-streaming: remove the pre-pushed placeholder (not needed).
@@ -731,6 +747,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           this.state.setCurrentLeaf(intendedLeafId);
         }
       }
+      // Placeholder removed — clear the tracker before handling the response
+      this._activePlaceholderMessageId = undefined;
       this.handleJsonResponse(response);
     }
   }
@@ -955,6 +973,51 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
   /**
    * Build the request payload
    */
+  /** Inline text-file attachments into message content for the LLM */
+  private inlineTextAttachments(messages: T[]): T[] {
+    const textMimeTypes = new Set([
+      "text/csv",
+      "text/plain",
+      "text/markdown",
+      "text/x-markdown",
+      "application/json",
+      "application/csv",
+    ]);
+    const textExts = new Set(["csv", "txt", "md", "json"]);
+
+    return messages.map((msg) => {
+      if (msg.role !== "user" || !msg.attachments?.length) return msg;
+
+      const textFiles: MessageAttachment[] = [];
+      const binaryFiles: MessageAttachment[] = [];
+
+      for (const att of msg.attachments) {
+        const ext = att.filename?.toLowerCase().split(".").pop();
+        const isText =
+          textMimeTypes.has(att.mimeType) || (ext && textExts.has(ext));
+        if (isText && att.data && !att.url) {
+          textFiles.push(att);
+        } else {
+          binaryFiles.push(att);
+        }
+      }
+
+      if (textFiles.length === 0) return msg;
+
+      // Inline text file contents into the message
+      const fileParts = textFiles.map((f) => {
+        const ext = f.filename?.split(".").pop()?.toLowerCase() || "txt";
+        return `\n\n--- ${f.filename || "file"} ---\n\`\`\`${ext}\n${f.data}\n\`\`\``;
+      });
+
+      return {
+        ...msg,
+        content: (msg.content || "") + fileParts.join(""),
+        attachments: binaryFiles.length > 0 ? binaryFiles : undefined,
+      };
+    });
+  }
+
   protected buildRequest() {
     const systemPrompt = this.dynamicContext
       ? `${this.config.systemPrompt || ""}\n\n## Current App Context:\n${this.dynamicContext}`.trim()
@@ -964,8 +1027,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           this.state.messages as UIMessage[],
         ) as T[])
       : this.state.messages;
+
+    // Inline text-file attachments before optimization
+    const processedMessages = this.inlineTextAttachments(rawMessages);
     const optimized = this.optimizer.prepare({
-      messages: rawMessages,
+      messages: processedMessages,
       tools: this.config.tools,
       systemPrompt,
     });
@@ -1066,34 +1132,92 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       }
 
       // Handle message:end mid-stream (server-side agent loop turn completed).
-      // Do NOT create a separate message for each turn — keep accumulating into
-      // the same message so the user sees one assistant bubble, not three.
-      // Just skip message:end entirely and let content continue flowing.
+      // Behaviour depends on streamMode:
+      //   'multi-step' (default) — finalize a new UIMessage per iteration.
+      //   'single-turn'          — skip entirely; keep accumulating into the
+      //                            same streamState so all iterations collapse
+      //                            into one bubble (Vercel AI SDK / Claude.ai style).
       if (chunk.type === "message:end" && this.streamState) {
-        this.debug("message:end mid-stream (keeping streamState alive)", {
-          messageId: this.streamState.messageId,
-          contentLength: this.streamState.content.length,
-          toolCallsInState: this.streamState.toolCalls?.length ?? 0,
-          chunkCount,
-        });
-        // Don't reset streamState — next message:start will be ignored and
-        // subsequent deltas will append to the same message.
-        continue;
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:end mid-stream (single-turn: keeping streamState alive)",
+            {
+              messageId: this.streamState.messageId,
+              contentLength: this.streamState.content.length,
+              chunkCount,
+            },
+          );
+          continue;
+        }
+
+        // multi-step (default): finalize current turn as its own UIMessage
+        if (!this.streamState.content) {
+          // Nothing streamed yet for this turn — skip finalization
+        } else {
+          this.debug("message:end mid-stream", {
+            messageId: this.streamState.messageId,
+            contentLength: this.streamState.content.length,
+            toolCallsInState: this.streamState.toolCalls?.length ?? 0,
+            chunkCount,
+          });
+
+          // Finalize current message with its content and tool calls
+          const turnMessage = streamStateToMessage(this.streamState) as T;
+
+          // Add toolCallsHidden metadata if applicable
+          const toolCallsHidden: Record<string, boolean> = {};
+          for (const [id, result] of this.streamState.toolResults) {
+            if (result.hidden !== undefined) {
+              toolCallsHidden[id] = result.hidden;
+            }
+          }
+          if (
+            turnMessage.toolCalls?.length &&
+            Object.keys(toolCallsHidden).length > 0
+          ) {
+            (
+              turnMessage as T & { metadata?: Record<string, unknown> }
+            ).metadata = {
+              ...(turnMessage as T & { metadata?: Record<string, unknown> })
+                .metadata,
+              toolCallsHidden,
+            };
+          }
+
+          this.state.updateMessageById(
+            this.streamState.messageId,
+            (existing) => ({
+              ...turnMessage,
+              ...(existing.parentId !== undefined
+                ? { parentId: existing.parentId }
+                : {}),
+              ...(existing.childrenIds !== undefined
+                ? { childrenIds: existing.childrenIds }
+                : {}),
+            }),
+          );
+          this.callbacks.onMessageFinish?.(turnMessage);
+
+          // Reset stream state — next message:start will create a new message
+          this.streamState = null;
+          continue;
+        }
       }
 
-      // Handle message:start after a mid-stream message:end.
-      // Since we keep streamState alive above, this only fires if streamState
-      // was null for another reason. Just skip it — deltas will flow into
-      // the existing streamState.
+      // Handle message:start mid-stream:
+      //   single-turn — streamState is still alive, skip to keep accumulating.
+      //   multi-step  — streamState was reset to null above; fall through to
+      //                 the message:start === null handler below.
       if (chunk.type === "message:start" && this.streamState !== null) {
-        this.debug(
-          "message:start mid-stream (streamState already active, skipping)",
-        );
-        continue;
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:start mid-stream (single-turn: streamState already active, skipping)",
+          );
+          continue;
+        }
       }
 
-      // Handle message:start when streamState is null (shouldn't happen in
-      // normal flow, but handle gracefully by creating a new message).
+      // Handle message:start after a mid-stream finalization (multi-step mode)
       if (chunk.type === "message:start" && this.streamState === null) {
         this.debug("message:start after mid-stream end - creating new message");
         // Capture the current leaf BEFORE pushing the new message so the
@@ -1377,14 +1501,14 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             ),
           });
 
+          // In single-turn mode all server-tool IDs land in streamState.toolResults
+          // (via action:start/args/end chunks). Include them so done.messages doesn't
+          // re-insert those tools as duplicates.
           const currentStreamToolCallIds = new Set([
             ...(this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ??
               []),
-            // Also include IDs from toolResults (populated by action:start/args/end
-            // chunks for server-side tools). Without this, assistant messages with
-            // tool_calls from done.messages are treated as "new" and inserted as
-            // duplicates even though the tools were already executed in-stream.
-            ...(this.streamState?.toolResults
+            ...(this.config.streamMode === "single-turn" &&
+            this.streamState?.toolResults
               ? Array.from(this.streamState.toolResults.keys())
               : []),
           ]);
@@ -1412,6 +1536,18 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             // assistant messages that carry tool_calls so tool results keep a valid
             // preceding assistant tool_call message in local state.
             if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // single-turn: ALL assistant content (including intermediate tool-calling
+            // messages from earlier server iterations) is already accumulated into the
+            // one streaming message via message:delta. Inserting them from done.messages
+            // creates duplicate bubbles after streaming ends. Skip ALL assistant messages
+            // in single-turn mode — tool execution display is driven by streamState.toolResults.
+            if (
+              this.config.streamMode === "single-turn" &&
+              msg.role === "assistant"
+            ) {
               continue;
             }
 
@@ -1621,6 +1757,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     this.callbacks.onMessagesChange?.(this._allMessages());
 
+    // Stream completed successfully — placeholder is now a real message, clear tracker
+    this._activePlaceholderMessageId = undefined;
+
     // Close the stream group opened at the start of handleStreamResponse
     this.debugGroupEnd();
 
@@ -1741,6 +1880,16 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
    */
   protected handleError(error: Error): void {
     this.debug("error", error);
+
+    // Remove the pending loading placeholder so it doesn't stay frozen.
+    // The error is surfaced through state.error → UI banner only —
+    // never written into the message history.
+    if (this._activePlaceholderMessageId) {
+      this.state.popMessage();
+      this._activePlaceholderMessageId = undefined;
+      this.callbacks.onMessagesChange?.(this._allMessages());
+    }
+
     this.state.error = error;
     this.state.status = "error";
     this.callbacks.onError?.(error);

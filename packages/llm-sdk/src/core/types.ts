@@ -426,6 +426,10 @@ export interface StorageMessage {
   content: string;
   toolCalls?: unknown[];
   toolCallId?: string;
+  /** Content type for the message — determines how it's stored in the backend */
+  contentType?: "text" | "image" | "file";
+  /** URL for image/file attachments */
+  url?: string;
   metadata?: Record<string, unknown>;
 }
 
