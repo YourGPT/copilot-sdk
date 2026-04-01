@@ -1109,7 +1109,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
       // Handle message:end mid-stream (server-side agent loop turn completed)
       // This creates separate messages for each turn instead of combining them
-      if (chunk.type === "message:end" && this.streamState?.content) {
+      // Split on text content OR server-side tool executions (no text, tool-only turns)
+      if (
+        chunk.type === "message:end" &&
+        this.streamState !== null &&
+        (this.streamState.content ||
+          (this.streamState.toolResults?.size ?? 0) > 0)
+      ) {
         this.debug("message:end mid-stream", {
           messageId: this.streamState.messageId,
           contentLength: this.streamState.content.length,
@@ -1236,6 +1242,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Skip server-side tool assistant messages — already represented in streamed toolExecutions
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                pendingIds.size === 0
+              )
+                continue;
               // Everything else (server tool results) needs inserting
               messagesToInsert.push({
                 id: generateMessageId(),
