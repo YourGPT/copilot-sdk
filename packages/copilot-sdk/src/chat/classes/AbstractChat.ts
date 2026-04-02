@@ -1242,11 +1242,21 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
-              // Skip server-side tool assistant messages — already represented in streamed toolExecutions
+              // Skip assistant messages whose tool_calls are all server-side (not in pendingIds)
+              // These are already represented in streamed toolExecutions — inserting would duplicate the card
               if (
                 msg.role === "assistant" &&
                 msg.tool_calls?.length &&
-                pendingIds.size === 0
+                (msg.tool_calls as Array<{ id?: string }>).every(
+                  (tc) => !pendingIds.has(tc?.id ?? ""),
+                )
+              )
+                continue;
+              // Skip tool result messages for client-side tools — client already executed them
+              if (
+                msg.role === "tool" &&
+                msg.tool_call_id &&
+                pendingIds.has(msg.tool_call_id)
               )
                 continue;
               // Everything else (server tool results) needs inserting
@@ -1414,11 +1424,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         });
 
         // Adopt threadId from server storage adapter (if present)
-        if (
-          chunk.type === "done" &&
-          (chunk as { threadId?: string }).threadId
-        ) {
-          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+        if (chunk.type === "done" && chunk.threadId) {
+          const serverThreadId = chunk.threadId;
           if (
             !this.config.threadId ||
             this.config.threadId !== serverThreadId

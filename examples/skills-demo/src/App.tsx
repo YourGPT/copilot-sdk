@@ -6,7 +6,11 @@ import {
   useCallback,
 } from "react";
 import { Drawer } from "vaul";
-import { CopilotProvider, useCopilot } from "@yourgpt/copilot-sdk/react";
+import {
+  CopilotProvider,
+  useCopilot,
+  useTool,
+} from "@yourgpt/copilot-sdk/react";
 import {
   CopilotChat,
   PromptInput,
@@ -287,7 +291,32 @@ function FallbackToolCard({ execution }: ToolRendererProps) {
   );
 }
 
-const toolRenderers = { load_skill: SkillLoadedCard };
+function DateToolCard({ execution }: ToolRendererProps) {
+  if (execution.status === "pending" || execution.status === "executing") {
+    return (
+      <div className="flex items-center gap-1.5 px-0.5 py-1">
+        <CheckCircleIcon className="size-4 shrink-0 text-muted-foreground animate-pulse" />
+        <TextShimmer>Checking current date…</TextShimmer>
+      </div>
+    );
+  }
+  if (execution.status === "error" || execution.status === "failed")
+    return null;
+  const date = (execution.result as { date?: string })?.date ?? "";
+  return (
+    <div className="flex items-center gap-1.5 px-0.5 py-1">
+      <CheckCircleIcon className="size-4 shrink-0 text-emerald-500" />
+      <p className="text-xs text-muted-foreground">
+        Date: <span className="font-medium text-foreground">{date}</span>
+      </p>
+    </div>
+  );
+}
+
+const toolRenderers = {
+  load_skill: SkillLoadedCard,
+  get_current_date: DateToolCard,
+};
 
 // ─── Custom Fixed Input ───────────────────────────────────────────────────────
 // Uses useCopilot() (CopilotProvider-level) instead of useCopilotChatContext()
@@ -394,6 +423,30 @@ function MessageLogger() {
 // ─── Chat Inner ───────────────────────────────────────────────────────────────
 
 function ChatInner() {
+  useTool({
+    name: "get_current_date",
+    description:
+      "Returns today's date and day of week from the client. Use this when the user asks about deadlines, timelines, or scheduling relative to today.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    handler: async () => {
+      const now = new Date();
+      return {
+        date: now.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+        iso: now.toISOString().split("T")[0],
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      };
+    },
+  });
+
   return (
     <div className="h-[600px] my-auto">
       <MessageLogger />
