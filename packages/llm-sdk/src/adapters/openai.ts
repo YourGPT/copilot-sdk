@@ -40,7 +40,7 @@ export interface OpenAIAdapterConfig {
  * Supports: GPT-4, GPT-4o, GPT-3.5-turbo, etc.
  */
 export class OpenAIAdapter implements LLMAdapter {
-  readonly provider = "openai";
+  readonly provider: string;
   readonly model: string;
 
   private client: any; // OpenAI client (lazy loaded)
@@ -49,6 +49,15 @@ export class OpenAIAdapter implements LLMAdapter {
   constructor(config: OpenAIAdapterConfig) {
     this.config = config;
     this.model = config.model || "gpt-4o";
+    this.provider = OpenAIAdapter.resolveProviderName(config.baseUrl);
+  }
+
+  private static resolveProviderName(baseUrl?: string): string {
+    if (!baseUrl) return "openai";
+    if (baseUrl.includes("generativelanguage.googleapis.com")) return "google";
+    if (baseUrl.includes("x.ai")) return "xai";
+    if (baseUrl.includes("azure")) return "azure";
+    return "openai";
   }
 
   private async getClient() {
@@ -294,6 +303,17 @@ export class OpenAIAdapter implements LLMAdapter {
     if (request.rawMessages && request.rawMessages.length > 0) {
       // Process raw messages - convert any attachments to OpenAI vision format
       const processedMessages = request.rawMessages.map((msg) => {
+        // Normalize assistant messages with tool_calls: empty string content → null
+        // Gemini/xAI (OpenAI-compatible) reject content: "" on assistant messages with tool_calls
+        if (
+          msg.role === "assistant" &&
+          Array.isArray(msg.tool_calls) &&
+          msg.tool_calls.length > 0 &&
+          msg.content === ""
+        ) {
+          return { ...msg, content: null };
+        }
+
         // Check if message has attachments (images)
         const hasAttachments =
           msg.attachments &&
@@ -426,6 +446,7 @@ export class OpenAIAdapter implements LLMAdapter {
         id: string;
         name: string;
         arguments: string;
+        extra_content?: Record<string, unknown>;
       } | null = null;
 
       // Track citations from web search
@@ -501,16 +522,24 @@ export class OpenAIAdapter implements LLMAdapter {
                 };
               }
 
+              const tcExtraContent = (toolCall as any).extra_content as
+                | Record<string, unknown>
+                | undefined;
+
               currentToolCall = {
                 id: toolCall.id,
                 name: toolCall.function?.name || "",
                 arguments: toolCall.function?.arguments || "",
+                ...(tcExtraContent ? { extra_content: tcExtraContent } : {}),
               };
 
               yield {
                 type: "action:start",
                 id: currentToolCall.id,
                 name: currentToolCall.name,
+                ...(currentToolCall.extra_content
+                  ? { extra_content: currentToolCall.extra_content }
+                  : {}),
               };
             } else if (currentToolCall && toolCall.function?.arguments) {
               // Append to current tool call arguments
@@ -554,7 +583,7 @@ export class OpenAIAdapter implements LLMAdapter {
       yield {
         type: "error",
         message: error instanceof Error ? error.message : "Unknown error",
-        code: "OPENAI_ERROR",
+        code: `${this.provider.toUpperCase()}_ERROR`,
       };
     }
   }
@@ -568,15 +597,28 @@ export class OpenAIAdapter implements LLMAdapter {
 
     let messages: Array<Record<string, unknown>>;
     if (request.rawMessages && request.rawMessages.length > 0) {
-      messages = request.rawMessages;
+      const sanitized = request.rawMessages.map((msg) => {
+        // Gemini/xAI (OpenAI-compatible) reject content: "" on assistant messages with tool_calls
+        if (
+          msg.role === "assistant" &&
+          Array.isArray(msg.tool_calls) &&
+          msg.tool_calls.length > 0 &&
+          msg.content === ""
+        ) {
+          return { ...msg, content: null };
+        }
+        return msg;
+      });
       if (
         request.systemPrompt &&
-        !messages.some((message) => message.role === "system")
+        !sanitized.some((message) => message.role === "system")
       ) {
         messages = [
           { role: "system", content: request.systemPrompt },
-          ...messages,
+          ...sanitized,
         ];
+      } else {
+        messages = sanitized;
       }
     } else {
       messages = formatMessagesForOpenAI(
@@ -632,6 +674,9 @@ export class OpenAIAdapter implements LLMAdapter {
               return {};
             }
           })(),
+          ...(toolCall.extra_content
+            ? { extra_content: toolCall.extra_content }
+            : {}),
         })) ?? [],
       usage: response.usage
         ? {

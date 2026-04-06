@@ -119,7 +119,8 @@ export default function PlaygroundPage() {
   }, [actions]);
 
   // Derived state
-  const hasApiKey = !!apiKeys[selectedProvider];
+  const hasApiKey =
+    selectedProvider === "yourgpt-server" || !!apiKeys[selectedProvider];
 
   // Don't render until mounted (avoid hydration issues)
   if (!mounted) return null;

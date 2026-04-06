@@ -1410,6 +1410,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
+      // Adopt threadId early — emitted by server before any message events
+      if (chunk.type === "thread:created") {
+        const serverThreadId = chunk.threadId;
+        if (!this.config.threadId || this.config.threadId !== serverThreadId) {
+          this.config.threadId = serverThreadId;
+          this.sessionInitPromise = null;
+          this.setSessionStatus("ready");
+          this.callbacks.onThreadChange?.(serverThreadId);
+        }
+      }
+
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", {

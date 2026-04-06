@@ -1009,8 +1009,12 @@ export class Runtime {
     // Accumulate data from stream
     let accumulatedText = "";
     const toolCalls: ToolCallInfo[] = [];
-    let currentToolCall: { id: string; name: string; args: string } | null =
-      null;
+    let currentToolCall: {
+      id: string;
+      name: string;
+      args: string;
+      extra_content?: Record<string, unknown>;
+    } | null = null;
 
     // Server-side tool results (populated inline during stream, before message:end)
     const serverToolResults: Array<{
@@ -1071,7 +1075,14 @@ export class Runtime {
           break;
 
         case "action:start":
-          currentToolCall = { id: event.id, name: event.name, args: "" };
+          currentToolCall = {
+            id: event.id,
+            name: event.name,
+            args: "",
+            ...(event.extra_content
+              ? { extra_content: event.extra_content }
+              : {}),
+          };
           if (debug) {
             console.log(`[Copilot SDK] Tool call started: ${event.name}`);
           }
@@ -1092,6 +1103,9 @@ export class Runtime {
                 id: currentToolCall.id,
                 name: currentToolCall.name,
                 args: parsedArgs,
+                ...(currentToolCall.extra_content
+                  ? { extra_content: currentToolCall.extra_content }
+                  : {}),
               });
             } catch (e) {
               console.error(
@@ -1103,6 +1117,9 @@ export class Runtime {
                 id: currentToolCall.id,
                 name: currentToolCall.name,
                 args: {},
+                ...(currentToolCall.extra_content
+                  ? { extra_content: currentToolCall.extra_content }
+                  : {}),
               });
             }
             currentToolCall = null;
@@ -1226,14 +1243,18 @@ export class Runtime {
         const assistantWithToolCalls: DoneEventMessage = {
           role: "assistant",
           content: accumulatedText || null,
-          tool_calls: serverToolResults.map((tr) => ({
-            id: tr.id,
-            type: "function" as const,
-            function: {
-              name: tr.name,
-              arguments: JSON.stringify(tr.args),
-            },
-          })),
+          tool_calls: serverToolResults.map((tr) => {
+            const tc = toolCalls.find((t) => t.id === tr.id);
+            return {
+              id: tr.id,
+              type: "function" as const,
+              function: {
+                name: tr.name,
+                arguments: JSON.stringify(tr.args),
+              },
+              ...(tc?.extra_content ? { extra_content: tc.extra_content } : {}),
+            };
+          }),
         };
 
         // Create tool result messages (using buildToolResultForAI for AI response control)
@@ -1304,6 +1325,7 @@ export class Runtime {
               name: tc.name,
               arguments: JSON.stringify(tc.args),
             },
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           })),
         };
 
@@ -1621,6 +1643,9 @@ export class Runtime {
                   name: tc.name,
                   arguments: JSON.stringify(tc.args),
                 },
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
               })),
             };
 
@@ -1679,6 +1704,9 @@ export class Runtime {
                   name: tc.name,
                   arguments: JSON.stringify(tc.args),
                 },
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
               })),
             };
 
@@ -1920,6 +1948,15 @@ export class Runtime {
           resolvedThreadId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
           storageHealthy = false;
         }
+      }
+
+      // Emit threadId early — before any message events — so the client can
+      // adopt it immediately without waiting for the done chunk
+      if (resolvedThreadId) {
+        yield {
+          type: "thread:created",
+          threadId: resolvedThreadId,
+        } as StreamEvent;
       }
 
       // Save input messages (user message / tool results)
