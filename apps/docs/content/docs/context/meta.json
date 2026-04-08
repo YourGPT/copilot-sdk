@@ -1,5 +1,0 @@
-{
-  "title": "Context Management",
-  "icon": "Lightbulb",
-  "pages": ["compaction", "token-tracking", "session"]
-}

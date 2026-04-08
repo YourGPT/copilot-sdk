@@ -1,5 +1,5 @@
 {
   "title": "Chat",
-  "icon": "MessageSquare",
-  "pages": ["index", "branching", "message-actions"]
+  "icon": "BubbleChat",
+  "pages": ["ui", "attachments", "storage"]
 }

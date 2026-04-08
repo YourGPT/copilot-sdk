@@ -1,5 +1,5 @@
 {
   "title": "API Reference",
   "icon": "FileCode",
-  "pages": ["core", "chat", "react", "vue", "angular"]
+  "pages": ["core", "chat", "react", "frameworks"]
 }

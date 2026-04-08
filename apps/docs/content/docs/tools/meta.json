@@ -1,12 +1,11 @@
 {
   "title": "Tools",
-  "icon": "Wrench",
+  "icon": "Puzzle",
   "pages": [
-    "built-in",
     "frontend-tools",
     "backend-tools",
+    "built-in",
     "agentic-loop",
-    "deferred-tools",
-    "hidden-tools"
+    "mcp"
   ]
 }

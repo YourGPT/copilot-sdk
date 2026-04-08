@@ -1,15 +1,9 @@
 ---
 title: Conversation Branching
 description: Edit messages to create parallel conversation paths, just like ChatGPT and Claude.ai
-icon: GitBranch
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-
-<Callout type="warn">
-**Beta** — This feature is in **alpha**. APIs may change before stable release.
-</Callout>
 
 Edit any user message to create a parallel conversation path, preserving the original. Navigate between variants with `← N/M →` — the same UX as ChatGPT, Claude.ai, and Gemini.
 
@@ -30,9 +24,9 @@ If you use `<CopilotChat />`, branching is **already active**. No code changes n
 
 ---
 
-## New APIs
+## API
 
-### `useCopilot()` / `useCopilotProvider`
+### `useCopilot()`
 
 ```typescript
 const {
@@ -44,7 +38,7 @@ const {
 } = useCopilot();
 ```
 
-### `BranchInfo` type
+### `BranchInfo`
 
 ```typescript
 interface BranchInfo {
@@ -76,7 +70,7 @@ import { BranchNavigator } from "@yourgpt/copilot-sdk/ui";
 ### `MessageTree` (framework-agnostic)
 
 ```typescript
-import { MessageTree, type BranchInfo } from "@yourgpt/copilot-sdk";
+import { MessageTree } from "@yourgpt/copilot-sdk";
 
 const tree = new MessageTree(messages);
 tree.getVisibleMessages(); // active path only (sent to AI)
@@ -84,26 +78,6 @@ tree.getAllMessages();     // all branches (for persistence)
 tree.getBranchInfo(messageId); // BranchInfo | null
 tree.switchBranch(messageId);
 tree.hasBranches; // boolean
-```
-
----
-
-## Manual Wiring (`<Chat />` users)
-
-Wire the three props from `useCopilot()`:
-
-```tsx
-function MyChat() {
-  const { switchBranch, getBranchInfo, editMessage } = useCopilot();
-
-  return (
-    <Chat
-      getBranchInfo={getBranchInfo}
-      onSwitchBranch={switchBranch}
-      onEditMessage={editMessage}
-    />
-  );
-}
 ```
 
 ---
@@ -158,9 +132,7 @@ await saveToServer(allMessages);
 
 ## Persistence
 
-### New DB columns (optional)
-
-Two new optional columns on your messages table:
+### Optional DB columns
 
 ```sql
 ALTER TABLE messages
@@ -169,12 +141,10 @@ ALTER TABLE messages
 ```
 
 <Callout type="info">
-These columns are **optional**. Existing rows without them are auto-migrated to a linear tree on load — no data loss, no required migration script.
+These columns are **optional**. Existing rows without them are auto-migrated to a linear tree on load — no data loss, no migration required.
 </Callout>
 
-### What gets saved
-
-When `onMessagesChange` fires, the payload now contains **all messages across all branches**. Each message carries:
+When `onMessagesChange` fires, the payload contains **all messages across all branches**:
 
 ```json
 {
@@ -186,25 +156,12 @@ When `onMessagesChange` fires, the payload now contains **all messages across al
 }
 ```
 
-### Upsert strategy (recommended)
+Use upsert-by-ID when saving — a simple overwrite will lose inactive branches:
 
 ```typescript
-// ✅ Safe for branching — upsert by ID
+// ✅ Safe for branching
 await db.messages.upsert({ id: msg.id, ...msg });
 
 // ⚠️ Loses inactive branches
 await db.threads.update({ messages: visibleMessages });
 ```
-
----
-
-## Breaking Changes
-
-**None.** All new fields and methods are optional. Existing usage is untouched.
-
-| Scenario | Behavior |
-|----------|----------|
-| Messages with no `parentId` | Falls back to insertion order (legacy linear) |
-| `regenerate()` with no args | Identical to before |
-| `sendMessage()` with no options | Identical to before |
-| `onMessagesChange` consumers | Payload now includes all branches — shape unchanged |

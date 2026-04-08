@@ -1,7 +1,6 @@
 ---
 title: Copilot UI
 description: Pre-built chat components and styling setup
-icon: Palette
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -332,8 +331,84 @@ import {
 
 ---
 
+---
+
+## Message Actions
+
+Add floating copy, edit, feedback, and custom buttons to messages. Actions appear on hover below each message bubble.
+
+```tsx
+<CopilotChat>
+  <CopilotChat.MessageActions role="assistant">
+    <CopilotChat.CopyAction />
+    <CopilotChat.FeedbackAction
+      onFeedback={(message, type) => sendFeedback({ messageId: message.id, type })}
+    />
+  </CopilotChat.MessageActions>
+
+  <CopilotChat.MessageActions role="user">
+    <CopilotChat.EditAction />
+  </CopilotChat.MessageActions>
+</CopilotChat>
+```
+
+| Component | Description |
+|-----------|-------------|
+| `CopilotChat.MessageActions` | Registers actions for a role (`user` or `assistant`) |
+| `CopilotChat.CopyAction` | Copy message to clipboard |
+| `CopilotChat.EditAction` | Inline edit for user messages |
+| `CopilotChat.FeedbackAction` | Thumbs up / down |
+| `CopilotChat.Action` | Fully custom action button |
+
+```tsx
+// Custom action
+<CopilotChat.MessageActions role="assistant">
+  <CopilotChat.CopyAction />
+  <CopilotChat.Action
+    icon={<ShareIcon />}
+    tooltip="Share"
+    onClick={({ message }) => share(message.content)}
+  />
+</CopilotChat.MessageActions>
+
+// Conditional — hide based on message content
+<CopilotChat.Action
+  icon={<FlagIcon />}
+  tooltip="Report"
+  hidden={({ message }) => !message.content}
+  onClick={({ message }) => report(message.id)}
+/>
+```
+
+### Props
+
+```tsx
+// MessageActions
+role: "user" | "assistant"
+
+// CopyAction / EditAction
+tooltip?: string
+className?: string
+
+// FeedbackAction
+onFeedback?: (message: ChatMessage, type: "helpful" | "not-helpful") => void
+tooltip?: string
+
+// Action (custom)
+icon: ReactNode
+tooltip: string
+onClick: (props: { message: ChatMessage }) => void
+hidden?: boolean | ((props: { message: ChatMessage }) => boolean)
+```
+
+<Callout type="info">
+If no `MessageActions` children are declared, the chat UI is identical to before — purely additive.
+</Callout>
+
+---
+
 ## Next Steps
 
 - [Customizations](/docs/customizations) - Create custom themes, CSS classes, branding
-- [Chat](/docs/chat) - Chat component props and configuration
-- [Generative UI](/docs/generative-ui) - Render custom components from AI
+- [Generative UI](/docs/chat/generative-ui) - Render custom components from AI
+- [Branching](/docs/advanced/branching) - Conversation branching and edit history

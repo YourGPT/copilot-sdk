@@ -1,44 +1,41 @@
 ---
 title: Generative UI
-description: Render custom React components from tool results
-icon: Blocks
+description: Render rich React components from AI tool results — per-tool custom renderers or AI-driven built-in components
+icon: AiMagic
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Transform tool results into rich, interactive React components instead of plain text.
-
----
-
-## Overview
-
-When AI calls a tool, instead of showing raw JSON, you can render custom UI:
-
-```
-User: "What's the weather in Miami?"
-     ↓
-AI calls: get_weather({ city: "Miami" })
-     ↓
-Tool returns: { temp: 82, conditions: "Sunny" }
-     ↓
-UI renders: [Beautiful weather card component]
-```
+Instead of showing raw JSON or plain text from tool calls, render interactive UI directly inside the chat — from your own branded React components per tool, to fully AI-generated dashboards, charts, and layouts running in a sandboxed iframe.
 
 ---
 
-## Basic Setup
+## Two Approaches
 
-### 1. Define Tool Renderers
+| | `toolRenderers` | `useGenerativeUI` (experimental) |
+|---|---|---|
+| **What it does** | Your React component renders per tool result | AI writes full HTML + Tailwind + Chart.js, runs in a sandboxed iframe — or picks a typed renderer (table, stat, card, chart) |
+| **Who decides the UI** | You — one renderer per tool | The AI — generates or selects based on the data |
+| **Setup** | Pass `toolRenderers` to `<CopilotChat>` | One `useGenerativeUI()` call + backend `generativeUITool()` |
+| **Best for** | Domain-specific, branded components | Dashboards, charts, tables, any data layout you haven't pre-built |
+| **Customization** | Full control | Override any built-in renderer |
+
+---
+
+## Approach 1 — `toolRenderers`
+
+Map tool names to React components. Each component receives the tool's args and result as props.
+
+### Basic example
 
 ```tsx
-import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 
-// Custom component for weather results
 function WeatherCard({ data, status }) {
-  if (status === 'executing') {
+  if (status === "executing") {
     return <div className="animate-pulse">Loading weather...</div>;
   }
-
   return (
     <div className="p-4 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white">
       <h3 className="text-xl font-bold">{data.city}</h3>
@@ -48,74 +45,35 @@ function WeatherCard({ data, status }) {
   );
 }
 
-// Pass to CopilotChat
 <CopilotChat
   toolRenderers={{
     get_weather: WeatherCard,
+    get_chart: ChartCard,
+    search_products: ProductGrid,
   }}
 />
 ```
 
-### 2. Register the Tool
+### ToolRendererProps
 
-```tsx
-useTools({
-  get_weather: {
-    description: 'Get current weather for a city',
-    parameters: z.object({
-      city: z.string(),
-    }),
-    handler: async ({ city }) => {
-      const weather = await fetchWeather(city);
-      return {
-        success: true,
-        data: {
-          city,
-          temp: weather.temperature,
-          conditions: weather.conditions,
-        },
-      };
-    },
-  },
-});
-```
-
----
-
-## ToolRendererProps
-
-Every tool renderer receives these props:
+Every renderer receives these props:
 
 ```typescript
 interface ToolRendererProps {
-  // Current execution status
-  status: 'pending' | 'executing' | 'completed' | 'error' | 'failed' | 'rejected';
-
-  // Arguments passed to the tool
-  args: Record<string, unknown>;
-
-  // Result data (when completed)
-  data?: unknown;
-
-  // Error message (when failed)
-  error?: string;
-
-  // Unique execution ID
+  status: "pending" | "executing" | "completed" | "error" | "failed" | "rejected";
+  args: Record<string, unknown>;   // arguments passed to the tool
+  data?: unknown;                  // result (when completed)
+  error?: string;                  // error message (when failed)
   executionId: string;
-
-  // Tool name
   toolName: string;
 }
 ```
 
----
-
-## Handling All States
+### Handling all states
 
 ```tsx
 function ChartCard({ status, data, error, args }: ToolRendererProps) {
-  // Loading state
-  if (status === 'pending' || status === 'executing') {
+  if (status === "pending" || status === "executing") {
     return (
       <div className="p-4 border rounded-lg">
         <div className="animate-spin h-6 w-6 border-2 border-primary rounded-full border-t-transparent" />
@@ -126,8 +84,7 @@ function ChartCard({ status, data, error, args }: ToolRendererProps) {
     );
   }
 
-  // Error state
-  if (status === 'error' || status === 'failed') {
+  if (status === "error" || status === "failed") {
     return (
       <div className="p-4 border border-destructive rounded-lg">
         <p className="text-destructive">Failed to load chart</p>
@@ -136,8 +93,7 @@ function ChartCard({ status, data, error, args }: ToolRendererProps) {
     );
   }
 
-  // Rejected (user denied approval)
-  if (status === 'rejected') {
+  if (status === "rejected") {
     return (
       <div className="p-4 border rounded-lg bg-muted">
         <p className="text-muted-foreground">Chart request was declined</p>
@@ -145,7 +101,6 @@ function ChartCard({ status, data, error, args }: ToolRendererProps) {
     );
   }
 
-  // Success state
   return (
     <div className="p-4 border rounded-lg">
       <h3 className="font-semibold mb-4">{data.title}</h3>
@@ -161,44 +116,20 @@ function ChartCard({ status, data, error, args }: ToolRendererProps) {
 }
 ```
 
----
+### Interactive components
 
-## Multiple Tool Renderers
-
-```tsx
-<CopilotChat
-  toolRenderers={{
-    get_weather: WeatherCard,
-    get_chart: ChartCard,
-    get_stats: StatsCard,
-    search_products: ProductGrid,
-    create_task: TaskConfirmation,
-  }}
-/>
-```
-
----
-
-## Interactive Components
-
-Tool renderers can be fully interactive:
+Renderers can be fully interactive and call back into the chat:
 
 ```tsx
 function ProductCard({ data }: ToolRendererProps) {
   const [quantity, setQuantity] = useState(1);
   const { sendMessage } = useCopilot();
 
-  const handleAddToCart = () => {
-    // Trigger AI to call add_to_cart tool
-    sendMessage(`Add ${quantity} of ${data.name} to my cart`);
-  };
-
   return (
     <div className="p-4 border rounded-lg">
       <img src={data.image} alt={data.name} />
       <h3>{data.name}</h3>
       <p>${data.price}</p>
-
       <div className="flex items-center gap-2 mt-4">
         <input
           type="number"
@@ -206,7 +137,10 @@ function ProductCard({ data }: ToolRendererProps) {
           onChange={(e) => setQuantity(Number(e.target.value))}
           className="w-16 border rounded px-2 py-1"
         />
-        <button onClick={handleAddToCart} className="btn-primary">
+        <button
+          onClick={() => sendMessage(`Add ${quantity} of ${data.name} to my cart`)}
+          className="btn-primary"
+        >
           Add to Cart
         </button>
       </div>
@@ -215,111 +149,193 @@ function ProductCard({ data }: ToolRendererProps) {
 }
 ```
 
----
+### Control AI response verbosity
 
-## With AI Response Control
-
-Combine with `_aiResponseMode` to control AI behavior:
+Return `_aiResponseMode: "brief"` from your tool handler to prevent the AI from describing what the UI already shows:
 
 ```tsx
-useTools({
-  show_dashboard: {
-    description: 'Display analytics dashboard',
-    parameters: z.object({ timeRange: z.string() }),
-    handler: async ({ timeRange }) => {
-      const data = await fetchDashboardData(timeRange);
-      return {
-        success: true,
-        data,
-        // Tell AI to be brief - UI speaks for itself
-        _aiResponseMode: 'brief',
-        _aiContext: `Dashboard displayed for ${timeRange}`,
-      };
-    },
-  },
-});
+handler: async ({ timeRange }) => {
+  const data = await fetchDashboardData(timeRange);
+  return {
+    success: true,
+    data,
+    _aiResponseMode: "brief",
+    _aiContext: `Dashboard for ${timeRange}`,
+  };
+},
 ```
 
 <Callout type="info">
-Use `_aiResponseMode: 'brief'` when your UI component is self-explanatory. The AI will give a short acknowledgment instead of describing the data.
+Use `_aiResponseMode: "brief"` when your UI component is self-explanatory. The AI gives a short acknowledgment instead of narrating the data.
 </Callout>
 
 ---
 
-## Best Practices
+## Approach 2 — AI-Generated UI (Experimental)
 
-1. **Handle all states** - Show loading, error, and success states
-2. **Keep it focused** - One component per tool, single responsibility
-3. **Make it responsive** - Components appear inline with chat messages
-4. **Use AI Response Control** - Prevent AI from redundantly describing visual data
-5. **Add interactivity** - Let users take actions directly from the UI
+<Callout type="warn">
+`@yourgpt/copilot-sdk/experimental` — APIs may change without a semver major bump.
+</Callout>
 
----
+The AI calls a single `render_ui` tool and generates the UI itself. The standout capability is `type: "html"` — the AI writes full HTML with Tailwind CSS and Chart.js, rendered in a sandboxed iframe. No pre-built component needed. For structured data it can also pick typed renderers (`table`, `stat`, `card`, `chart`) automatically.
 
-## Example: Complete Weather Tool
+```
+User: "Show Q1 revenue by region"
+     ↓
+AI calls: render_ui({ type: "chart", chartType: "bar", labels: ["NA","EU","APAC"], datasets: [...] })
+     ↓
+UI renders: [Bar chart]
 
-```tsx
-// Tool definition
-useTools({
-  get_weather: {
-    description: 'Get current weather for any city',
-    parameters: z.object({
-      city: z.string().describe('City name'),
-      units: z.enum(['celsius', 'fahrenheit']).optional(),
-    }),
-    handler: async ({ city, units = 'fahrenheit' }) => {
-      const weather = await fetchWeatherAPI(city, units);
-      return {
-        success: true,
-        data: {
-          city,
-          temp: weather.temperature,
-          conditions: weather.conditions,
-          humidity: weather.humidity,
-          wind: weather.wind,
-          units,
-        },
-        _aiResponseMode: 'brief',
-        _aiContext: `Weather: ${weather.temperature}° ${weather.conditions} in ${city}`,
-      };
+User: "Build an analytics dashboard"
+     ↓
+AI calls: render_ui({ type: "html", html: "<div class='grid grid-cols-3 gap-4'>...</div>", height: "600px" })
+     ↓
+UI renders: [Full dashboard in sandboxed iframe with Tailwind + Chart.js]
+```
+
+### Setup
+
+<Tabs items={['Backend', 'Frontend']}>
+  <Tab value="Backend">
+
+Register `generativeUITool()` in your route. The key becomes the tool name.
+
+```typescript
+import { generativeUITool } from "@yourgpt/copilot-sdk/experimental";
+import { streamText } from "@yourgpt/llm-sdk";
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+
+  const result = await streamText({
+    model: openai("gpt-4o"),
+    system: "Use render_ui for any data, charts, or structured results.",
+    messages,
+    tools: {
+      render_ui: generativeUITool(),
     },
-  },
-});
+  });
 
-// Renderer component
-function WeatherCard({ data, status }: ToolRendererProps) {
-  if (status !== 'completed') {
-    return <WeatherSkeleton />;
-  }
-
-  const { city, temp, conditions, humidity, wind, units } = data;
-  const tempUnit = units === 'celsius' ? '°C' : '°F';
-
-  return (
-    <div className="w-72 p-6 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 text-white shadow-lg">
-      <div className="flex justify-between items-start">
-        <div>
-          <h3 className="text-lg font-medium opacity-90">{city}</h3>
-          <p className="text-5xl font-bold mt-2">{temp}{tempUnit}</p>
-        </div>
-        <WeatherIcon conditions={conditions} className="w-16 h-16" />
-      </div>
-
-      <p className="text-lg mt-4">{conditions}</p>
-
-      <div className="flex gap-4 mt-4 text-sm opacity-80">
-        <span>💧 {humidity}%</span>
-        <span>💨 {wind} mph</span>
-      </div>
-    </div>
-  );
+  return result.toDataStreamResponse();
 }
 ```
 
----
+  </Tab>
+  <Tab value="Frontend">
 
-## Next Steps
+Call `useGenerativeUI()` once in your component tree — it registers the renderer automatically.
 
-- [Custom Tools](/docs/custom-tools) - Build more tools
-- [AI Response Control](/docs/ai-response-control) - Control AI behavior
-- [Tool Approval](/docs/tool-approval) - Add user confirmation
+```tsx
+import { useGenerativeUI } from "@yourgpt/copilot-sdk/experimental";
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
+
+function App() {
+  useGenerativeUI({
+    chartRenderer: MyChartComponent, // required for chart type
+  });
+
+  return <CopilotChat />;
+}
+```
+
+  </Tab>
+</Tabs>
+
+### Built-in component types
+
+| Type | When the AI uses it | Renderer |
+|------|-------------------|----------|
+| `html` | Dashboards, custom layouts, anything freeform | `HtmlRenderer` — sandboxed `<iframe>` with Tailwind CDN + Chart.js CDN pre-loaded |
+| `table` | Structured rows — comparisons, records, lists | `TableRenderer` |
+| `stat` | KPI metrics, numbers with change deltas | `StatRenderer` |
+| `card` | Entity summaries — profiles, products, key-value info | `CardRenderer` |
+| `chart` | Bar, line, pie, area, scatter graphs | Requires `chartRenderer` prop |
+
+### `html` type — AI-generated iframe UI
+
+When the AI uses `type: "html"`, it can write full HTML with Tailwind utility classes and inline Chart.js canvases. The SDK renders it in a sandboxed `<iframe>` so it's fully isolated from your app.
+
+The iframe automatically loads:
+- **Tailwind CSS** Play CDN — any utility class works
+- **Chart.js** — create charts with `<canvas>` + `new Chart(...)`
+
+```tsx
+// The AI generates something like this:
+render_ui({
+  type: "html",
+  height: "520px",
+  html: `
+    <div class="grid grid-cols-3 gap-4 p-6">
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <p class="text-sm text-gray-500">Monthly Revenue</p>
+        <p class="text-3xl font-bold text-gray-900 mt-1">$84,200</p>
+        <span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">+12%</span>
+      </div>
+      <!-- more cards... -->
+    </div>
+    <canvas id="chart" height="220"></canvas>
+    <script>
+    new Chart(document.getElementById('chart'), {
+      type: 'bar',
+      data: { labels: ['Jan','Feb','Mar'], datasets: [{ data: [65,80,84], backgroundColor: '#6366f1' }] }
+    });
+    </script>
+  `
+})
+```
+
+### Chart renderer
+
+Charts require a user-supplied renderer since the SDK doesn't bundle a charting library:
+
+```tsx
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import type { ChartRendererProps } from "@yourgpt/copilot-sdk/experimental";
+
+function MyChart({ payload }: ChartRendererProps) {
+  const data = payload.labels.map((label, i) => ({
+    name: label,
+    ...Object.fromEntries(payload.datasets.map((d) => [d.label, d.data[i]])),
+  }));
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={data}>
+        <XAxis dataKey="name" />
+        <YAxis />
+        <Tooltip />
+        {payload.datasets.map((d) => (
+          <Bar key={d.label} dataKey={d.label} fill={d.color ?? "#6366f1"} />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+useGenerativeUI({ chartRenderer: MyChart });
+```
+
+### Override built-in renderers
+
+Replace any built-in renderer with your own component:
+
+```tsx
+useGenerativeUI({
+  overrideRenderers: {
+    card: MyCustomCardRenderer,
+    table: MyCustomTableRenderer,
+  },
+});
+```
+
+### Custom tool name
+
+If you use a key other than `render_ui` in `tools`, pass the same name to `useGenerativeUI`:
+
+```typescript
+// Backend
+tools: { show_component: generativeUITool() }
+
+// Frontend
+useGenerativeUI({ name: "show_component" });
+```
