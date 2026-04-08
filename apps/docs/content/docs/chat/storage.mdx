@@ -1,17 +1,100 @@
 ---
-title: Chat History
-description: Save and restore chat conversations across sessions
+title: Storage
+description: Persist chat sessions, threads, and conversation history across reloads and devices
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Save and persist chat threads and messages so users can continue conversations across browser sessions, devices, or after logging out.
+---
+
+## Session Persistence
+
+<Callout type="warn">
+**Beta** — This feature is in **alpha**. APIs may change before stable release.
+</Callout>
+
+Persist the full conversation state — including compaction metadata and message history — across page reloads with zero extra code.
+
+### Basic Setup
+
+```typescript
+useMessageHistory({
+  persistSession: true,
+  storageKey: "my-app-chat", // default: "copilot-session"
+});
+```
+
+### What gets persisted
+
+| Data | Where | Notes |
+|------|-------|-------|
+| `compactionState` (small metadata) | `localStorage` | Sync, available immediately on cold start |
+| `displayMessages` (can be large) | `IndexedDB` | Async, avoids localStorage quota issues |
+
+Both are keyed by `storageKey`. Multiple chat instances can coexist with different keys.
+
+### Clear Everything
+
+```typescript
+const { resetSession } = useMessageHistory({ persistSession: true });
+
+// Clears state AND storage
+await resetSession();
+```
+
+### Multiple Chat Instances
+
+```tsx
+// Support chat — separate session
+<CopilotProvider widgetToken="...">
+  <SupportChat>
+    {/* useMessageHistory({ storageKey: "support-chat" }) */}
+  </SupportChat>
+</CopilotProvider>
+
+// Sales chat — separate session
+<CopilotProvider widgetToken="...">
+  <SalesChat>
+    {/* useMessageHistory({ storageKey: "sales-chat" }) */}
+  </SalesChat>
+</CopilotProvider>
+```
+
+### Full Setup Example
+
+```tsx
+// app/layout.tsx
+import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
+
+export default function RootLayout({ children }) {
+  return (
+    <CopilotProvider
+      widgetToken="YOUR_TOKEN"
+      messageHistory={{
+        strategy: "summary-buffer",
+        maxContextTokens: 128000,
+        compactionThreshold: 0.75,
+        compactionUrl: "/api/compact",
+        persistSession: true,
+        storageKey: "my-app",
+        onCompaction: (e) => console.log("Compacted:", e),
+      }}
+    >
+      {children}
+    </CopilotProvider>
+  );
+}
+```
 
 ---
 
-## Browser Storage
+## Chat History
+
+Save and persist chat threads and messages so users can continue conversations across browser sessions, devices, or after logging out.
+
+### Browser Storage
 
 For simple browser-level persistence without server setup:
 
@@ -24,7 +107,7 @@ For simple browser-level persistence without server setup:
 
 Data is stored in localStorage (~5MB limit, single device only).
 
-### Storage quota and auto-eviction
+#### Storage quota and auto-eviction
 
 When the browser's localStorage quota is exceeded (typically after many long conversations), the SDK automatically evicts the oldest threads to make room for new ones. The most recent threads are always preserved.
 
@@ -43,9 +126,7 @@ This eviction happens silently — users won't see an error. If you need to moni
   Auto-eviction only applies to browser localStorage. Server persistence has no such limit — use it when conversation history must be retained long-term.
 </Callout>
 
----
-
-## Server Persistence
+### Server Persistence
 
 Store threads in your own database for cross-device sync and user accounts.
 
@@ -60,7 +141,7 @@ Store threads in your own database for cross-device sync and user accounts.
 />
 ```
 
-### API Contract
+#### API Contract
 
 Your endpoint must implement these routes:
 
@@ -72,7 +153,7 @@ Your endpoint must implement these routes:
 | `PATCH` | `/api/threads/:id` | Update thread |
 | `DELETE` | `/api/threads/:id` | Delete thread |
 
-### Implementation
+#### Implementation
 
 <Tabs items={['Next.js', 'Express']}>
 <Tab value="Next.js">
@@ -327,4 +408,9 @@ interface WelcomeConfig {
 }
 ```
 
+---
 
+## Related
+
+- [Compaction](/docs/context/compaction) — how the session is summarized
+- [Token Tracking](/docs/context/token-tracking) — monitor context window usage
