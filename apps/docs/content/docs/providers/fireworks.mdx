@@ -1,0 +1,170 @@
+---
+title: Fireworks
+description: Fast open-source model inference — Llama, DeepSeek, Qwen, Mixtral and more
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Fireworks.ai](https://fireworks.ai) is a high-performance inference platform for open-source models. It offers fast, scalable serving for Llama, DeepSeek, Qwen, Mixtral, Gemma and many others through an OpenAI-compatible API.
+
+---
+
+## Setup
+
+### 1. Install packages
+
+```bash
+npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk openai
+```
+
+<Callout type="info">
+Fireworks uses an OpenAI-compatible API, so the `openai` package is the only peer dependency needed.
+</Callout>
+
+### 2. Get API key
+
+Sign up and get your API key at [fireworks.ai](https://fireworks.ai).
+
+### 3. Add environment variable
+
+```bash title=".env.local"
+FIREWORKS_API_KEY=fw_...
+```
+
+### 4. Streaming API route
+
+```ts title="app/api/chat/route.ts"
+import { streamText } from '@yourgpt/llm-sdk';
+import { fireworks } from '@yourgpt/llm-sdk/fireworks';
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+
+  const result = await streamText({
+    model: fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct'),
+    system: 'You are a helpful assistant.',
+    messages,
+  });
+
+  return result.toTextStreamResponse();
+}
+```
+
+### 5. Generate text
+
+```ts
+import { generateText } from '@yourgpt/llm-sdk';
+import { fireworks } from '@yourgpt/llm-sdk/fireworks';
+
+const result = await generateText({
+  model: fireworks('accounts/fireworks/models/deepseek-v3'),
+  prompt: 'Explain quantum entanglement simply.',
+});
+
+console.log(result.text);
+```
+
+---
+
+## Available Models
+
+```ts
+// Llama 3.1
+fireworks('accounts/fireworks/models/llama-v3p1-405b-instruct')  // 405B, 131K ctx
+fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct')   // 70B, 131K ctx
+fireworks('accounts/fireworks/models/llama-v3p1-8b-instruct')    // 8B, fast
+
+// Llama 3.2 Vision
+fireworks('accounts/fireworks/models/llama-v3p2-90b-vision-instruct')  // vision + tools
+fireworks('accounts/fireworks/models/llama-v3p2-11b-vision-instruct')
+
+// DeepSeek
+fireworks('accounts/fireworks/models/deepseek-v3')  // 131K ctx, tools
+fireworks('accounts/fireworks/models/deepseek-r1')  // reasoning model
+
+// Qwen
+fireworks('accounts/fireworks/models/qwen2p5-72b-instruct')        // 32K ctx
+fireworks('accounts/fireworks/models/qwen2p5-coder-32b-instruct')  // code
+
+// Mixtral
+fireworks('accounts/fireworks/models/mixtral-8x22b-instruct')  // 65K ctx
+fireworks('accounts/fireworks/models/mixtral-8x7b-instruct')
+
+// Gemma
+fireworks('accounts/fireworks/models/gemma2-9b-it')
+```
+
+Any model ID listed on [fireworks.ai/models](https://fireworks.ai/models) works — unknown models default to tools enabled with 131K context.
+
+---
+
+## Configuration
+
+```ts
+import { fireworks } from '@yourgpt/llm-sdk/fireworks';
+
+// Explicit API key
+const model = fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct', {
+  apiKey: 'fw_...',
+});
+
+// Custom base URL (e.g. self-hosted or proxy)
+const model = fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct', {
+  baseURL: 'https://my-proxy.example.com/v1',
+});
+```
+
+---
+
+## Tool Calling
+
+Most Fireworks models support tool calling:
+
+```ts
+import { generateText, tool } from '@yourgpt/llm-sdk';
+import { fireworks } from '@yourgpt/llm-sdk/fireworks';
+import { z } from 'zod';
+
+const result = await generateText({
+  model: fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct'),
+  prompt: 'What is the weather in Miami?',
+  tools: {
+    getWeather: tool({
+      description: 'Get weather for a city',
+      parameters: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ temperature: 82, condition: 'sunny' }),
+    }),
+  },
+  maxSteps: 5,
+});
+```
+
+<Callout type="info">
+`deepseek-r1` does not support tool calling — it is a reasoning model. Use `deepseek-v3` or a Llama model for tool use.
+</Callout>
+
+---
+
+## With Copilot UI
+
+```tsx title="app/providers.tsx"
+'use client';
+
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      {children}
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Next Steps
+
+- [OpenRouter](/docs/providers/openrouter) - Access 500+ models with one API key
+- [Fallback Chain](/docs/providers/fallback) - Automatic failover between providers
+- [generateText()](/docs/llm-sdk) - Full LLM SDK reference

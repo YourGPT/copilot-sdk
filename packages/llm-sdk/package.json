@@ -46,6 +46,11 @@
       "import": "./dist/providers/openrouter/index.mjs",
       "require": "./dist/providers/openrouter/index.js"
     },
+    "./fireworks": {
+      "types": "./dist/providers/fireworks/index.d.mts",
+      "import": "./dist/providers/fireworks/index.mjs",
+      "require": "./dist/providers/fireworks/index.js"
+    },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.mjs",
@@ -120,6 +125,7 @@
     "grok",
     "ollama",
     "openrouter",
+    "fireworks",
     "multi-provider",
     "streaming"
   ],
