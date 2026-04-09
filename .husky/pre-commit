@@ -4,7 +4,7 @@
 #
 
 # Add homebrew to PATH for non-interactive shells
-export PATH="/opt/homebrew/bin:$PATH"
+export PATH="/Users/s/Library/pnpm:/opt/homebrew/bin:$PATH"
 
 echo "🔍 Running Gitleaks to check for secrets..."
 
