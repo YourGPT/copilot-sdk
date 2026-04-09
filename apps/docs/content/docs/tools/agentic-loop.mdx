@@ -455,6 +455,47 @@ Listen to agentic loop events:
 
 ---
 
+## AbstractAgentLoop (Framework-Agnostic)
+
+For non-React or custom setups, use `AbstractAgentLoop` directly to manage tool execution, approvals, and cancellation.
+
+```typescript
+import { AbstractAgentLoop } from "@yourgpt/copilot-sdk";
+
+const loop = new AbstractAgentLoop(
+  {
+    maxIterations: 20,
+    tools: [myTool],
+  },
+  {
+    onToolExecutionsChange: (executions) => setExecutions(executions),
+    onToolApprovalRequired: (execution) => showApprovalModal(execution),
+  },
+);
+
+// Register/unregister tools at runtime
+loop.registerTool(weatherTool);
+loop.unregisterTool("old_tool");
+
+// Execute tool calls returned by the LLM
+const results = await loop.executeToolCalls(toolCallsFromLLM);
+
+// Cancel in-flight execution
+loop.cancel();
+```
+
+```typescript
+interface AgentLoopConfig {
+  maxIterations?: number;        // default: 20
+  maxExecutionHistory?: number;  // default: 100
+  tools?: ToolDefinition[];
+}
+```
+
+Tools use reference counting so React StrictMode double-invocations don't leave orphaned registrations.
+
+---
+
 ## Next Steps
 
 - [Tool Approval](/docs/tool-approval) - Add human confirmation

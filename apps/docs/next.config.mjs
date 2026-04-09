@@ -55,12 +55,6 @@ const config = {
         destination: "/docs/chat/storage/session",
         permanent: true,
       },
-      // ── headless/ → customizations/headless ──────────────────────────────
-      {
-        source: "/docs/headless",
-        destination: "/docs/customizations/headless",
-        permanent: true,
-      },
       // ── tools subpages removed ───────────────────────────────────────────
       {
         source: "/docs/tools/deferred-tools",
@@ -86,17 +80,6 @@ const config = {
       {
         source: "/docs/chat/message-actions",
         destination: "/docs/chat/ui",
-        permanent: true,
-      },
-      // ── skills subpages removed ──────────────────────────────────────────
-      {
-        source: "/docs/skills/client",
-        destination: "/docs/skills",
-        permanent: true,
-      },
-      {
-        source: "/docs/skills/server",
-        destination: "/docs/skills",
         permanent: true,
       },
     ];

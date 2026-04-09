@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/llm-sdk",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "description": "AI SDK for building AI Agents with any LLM",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -50,6 +50,11 @@
       "types": "./dist/providers/fireworks/index.d.mts",
       "import": "./dist/providers/fireworks/index.mjs",
       "require": "./dist/providers/fireworks/index.js"
+    },
+    "./togetherai": {
+      "types": "./dist/providers/togetherai/index.d.mts",
+      "import": "./dist/providers/togetherai/index.mjs",
+      "require": "./dist/providers/togetherai/index.js"
     },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
@@ -126,6 +131,8 @@
     "ollama",
     "openrouter",
     "fireworks",
+    "togetherai",
+    "together-ai",
     "multi-provider",
     "streaming"
   ],

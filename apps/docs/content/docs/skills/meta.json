@@ -1,0 +1,5 @@
+{
+  "title": "Skills",
+  "icon": "AiBook",
+  "pages": ["client", "server"]
+}

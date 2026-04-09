@@ -1,0 +1,176 @@
+---
+title: useCopilotEvent
+description: Subscribe to raw stream chunks as they arrive — build any custom real-time UI
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`useCopilotEvent` subscribes to the raw stream chunks flowing through the SDK pipeline. Every token, tool call, thinking delta, and loop iteration fires an event — your handler decides what to do with it.
+
+```ts
+import { useCopilotEvent } from '@yourgpt/copilot-sdk/react'
+```
+
+---
+
+## Signature
+
+```ts
+function useCopilotEvent<T extends StreamChunkType | '*'>(
+  eventType: T,
+  handler: (chunk: ChunkOfType<T>) => void
+): void
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `eventType` | `StreamChunkType \| '*'` | The event type to listen for, or `'*'` for all |
+| `handler` | `(chunk) => void` | Called for each matching chunk. Handler identity is stable via ref — no re-subscription on re-render |
+
+<Callout type="info">
+The handler is always called with the **latest** version via a ref — you don't need to wrap it in `useCallback`. The hook only resubscribes when `eventType` changes.
+</Callout>
+
+---
+
+## Event types
+
+```ts
+type StreamChunkType =
+  | 'message:start'      // assistant message begins — { id }
+  | 'message:delta'      // text token — { content }
+  | 'message:end'        // message turn complete
+  | 'thinking:delta'     // reasoning token — { content }
+  | 'action:start'       // server tool starts — { id, name, hidden? }
+  | 'action:args'        // server tool args streamed — { id, args }
+  | 'action:end'         // server tool finishes — { id, name, result?, error? }
+  | 'tool:status'        // client tool status — { id, name, status }
+  | 'tool:result'        // client tool result — { id, name, result }
+  | 'source:add'         // knowledge source cited — { source }
+  | 'loop:iteration'     // agent loop step — { iteration, maxIterations }
+  | 'loop:complete'      // agent loop done — { iterations, maxIterationsReached? }
+  | '*'                  // every event
+```
+
+All chunks also include `messageId?: string` — the ID of the assistant message being streamed.
+
+---
+
+## Examples
+
+### Thinking text accumulator
+
+```tsx
+function ThinkingDisplay({ messageId }: { messageId: string }) {
+  const [thinking, setThinking] = useState('')
+
+  useCopilotEvent('thinking:delta', (e) => {
+    if (e.messageId !== messageId) return
+    setThinking(prev => prev + e.content)
+  })
+
+  if (!thinking) return null
+  return <div className="thinking-box">{thinking}</div>
+}
+```
+
+---
+
+### Tool execution badge
+
+Show a live "Searching…" indicator while a tool runs:
+
+```tsx
+function ToolBadge() {
+  const [activeTool, setActiveTool] = useState<string | null>(null)
+
+  useCopilotEvent('action:start', (e) => setActiveTool(e.name))
+  useCopilotEvent('action:end',   (e) => setActiveTool(null))
+
+  if (!activeTool) return null
+  return (
+    <div className="tool-badge">
+      <Spinner /> {activeTool.replace(/_/g, ' ')}
+    </div>
+  )
+}
+```
+
+---
+
+### Agent loop progress bar
+
+```tsx
+function LoopProgress() {
+  const [progress, setProgress] = useState(0)
+
+  useCopilotEvent('loop:iteration', (e) => {
+    setProgress(e.iteration / e.maxIterations)
+  })
+
+  useCopilotEvent('loop:complete', () => setProgress(0))
+
+  if (!progress) return null
+  return <progress value={progress} max={1} />
+}
+```
+
+---
+
+### Artifact tracking
+
+Parse `create_artifact` tool results and store them per message:
+
+```tsx
+function useArtifactTracker() {
+  const { messageMeta } = useCopilot()
+
+  useCopilotEvent('action:end', (e) => {
+    if (e.name !== 'create_artifact' || !e.result || !e.messageId) return
+    messageMeta.updateMeta(e.messageId, prev => ({
+      ...prev,
+      artifacts: [...((prev.artifacts as unknown[]) ?? []), e.result]
+    }))
+  })
+}
+```
+
+---
+
+### Catch-all debug logger
+
+```tsx
+useCopilotEvent('*', (e) => {
+  console.log(`[stream] ${e.type}`, e)
+})
+```
+
+---
+
+### Writing to message meta from event handlers
+
+For writing metadata while streaming (before the message component mounts), use the `messageMeta` store directly from `useCopilot()`:
+
+```tsx
+const { messageMeta } = useCopilot()
+
+useCopilotEvent('thinking:delta', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    thinking: ((prev.thinking as string) ?? '') + e.content
+  }))
+})
+```
+
+Then read it in your message component with [`useMessageMeta`](/docs/headless/use-message-meta).
+
+---
+
+## Notes
+
+- Handlers run **synchronously** during the streaming loop — keep them fast. Defer expensive work with `setTimeout` or `startTransition` if needed.
+- The hook is a no-op outside of a `CopilotProvider`.
+- Multiple components can subscribe to the same event type independently.
