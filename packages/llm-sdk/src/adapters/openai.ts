@@ -520,6 +520,11 @@ export class OpenAIAdapter implements LLMAdapter {
                   id: currentToolCall.id,
                   args: currentToolCall.arguments,
                 };
+                yield {
+                  type: "action:end",
+                  id: currentToolCall.id,
+                  name: currentToolCall.name,
+                };
               }
 
               const tcExtraContent = (toolCall as any).extra_content as
@@ -566,6 +571,12 @@ export class OpenAIAdapter implements LLMAdapter {
               id: currentToolCall.id,
               args: currentToolCall.arguments,
             };
+            yield {
+              type: "action:end",
+              id: currentToolCall.id,
+              name: currentToolCall.name,
+            };
+            currentToolCall = null;
           }
         }
       }
