@@ -6,6 +6,8 @@
     "anthropic",
     "google",
     "xai",
+    "openrouter",
+    "fireworks",
     "ollama",
     "custom-provider",
     "fallback"

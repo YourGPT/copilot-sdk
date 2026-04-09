@@ -1009,8 +1009,26 @@ export class Runtime {
     // Accumulate data from stream
     let accumulatedText = "";
     const toolCalls: ToolCallInfo[] = [];
-    let currentToolCall: { id: string; name: string; args: string } | null =
-      null;
+    let currentToolCall: {
+      id: string;
+      name: string;
+      args: string;
+      extra_content?: Record<string, unknown>;
+    } | null = null;
+
+    // Server-side tool results (populated inline during stream, before message:end)
+    const serverToolResults: Array<{
+      id: string;
+      name: string;
+      args: Record<string, unknown>;
+      result: unknown;
+      tool: ToolDefinition;
+    }> = [];
+
+    // Tool context data for server-side tool handlers
+    const toolContextData =
+      "toolContext" in this.config ? this.config.toolContext : undefined;
+
     // Capture usage from adapter for onFinish callback (server-side only)
     let adapterUsage:
       | {
@@ -1044,8 +1062,11 @@ export class Runtime {
     for await (const event of stream) {
       switch (event.type) {
         case "message:start":
-        case "message:end":
           yield event; // Forward to client
+          break;
+
+        case "message:end":
+          yield event; // Natural order — always arrives after action:end from every provider
           break;
 
         case "message:delta":
@@ -1054,7 +1075,14 @@ export class Runtime {
           break;
 
         case "action:start":
-          currentToolCall = { id: event.id, name: event.name, args: "" };
+          currentToolCall = {
+            id: event.id,
+            name: event.name,
+            args: "",
+            ...(event.extra_content
+              ? { extra_content: event.extra_content }
+              : {}),
+          };
           if (debug) {
             console.log(`[Copilot SDK] Tool call started: ${event.name}`);
           }
@@ -1075,6 +1103,9 @@ export class Runtime {
                 id: currentToolCall.id,
                 name: currentToolCall.name,
                 args: parsedArgs,
+                ...(currentToolCall.extra_content
+                  ? { extra_content: currentToolCall.extra_content }
+                  : {}),
               });
             } catch (e) {
               console.error(
@@ -1086,12 +1117,82 @@ export class Runtime {
                 id: currentToolCall.id,
                 name: currentToolCall.name,
                 args: {},
+                ...(currentToolCall.extra_content
+                  ? { extra_content: currentToolCall.extra_content }
+                  : {}),
               });
             }
             currentToolCall = null;
           }
           yield event; // Forward to client
           break;
+
+        case "action:end": {
+          const toolName = (event as StreamEvent & { name?: string }).name;
+          const tool = toolName ? selectedToolMap.get(toolName) : undefined;
+
+          if (tool?.location === "server" && tool.handler) {
+            // Execute server-side tool inline — before message:end arrives naturally
+            // This preserves the correct event order: action:end(result) → message:end
+            if (debug) {
+              console.log(
+                `[Copilot SDK] Executing server-side tool: ${toolName}`,
+              );
+            }
+            const tc = toolCalls.find((t) => t.id === event.id);
+            const args = tc?.args ?? {};
+            const toolContext = buildToolContext(
+              event.id,
+              signal,
+              request.threadId,
+              _httpRequest,
+              toolContextData,
+            );
+            try {
+              const result = await tool.handler(args, toolContext);
+              serverToolResults.push({
+                id: event.id,
+                name: toolName!,
+                args,
+                result,
+                tool,
+              });
+              yield {
+                type: "action:end",
+                id: event.id,
+                name: toolName,
+                result,
+              } as StreamEvent;
+            } catch (error) {
+              const errorResult = {
+                success: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Tool execution failed",
+              };
+              serverToolResults.push({
+                id: event.id,
+                name: toolName!,
+                args,
+                result: errorResult,
+                tool,
+              });
+              yield {
+                type: "action:end",
+                id: event.id,
+                name: toolName,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Tool execution failed",
+              } as StreamEvent;
+            }
+          } else {
+            yield event; // Client-side tool — forward as-is
+          }
+          break;
+        }
 
         case "citation":
           // Forward web search citations to client
@@ -1124,92 +1225,11 @@ export class Runtime {
         );
       }
 
-      // Separate server-side and client-side tool calls
-      const serverToolCalls: ToolCallInfo[] = [];
-      const clientToolCalls: ToolCallInfo[] = [];
-
-      for (const tc of toolCalls) {
-        const tool = selectedToolMap.get(tc.name);
-        if (tool?.location === "server" && tool.handler) {
-          serverToolCalls.push(tc);
-        } else {
-          clientToolCalls.push(tc);
-        }
-      }
-
-      // Execute server-side tools
-      const serverToolResults: Array<{
-        id: string;
-        name: string;
-        args: Record<string, unknown>;
-        result: unknown;
-        tool: ToolDefinition;
-      }> = [];
-
-      // Get toolContext from config (if available)
-      const toolContextData =
-        "toolContext" in this.config ? this.config.toolContext : undefined;
-
-      for (const tc of serverToolCalls) {
-        const tool = selectedToolMap.get(tc.name);
-        if (tool?.handler) {
-          if (debug) {
-            console.log(`[Copilot SDK] Executing server-side tool: ${tc.name}`);
-          }
-
-          // Build rich context for the tool handler
-          const toolContext = buildToolContext(
-            tc.id,
-            signal,
-            request.threadId,
-            _httpRequest,
-            toolContextData,
-          );
-
-          try {
-            const result = await tool.handler(tc.args, toolContext);
-            serverToolResults.push({
-              id: tc.id,
-              name: tc.name,
-              args: tc.args,
-              result,
-              tool,
-            });
-
-            yield {
-              type: "action:end",
-              id: tc.id,
-              name: tc.name,
-              result,
-            } as StreamEvent;
-          } catch (error) {
-            const errorResult = {
-              success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Tool execution failed",
-            };
-            serverToolResults.push({
-              id: tc.id,
-              name: tc.name,
-              args: tc.args,
-              result: errorResult,
-              tool,
-            });
-
-            yield {
-              type: "action:end",
-              id: tc.id,
-              name: tc.name,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Tool execution failed",
-            } as StreamEvent;
-          }
-        }
-      }
+      // Client-side tool calls = those not executed server-side inline
+      const serverToolIds = new Set(serverToolResults.map((r) => r.id));
+      const clientToolCalls = toolCalls.filter(
+        (tc) => !serverToolIds.has(tc.id),
+      );
 
       // If there are server-side tools executed, continue the loop by making another LLM call
       if (serverToolResults.length > 0) {
@@ -1223,14 +1243,18 @@ export class Runtime {
         const assistantWithToolCalls: DoneEventMessage = {
           role: "assistant",
           content: accumulatedText || null,
-          tool_calls: serverToolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.args),
-            },
-          })),
+          tool_calls: serverToolResults.map((tr) => {
+            const tc = toolCalls.find((t) => t.id === tr.id);
+            return {
+              id: tr.id,
+              type: "function" as const,
+              function: {
+                name: tr.name,
+                arguments: JSON.stringify(tr.args),
+              },
+              ...(tc?.extra_content ? { extra_content: tc.extra_content } : {}),
+            };
+          }),
         };
 
         // Create tool result messages (using buildToolResultForAI for AI response control)
@@ -1274,11 +1298,6 @@ export class Runtime {
           })),
         );
 
-        // Signal end of current message turn before continuing
-        // This tells the client to finalize the current assistant message
-        // The recursive call will emit a new message:start for the next turn
-        yield { type: "message:end" } as StreamEvent;
-
         // Continue the agent loop - pass accumulated messages and HTTP request
         for await (const event of this.processChatWithLoop(
           nextRequest,
@@ -1306,6 +1325,7 @@ export class Runtime {
               name: tc.name,
               arguments: JSON.stringify(tc.args),
             },
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           })),
         };
 
@@ -1623,6 +1643,9 @@ export class Runtime {
                   name: tc.name,
                   arguments: JSON.stringify(tc.args),
                 },
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
               })),
             };
 
@@ -1681,6 +1704,9 @@ export class Runtime {
                   name: tc.name,
                   arguments: JSON.stringify(tc.args),
                 },
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
               })),
             };
 
@@ -1922,6 +1948,15 @@ export class Runtime {
           resolvedThreadId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
           storageHealthy = false;
         }
+      }
+
+      // Emit threadId early — before any message events — so the client can
+      // adopt it immediately without waiting for the done chunk
+      if (resolvedThreadId) {
+        yield {
+          type: "thread:created",
+          threadId: resolvedThreadId,
+        } as StreamEvent;
       }
 
       // Save input messages (user message / tool results)

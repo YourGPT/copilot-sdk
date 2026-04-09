@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/llm-sdk",
-  "version": "2.1.4-alpha.2",
+  "version": "2.1.7",
   "description": "AI SDK for building AI Agents with any LLM",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -46,6 +46,11 @@
       "import": "./dist/providers/openrouter/index.mjs",
       "require": "./dist/providers/openrouter/index.js"
     },
+    "./fireworks": {
+      "types": "./dist/providers/fireworks/index.d.mts",
+      "import": "./dist/providers/fireworks/index.mjs",
+      "require": "./dist/providers/fireworks/index.js"
+    },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.mjs",
@@ -65,6 +70,7 @@
   "homepage": "https://copilot-sdk.yourgpt.ai",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md"
   ],
   "scripts": {
@@ -119,6 +125,7 @@
     "grok",
     "ollama",
     "openrouter",
+    "fireworks",
     "multi-provider",
     "streaming"
   ],

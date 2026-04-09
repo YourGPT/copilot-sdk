@@ -107,6 +107,14 @@ const model = google('gemini-2.0-flash');
 import { xai } from '@yourgpt/llm-sdk/xai';
 const model = xai('grok-3-fast');
 
+// OpenRouter (500+ models)
+import { openrouter } from '@yourgpt/llm-sdk/openrouter';
+const model = openrouter('anthropic/claude-3.5-sonnet');
+
+// Fireworks (fast open-source)
+import { fireworks } from '@yourgpt/llm-sdk/fireworks';
+const model = fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct');
+
 // Ollama (Local)
 import { createOllama } from '@yourgpt/llm-sdk/ollama';
 const ollama = createOllama();
@@ -133,6 +141,8 @@ Your tools, UI, and all frontend code remain unchanged. The SDK normalizes respo
 | Anthropic | `@yourgpt/llm-sdk/anthropic` | `@anthropic-ai/sdk` | `anthropic('claude-3-5-sonnet-20241022')` |
 | Google | `@yourgpt/llm-sdk/google` | `openai` | `google('gemini-2.0-flash')` |
 | xAI | `@yourgpt/llm-sdk/xai` | `openai` | `xai('grok-3-fast')` |
+| OpenRouter | `@yourgpt/llm-sdk/openrouter` | `openai` | `openrouter('anthropic/claude-3.5-sonnet')` |
+| Fireworks | `@yourgpt/llm-sdk/fireworks` | `openai` | `fireworks('accounts/fireworks/models/llama-v3p1-70b-instruct')` |
 | Ollama | `@yourgpt/llm-sdk/ollama` | None | `ollama('llama3.1')` |
 
 ---
@@ -161,6 +171,8 @@ Google and xAI use OpenAI-compatible endpoints. Ollama runs locally and needs no
 | Anthropic | Medium | Excellent | $$ | Long context, safety |
 | Google | Fast | Very Good | $ | Multimodal |
 | xAI | Ultra Fast | Excellent | $ | Speed-critical apps |
+| OpenRouter | Varies | Any model | $ | Model flexibility, single key |
+| Fireworks | Ultra Fast | Very Good | $ | Open-source models, cost savings |
 | Ollama | Varies | Good-Excellent | Free | Privacy, offline, development |
 
 ---

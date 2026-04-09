@@ -1109,7 +1109,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
       // Handle message:end mid-stream (server-side agent loop turn completed)
       // This creates separate messages for each turn instead of combining them
-      if (chunk.type === "message:end" && this.streamState?.content) {
+      // Split on text content OR server-side tool executions (no text, tool-only turns)
+      if (
+        chunk.type === "message:end" &&
+        this.streamState !== null &&
+        (this.streamState.content ||
+          (this.streamState.toolResults?.size ?? 0) > 0)
+      ) {
         this.debug("message:end mid-stream", {
           messageId: this.streamState.messageId,
           contentLength: this.streamState.content.length,
@@ -1236,6 +1242,23 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Skip assistant messages whose tool_calls are all server-side (not in pendingIds)
+              // These are already represented in streamed toolExecutions — inserting would duplicate the card
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                (msg.tool_calls as Array<{ id?: string }>).every(
+                  (tc) => !pendingIds.has(tc?.id ?? ""),
+                )
+              )
+                continue;
+              // Skip tool result messages for client-side tools — client already executed them
+              if (
+                msg.role === "tool" &&
+                msg.tool_call_id &&
+                pendingIds.has(msg.tool_call_id)
+              )
+                continue;
               // Everything else (server tool results) needs inserting
               messagesToInsert.push({
                 id: generateMessageId(),
@@ -1387,6 +1410,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
+      // Adopt threadId early — emitted by server before any message events
+      if (chunk.type === "thread:created") {
+        const serverThreadId = chunk.threadId;
+        if (!this.config.threadId || this.config.threadId !== serverThreadId) {
+          this.config.threadId = serverThreadId;
+          this.sessionInitPromise = null;
+          this.setSessionStatus("ready");
+          this.callbacks.onThreadChange?.(serverThreadId);
+        }
+      }
+
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", {
@@ -1401,11 +1435,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         });
 
         // Adopt threadId from server storage adapter (if present)
-        if (
-          chunk.type === "done" &&
-          (chunk as { threadId?: string }).threadId
-        ) {
-          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+        if (chunk.type === "done" && chunk.threadId) {
+          const serverThreadId = chunk.threadId;
           if (
             !this.config.threadId ||
             this.config.threadId !== serverThreadId
