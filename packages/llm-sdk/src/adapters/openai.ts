@@ -442,12 +442,18 @@ export class OpenAIAdapter implements LLMAdapter {
       logProviderPayload("openai", "request payload", payload, request.debug);
       const stream = await client.chat.completions.create(payload);
 
-      let currentToolCall: {
-        id: string;
-        name: string;
-        arguments: string;
-        extra_content?: Record<string, unknown>;
-      } | null = null;
+      // Track tool calls by index — some providers (e.g. Fireworks) repeat the
+      // same tc.id across multiple chunks instead of only sending it once.
+      const toolCallMap = new Map<
+        number,
+        {
+          id: string;
+          name: string;
+          arguments: string;
+          extra_content?: Record<string, unknown>;
+          started: boolean;
+        }
+      >();
 
       // Track citations from web search
       const collectedCitations: Citation[] = [];
@@ -511,39 +517,42 @@ export class OpenAIAdapter implements LLMAdapter {
         // Handle tool calls
         if (delta?.tool_calls) {
           for (const toolCall of delta.tool_calls) {
-            // New tool call
-            if (toolCall.id) {
-              // End previous tool call if any
-              if (currentToolCall) {
-                yield {
-                  type: "action:args",
-                  id: currentToolCall.id,
-                  args: currentToolCall.arguments,
-                };
-              }
+            const idx = (toolCall as any).index ?? 0;
 
+            if (!toolCallMap.has(idx)) {
+              // First chunk for this index — create entry
               const tcExtraContent = (toolCall as any).extra_content as
                 | Record<string, unknown>
                 | undefined;
-
-              currentToolCall = {
-                id: toolCall.id,
+              toolCallMap.set(idx, {
+                id: toolCall.id ?? "",
                 name: toolCall.function?.name || "",
                 arguments: toolCall.function?.arguments || "",
                 ...(tcExtraContent ? { extra_content: tcExtraContent } : {}),
-              };
+                started: false,
+              });
+            } else {
+              // Subsequent chunk — accumulate (same id repeated by some providers)
+              const existing = toolCallMap.get(idx)!;
+              if (toolCall.id && !existing.id) existing.id = toolCall.id;
+              if (toolCall.function?.name && !existing.name)
+                existing.name = toolCall.function.name;
+              if (toolCall.function?.arguments)
+                existing.arguments += toolCall.function.arguments;
+            }
 
+            // Emit action:start once we have the name (may arrive on first or second chunk)
+            const tc = toolCallMap.get(idx)!;
+            if (!tc.started && tc.name) {
+              tc.started = true;
               yield {
                 type: "action:start",
-                id: currentToolCall.id,
-                name: currentToolCall.name,
-                ...(currentToolCall.extra_content
-                  ? { extra_content: currentToolCall.extra_content }
+                id: tc.id,
+                name: tc.name,
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
                   : {}),
               };
-            } else if (currentToolCall && toolCall.function?.arguments) {
-              // Append to current tool call arguments
-              currentToolCall.arguments += toolCall.function.arguments;
             }
           }
         }
@@ -559,14 +568,20 @@ export class OpenAIAdapter implements LLMAdapter {
 
         // Check for finish
         if (choice?.finish_reason) {
-          // Complete any pending tool call
-          if (currentToolCall) {
+          // Flush all accumulated tool calls
+          for (const [, tc] of toolCallMap) {
             yield {
               type: "action:args",
-              id: currentToolCall.id,
-              args: currentToolCall.arguments,
+              id: tc.id,
+              args: tc.arguments,
+            };
+            yield {
+              type: "action:end",
+              id: tc.id,
+              name: tc.name,
             };
           }
+          toolCallMap.clear();
         }
       }
 
