@@ -14,6 +14,7 @@ export default defineConfig({
     "providers/azure/index": "src/providers/azure/index.ts",
     "providers/openrouter/index": "src/providers/openrouter/index.ts",
     "providers/fireworks/index": "src/providers/fireworks/index.ts",
+    "providers/togetherai/index": "src/providers/togetherai/index.ts",
 
     // Legacy adapters
     "adapters/index": "src/adapters/index.ts",
