@@ -25,6 +25,42 @@ Every conversation maintains two parallel views:
 
 When compaction fires, a `CompactionMarker` is injected into the display layer so users can see where summarization happened — but the full history is never deleted.
 
+### Types
+
+```typescript
+interface DisplayMessage extends UIMessage {
+  timestamp: number;
+}
+
+interface CompactionMarker extends DisplayMessage {
+  role: "system";
+  type: "compaction-marker";
+  content: string;
+  summarizedMessageIds: string[];
+  tokensSaved: number;
+}
+
+interface LLMMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}
+```
+
+### Conversion Helpers
+
+```typescript
+import {
+  toDisplayMessage,
+  toLLMMessage,
+  toLLMMessages,
+  keepToolPairsAtomic,
+} from "@yourgpt/copilot-sdk/react";
+```
+
+`keepToolPairsAtomic` ensures that when you slice a window, an `assistant` message with `tool_calls` is never separated from its corresponding tool-result messages.
+
 ---
 
 ## useMessageHistory
@@ -202,3 +238,15 @@ export async function POST(req: Request) {
 <Callout type="info">
 The summary preserves: user goals, technical decisions, tool call outcomes, errors and resolutions, pending tasks.
 </Callout>
+
+---
+
+## Message Grouping
+
+`groupConsecutiveMessages` groups consecutive messages of the same role into visual clusters — useful for custom chat UIs where adjacent user or assistant messages should appear as one block.
+
+```typescript
+import { groupConsecutiveMessages } from "@yourgpt/copilot-sdk/react";
+```
+
+Tool-call pairs are always kept atomic: an assistant message with `tool_calls` is never separated from its corresponding tool-result messages during windowing or pruning.
