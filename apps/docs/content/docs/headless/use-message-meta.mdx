@@ -1,0 +1,230 @@
+---
+title: useMessageMeta
+description: Reactive per-message custom metadata — attach any data to a message ID and react to changes
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`useMessageMeta` is a reactive per-message key-value store. Attach any shape of data to a message ID — any component reading that message ID will re-render when the data changes.
+
+```ts
+import { useMessageMeta } from '@yourgpt/copilot-sdk/react'
+```
+
+It's the storage layer for the headless system. Pair it with [`useCopilotEvent`](/docs/headless/use-copilot-event) to write data during streaming, then read it in your message components.
+
+---
+
+## Signature
+
+```ts
+function useMessageMeta<T extends Record<string, unknown>>(
+  messageId: string | undefined
+): UseMessageMetaReturn<T>
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `messageId` | `string \| undefined` | The message to attach metadata to. Pass `undefined` for a no-op instance (safe for conditional calls) |
+
+### Returns
+
+```ts
+interface UseMessageMetaReturn<T> {
+  /** Current metadata. Empty object if nothing set yet. */
+  meta: T
+
+  /** Replace metadata entirely */
+  setMeta: (meta: T) => void
+
+  /** Update metadata with an updater function */
+  updateMeta: (updater: (prev: T) => T) => void
+}
+```
+
+---
+
+## Examples
+
+### Thinking steps
+
+Define your own shape — the SDK doesn't dictate it:
+
+```tsx
+interface MyMeta {
+  thinking?: string
+  isThinking?: boolean
+}
+
+// Writer — inside useCopilotEvent handler
+const { messageMeta } = useCopilot()
+
+useCopilotEvent('thinking:delta', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    thinking: ((prev.thinking as string) ?? '') + e.content,
+    isThinking: true,
+  }))
+})
+
+useCopilotEvent('message:end', (e) => {
+  messageMeta.updateMeta(e.messageId!, prev => ({
+    ...prev,
+    isThinking: false,
+  }))
+})
+
+// Reader — in your message component
+function AssistantMessage({ message }) {
+  const { meta } = useMessageMeta<MyMeta>(message.id)
+
+  return (
+    <div>
+      {meta.isThinking && <ThinkingIndicator text={meta.thinking} />}
+      <p>{message.content}</p>
+    </div>
+  )
+}
+```
+
+---
+
+### Artifact storage
+
+```tsx
+interface MyMeta {
+  artifacts?: Array<{ type: string; title: string; content: unknown }>
+}
+
+// Writer
+useCopilotEvent('action:end', (e) => {
+  if (e.name !== 'create_artifact' || !e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    artifacts: [...((prev.artifacts as unknown[]) ?? []), e.result]
+  }))
+})
+
+// Reader
+function Message({ message }) {
+  const { meta } = useMessageMeta<MyMeta>(message.id)
+
+  return (
+    <div>
+      <p>{message.content}</p>
+      {meta.artifacts?.map((a, i) => (
+        <ArtifactPreview key={i} artifact={a} />
+      ))}
+    </div>
+  )
+}
+```
+
+---
+
+### Plan approval state
+
+```tsx
+interface MyMeta {
+  planStatus?: 'pending' | 'approved' | 'rejected'
+  plan?: { summary: string; steps: Step[] }
+}
+
+// Writer — called from your tool render function
+const { updateMeta } = useMessageMeta<MyMeta>(messageId)
+updateMeta(prev => ({ ...prev, planStatus: 'pending', plan: planData }))
+
+// Reader
+function Message({ message }) {
+  const { meta, updateMeta } = useMessageMeta<MyMeta>(message.id)
+
+  if (meta.planStatus === 'pending') {
+    return (
+      <PlanCard
+        plan={meta.plan}
+        onApprove={() => updateMeta(p => ({ ...p, planStatus: 'approved' }))}
+        onReject={() => updateMeta(p => ({ ...p, planStatus: 'rejected' }))}
+      />
+    )
+  }
+
+  return <p>{message.content}</p>
+}
+```
+
+---
+
+### Tool progress per message
+
+```tsx
+interface MyMeta {
+  activeTools?: Record<string, 'running' | 'done' | 'error'>
+}
+
+useCopilotEvent('action:start', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    activeTools: { ...((prev.activeTools as object) ?? {}), [e.name]: 'running' }
+  }))
+})
+
+useCopilotEvent('action:end', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    activeTools: {
+      ...((prev.activeTools as object) ?? {}),
+      [e.name]: e.error ? 'error' : 'done'
+    }
+  }))
+})
+
+// Reader
+function Message({ message }) {
+  const { meta } = useMessageMeta<MyMeta>(message.id)
+  const running = Object.entries(meta.activeTools ?? {}).filter(([, v]) => v === 'running')
+
+  return (
+    <div>
+      {running.map(([name]) => <ToolBadge key={name} name={name} />)}
+      <p>{message.content}</p>
+    </div>
+  )
+}
+```
+
+---
+
+## Using `messageMeta` directly
+
+For writing from event handlers (where a hook can't be called), access the store directly from `useCopilot()`:
+
+```tsx
+const { messageMeta } = useCopilot()
+
+// Read
+const meta = messageMeta.getMeta(messageId)
+
+// Write
+messageMeta.setMeta(messageId, { myKey: 'value' })
+
+// Update
+messageMeta.updateMeta(messageId, prev => ({ ...prev, count: (prev.count as number ?? 0) + 1 }))
+```
+
+<Callout type="info">
+`messageMeta` is the same store instance that `useMessageMeta` reads from — writing via `messageMeta.updateMeta()` will cause all `useMessageMeta(messageId)` consumers for that ID to re-render.
+</Callout>
+
+---
+
+## Notes
+
+- `meta` is always an object — never `null` or `undefined`. It starts as `{}`.
+- Metadata is **in-memory only** — it resets when the provider unmounts. For persistence, sync to your own storage inside event handlers.
+- Passing `undefined` as `messageId` returns a no-op instance — safe to call unconditionally.
+- Multiple components can read the same `messageId` — all will re-render on any write.
