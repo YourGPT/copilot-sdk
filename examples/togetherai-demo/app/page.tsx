@@ -3,7 +3,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
 import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
-import { MODEL_GROUPS, ALL_MODELS, DEFAULT_MODEL } from "@/lib/models";
+import {
+  MODEL_GROUPS,
+  ALL_MODELS,
+  DEFAULT_MODEL,
+  FALLBACK_MODELS,
+} from "@/lib/models";
 import {
   ExternalLink,
   Github,
@@ -11,11 +16,13 @@ import {
   Copy,
   Check,
   ChevronDown,
+  Shield,
 } from "lucide-react";
 
 export default function TogetherAIDemo() {
   const [mounted, setMounted] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const [fallbackEnabled, setFallbackEnabled] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -31,8 +38,9 @@ export default function TogetherAIDemo() {
   const runtimeUrl = useMemo(() => {
     const params = new URLSearchParams();
     params.set("model", selectedModel);
+    if (fallbackEnabled) params.set("fallback", "true");
     return `/api/chat?${params.toString()}`;
-  }, [selectedModel]);
+  }, [selectedModel, fallbackEnabled]);
 
   const selectedModelInfo = ALL_MODELS.find((m) => m.id === selectedModel);
 
@@ -92,6 +100,63 @@ export default function TogetherAIDemo() {
           {selectedModelInfo && (
             <p className="mt-2 text-xs text-muted-foreground font-mono truncate">
               {selectedModelInfo.id}
+            </p>
+          )}
+        </div>
+
+        {/* Fallback Chain */}
+        <div className="p-5 border-b border-border">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Fallback Chain
+            </label>
+            <button
+              onClick={() => setFallbackEnabled(!fallbackEnabled)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                fallbackEnabled ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  fallbackEnabled ? "translate-x-4" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+          {fallbackEnabled ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs text-emerald-400">
+                <Shield className="h-3 w-3" />
+                <span>Auto-failover enabled</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                If the primary model fails, the request automatically falls
+                through to the next model in the chain:
+              </p>
+              <div className="mt-2 space-y-1">
+                {FALLBACK_MODELS.map((id, i) => (
+                  <div
+                    key={id}
+                    className={`flex items-center gap-2 text-[11px] font-mono ${
+                      id === selectedModel
+                        ? "text-primary"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    <span className="w-4 text-right text-[10px] opacity-50">
+                      {i + 1}.
+                    </span>
+                    <span className="truncate">
+                      {id === selectedModel ? `${id} (primary)` : id}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Enable to automatically try backup models when the primary model
+              is unavailable or rate-limited.
             </p>
           )}
         </div>
@@ -194,7 +259,7 @@ export default function TogetherAIDemo() {
       {/* Right Side - Chat */}
       <main className="flex-1 min-w-0">
         <CopilotProvider
-          key={selectedModel}
+          key={`${selectedModel}-${fallbackEnabled}`}
           runtimeUrl={runtimeUrl}
           maxIterations={5}
         >
