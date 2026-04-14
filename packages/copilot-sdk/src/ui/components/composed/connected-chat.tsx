@@ -500,6 +500,31 @@ function CopilotChatBase(
         messageToolExecutions = savedExecutions;
       }
 
+      // For the last assistant message during streaming, attach any unmatched
+      // tool executions (created by action:start before tool_calls arrive).
+      // This enables progressive rendering of client tools like generative UI.
+      if (
+        !messageToolExecutions &&
+        m.role === "assistant" &&
+        isLoading &&
+        toolExecutions.length > 0
+      ) {
+        // Find executions not yet matched to any message's tool_calls
+        const allMatchedIds = new Set(
+          messages
+            .filter((msg: UIMessage) => msg.toolCalls)
+            .flatMap((msg: UIMessage) =>
+              (msg.toolCalls || []).map((tc: { id: string }) => tc.id),
+            ),
+        );
+        const unmatchedExecutions = toolExecutions.filter(
+          (exec: ToolExecutionData) => !allMatchedIds.has(exec.id),
+        );
+        if (unmatchedExecutions.length > 0) {
+          messageToolExecutions = unmatchedExecutions;
+        }
+      }
+
       // Filter out hidden tool executions for the message
       const visibleToolExecutions = messageToolExecutions?.filter(
         (exec) => !exec.hidden,

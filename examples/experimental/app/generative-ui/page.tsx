@@ -3,7 +3,6 @@
 import { CopilotProvider } from "@yourgpt/copilot-sdk/react";
 import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 import { useGenerativeUI } from "@yourgpt/copilot-sdk/experimental";
-import { ChartRenderer } from "./chart-renderer";
 import Link from "next/link";
 import "@yourgpt/copilot-sdk/ui/styles.css";
 
@@ -20,15 +19,12 @@ const PROMPT_SUGGESTIONS = [
 ];
 
 function GenerativeUIChatInner() {
-  useGenerativeUI({
-    name: "render_ui",
-    chartRenderer: ChartRenderer,
-  });
+  useGenerativeUI({ name: "render_ui" });
 
   return (
     <CopilotChat
       className="h-full"
-      placeholder="Ask for data, stats, charts, cards…"
+      placeholder="Ask for dashboards, charts, tables, cards…"
       showHeader
       header={{ name: "Generative UI" }}
       loaderVariant="wave"
@@ -182,7 +178,7 @@ export default function GenerativeUIPage() {
           <span className="gui-badge ml-1">Experimental</span>
 
           <div className="ml-auto" style={{ fontSize: 11, color: "#334155" }}>
-            Tables · Stats · Cards · Charts · HTML
+            HTML · Tailwind · Chart.js
           </div>
         </header>
 

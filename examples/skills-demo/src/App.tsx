@@ -6,7 +6,11 @@ import {
   useCallback,
 } from "react";
 import { Drawer } from "vaul";
-import { CopilotProvider, useCopilot } from "@yourgpt/copilot-sdk/react";
+import {
+  CopilotProvider,
+  useCopilot,
+  useTool,
+} from "@yourgpt/copilot-sdk/react";
 import {
   CopilotChat,
   PromptInput,
@@ -37,48 +41,26 @@ const SkillActivityContext = createContext<SkillActivity>({
 
 // ─── Skill Domain Icons ───────────────────────────────────────────────────────
 
-function RevenueIcon() {
+function OnboardingIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M2.5 14L7 8.5L10.5 12L15.5 5"
+      <circle
+        cx="10"
+        cy="6"
+        r="3"
         stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M13 5H15.5V7.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M2 16.5H18"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        opacity="0.3"
-      />
-    </svg>
-  );
-}
-
-function HealthIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M10 16.5C10 16.5 2.5 12 2.5 6.75C2.5 4.68 4.18 3 6.25 3C7.76 3 9.06 3.9 10 5C10.94 3.9 12.24 3 13.75 3C15.82 3 17.5 4.68 17.5 6.75C17.5 12 10 16.5 10 16.5Z"
+        strokeWidth="1.75"
         fill="currentColor"
-        opacity="0.15"
+        fillOpacity="0.12"
+      />
+      <path
+        d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6"
         stroke="currentColor"
         strokeWidth="1.75"
         strokeLinecap="round"
-        strokeLinejoin="round"
       />
       <path
-        d="M6.5 9.5H8.5L10 7L12 12L13.5 9.5H14.5"
+        d="M13.5 10l1.5 1.5L17 9"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
@@ -88,25 +70,27 @@ function HealthIcon() {
   );
 }
 
-function IncidentIcon() {
+function ReviewIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M10 2.5L2 17H18L10 2.5Z"
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.75"
         fill="currentColor"
-        opacity="0.12"
+        fillOpacity="0.08"
+      />
+      <path
+        d="M6.5 10l2.5 2.5L13.5 8"
         stroke="currentColor"
         strokeWidth="1.75"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path
-        d="M10 8.5V11.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <circle cx="10" cy="14.5" r="0.875" fill="currentColor" />
     </svg>
   );
 }
@@ -142,20 +126,16 @@ interface SkillConfig {
 }
 
 const SKILL_CONFIGS: Record<string, SkillConfig> = {
-  "revenue-intelligence": {
+  "employee-onboarding": {
     color: "#0d9488",
     bg: "rgba(13, 148, 136, 0.08)",
-    Icon: RevenueIcon,
+    Icon: OnboardingIcon,
   },
-  "customer-health": {
-    color: "#f59e0b",
-    bg: "rgba(245, 158, 11, 0.08)",
-    Icon: HealthIcon,
-  },
-  "incident-runbook": {
-    color: "#ef4444",
-    bg: "rgba(239, 68, 68, 0.08)",
-    Icon: IncidentIcon,
+
+  "performance-review": {
+    color: "#2563eb",
+    bg: "rgba(37, 99, 235, 0.08)",
+    Icon: ReviewIcon,
   },
 };
 
@@ -217,7 +197,7 @@ function TextShimmer({
 // ─── Tool Renderers ───────────────────────────────────────────────────────────
 
 function SkillLoadedCard({ execution }: ToolRendererProps) {
-  const { setExecutingSkill, addLoadedSkill } =
+  const { setExecutingSkill, addLoadedSkill, loadedSkills } =
     useContext(SkillActivityContext);
 
   const skillName = (execution.args?.name ??
@@ -244,6 +224,14 @@ function SkillLoadedCard({ execution }: ToolRendererProps) {
 
   // Guard phantom completed-without-result double-fire from SDK
   if (execution.status === "completed" && !execution.result) return null;
+
+  // Deduplicate: if this skill is already loaded (from a prior execution), skip the shimmer
+  if (
+    (execution.status === "pending" || execution.status === "executing") &&
+    loadedSkills.has(skillName)
+  ) {
+    return null;
+  }
 
   if (execution.status === "pending" || execution.status === "executing") {
     return (
@@ -303,7 +291,32 @@ function FallbackToolCard({ execution }: ToolRendererProps) {
   );
 }
 
-const toolRenderers = { load_skill: SkillLoadedCard };
+function DateToolCard({ execution }: ToolRendererProps) {
+  if (execution.status === "pending" || execution.status === "executing") {
+    return (
+      <div className="flex items-center gap-1.5 px-0.5 py-1">
+        <CheckCircleIcon className="size-4 shrink-0 text-muted-foreground animate-pulse" />
+        <TextShimmer>Checking current date…</TextShimmer>
+      </div>
+    );
+  }
+  if (execution.status === "error" || execution.status === "failed")
+    return null;
+  const date = (execution.result as { date?: string })?.date ?? "";
+  return (
+    <div className="flex items-center gap-1.5 px-0.5 py-1">
+      <CheckCircleIcon className="size-4 shrink-0 text-emerald-500" />
+      <p className="text-xs text-muted-foreground">
+        Date: <span className="font-medium text-foreground">{date}</span>
+      </p>
+    </div>
+  );
+}
+
+const toolRenderers = {
+  load_skill: SkillLoadedCard,
+  get_current_date: DateToolCard,
+};
 
 // ─── Custom Fixed Input ───────────────────────────────────────────────────────
 // Uses useCopilot() (CopilotProvider-level) instead of useCopilotChatContext()
@@ -330,7 +343,7 @@ function CustomInput() {
         className="custom-prompt-input"
       >
         <PromptInputTextarea
-          placeholder="Ask about revenue, customers, incidents… or say 'design me a payment card'"
+          placeholder="Ask about onboarding, video updates, performance reviews…"
           className="custom-prompt-textarea"
         />
         <PromptInputActions className="custom-prompt-actions">
@@ -359,7 +372,7 @@ const INITIAL_MESSAGES = [
     id: "welcome-1",
     role: "assistant" as const,
     content:
-      "Hey! I'm **Dash Copilot** — your AI assistant for this analytics platform.\n\nI can help you with:\n- **Revenue & MRR** — trends, churn, growth metrics\n- **Customer health** — at-risk accounts, engagement scores\n- **Incidents** — response runbooks, severity triage\n- **UI design** — render payment cards, dashboards, stat grids\n\nJust ask me anything to get started.",
+      "Hey! I'm your **HR Copilot** — your AI assistant for people operations.\n\nI can help you with:\n- **Employee Onboarding** — checklists, Day 1 plans, 30/60/90 milestones\n- **Performance Reviews** — review cycles, calibration, feedback frameworks\n\nJust ask me anything to get started.",
     createdAt: new Date(),
   },
 ];
@@ -388,15 +401,59 @@ function LogoAvatar() {
   );
 }
 
+// ─── Message Debug Logger ─────────────────────────────────────────────────────
+
+function MessageLogger() {
+  const { messages } = useCopilot();
+  useEffect(() => {
+    console.log(
+      `[SDK messages] count=${messages.length}`,
+      messages.map((m) => ({
+        role: m.role,
+        content:
+          typeof m.content === "string"
+            ? m.content.slice(0, 80)
+            : JSON.stringify(m.content).slice(0, 120),
+      })),
+    );
+  }, [messages]);
+  return null;
+}
+
 // ─── Chat Inner ───────────────────────────────────────────────────────────────
 
 function ChatInner() {
+  useTool({
+    name: "get_current_date",
+    description:
+      "Returns today's date and day of week from the client. Use this when the user asks about deadlines, timelines, or scheduling relative to today.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    handler: async () => {
+      const now = new Date();
+      return {
+        date: now.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+        iso: now.toISOString().split("T")[0],
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      };
+    },
+  });
+
   return (
     <div className="h-[600px] my-auto">
+      <MessageLogger />
       <CopilotChat
         className=""
         loaderVariant="typing"
-        placeholder="Ask about revenue, customers, incidents…"
+        placeholder="Ask about onboarding, video updates, performance reviews…"
         toolRenderers={toolRenderers}
         fallbackToolRenderer={FallbackToolCard}
         attachmentsEnabled={false}

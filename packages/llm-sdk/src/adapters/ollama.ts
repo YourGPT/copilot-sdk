@@ -371,6 +371,13 @@ export class OllamaAdapter implements LLMAdapter {
                   id: toolCallId,
                   args: JSON.stringify(toolCall.function?.arguments || {}),
                 };
+
+                // Emit action end to trigger server-side tool execution in runtime
+                yield {
+                  type: "action:end",
+                  id: toolCallId,
+                  name: toolCall.function?.name || "",
+                };
               }
               hasEmittedToolCalls = true;
             }

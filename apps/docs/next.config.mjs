@@ -8,9 +8,78 @@ const config = {
   reactStrictMode: true,
   async redirects() {
     return [
+      // ── Legacy / renamed routes ──────────────────────────────────────────
       {
         source: "/docs/quickstart",
         destination: "/docs/getting-started",
+        permanent: true,
+      },
+      {
+        source: "/docs/multimodal",
+        destination: "/docs/chat/attachments",
+        permanent: true,
+      },
+      {
+        source: "/docs/attachments",
+        destination: "/docs/chat/attachments",
+        permanent: true,
+      },
+      {
+        source: "/docs/chat-history",
+        destination: "/docs/chat/storage/chat-history",
+        permanent: true,
+      },
+      {
+        source: "/docs/smart-ai-context",
+        destination: "/docs/advanced",
+        permanent: true,
+      },
+      // ── context/ → advanced/ ─────────────────────────────────────────────
+      {
+        source: "/docs/context",
+        destination: "/docs/advanced",
+        permanent: true,
+      },
+      {
+        source: "/docs/context/compaction",
+        destination: "/docs/advanced/compaction",
+        permanent: true,
+      },
+      {
+        source: "/docs/context/token-tracking",
+        destination: "/docs/advanced/token-tracking",
+        permanent: true,
+      },
+      {
+        source: "/docs/context/session",
+        destination: "/docs/chat/storage/session",
+        permanent: true,
+      },
+      // ── tools subpages removed ───────────────────────────────────────────
+      {
+        source: "/docs/tools/deferred-tools",
+        destination: "/docs/tools",
+        permanent: true,
+      },
+      {
+        source: "/docs/tools/hidden-tools",
+        destination: "/docs/tools",
+        permanent: true,
+      },
+      // ── chat/* pages moved (our restructuring) ───────────────────────────
+      {
+        source: "/docs/chat/generative-ui",
+        destination: "/docs/generative-ui",
+        permanent: true,
+      },
+      {
+        source: "/docs/chat/branching",
+        destination: "/docs/advanced/branching",
+        permanent: true,
+      },
+      {
+        source: "/docs/chat/message-actions",
+        destination: "/docs/chat/ui",
         permanent: true,
       },
     ];

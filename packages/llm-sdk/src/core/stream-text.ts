@@ -99,6 +99,22 @@ export async function streamText(
               yield { type: "text-delta", text: chunk.text };
               break;
 
+            case "tool-call-start":
+              yield {
+                type: "tool-call-start",
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+              };
+              break;
+
+            case "tool-call-delta":
+              yield {
+                type: "tool-call-delta",
+                toolCallId: chunk.toolCallId,
+                argsText: chunk.argsText,
+              };
+              break;
+
             case "tool-call":
               toolCalls.push(chunk.toolCall);
               yield {

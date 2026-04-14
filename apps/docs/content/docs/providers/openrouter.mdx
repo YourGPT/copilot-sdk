@@ -1,0 +1,189 @@
+---
+title: OpenRouter
+description: Access 500+ models from any provider through a single API key
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[OpenRouter](https://openrouter.ai) is a unified API gateway that gives you access to 500+ models from 60+ providers — OpenAI, Anthropic, Google, Meta, Mistral, and more — through a single endpoint and one API key.
+
+---
+
+## Setup
+
+### 1. Install packages
+
+```bash
+npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk openai
+```
+
+### 2. Get API key
+
+Sign up at [openrouter.ai](https://openrouter.ai) and create an API key.
+
+### 3. Add environment variable
+
+```bash title=".env.local"
+OPENROUTER_API_KEY=sk-or-...
+```
+
+### 4. Streaming API route
+
+```ts title="app/api/chat/route.ts"
+import { streamText } from '@yourgpt/llm-sdk';
+import { openrouter } from '@yourgpt/llm-sdk/openrouter';
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+
+  const result = await streamText({
+    model: openrouter('anthropic/claude-3.5-sonnet'),
+    system: 'You are a helpful assistant.',
+    messages,
+  });
+
+  return result.toTextStreamResponse();
+}
+```
+
+### 5. Generate text
+
+```ts
+import { generateText } from '@yourgpt/llm-sdk';
+import { openrouter } from '@yourgpt/llm-sdk/openrouter';
+
+const result = await generateText({
+  model: openrouter('openai/gpt-4o'),
+  prompt: 'Summarize the latest AI research.',
+});
+
+console.log(result.text);
+```
+
+---
+
+## Model IDs
+
+OpenRouter model IDs follow the format `provider/model-name`:
+
+```ts
+// OpenAI
+openrouter('openai/gpt-4o')
+openrouter('openai/gpt-4o-mini')
+openrouter('openai/o3-mini')
+
+// Anthropic
+openrouter('anthropic/claude-3.5-sonnet')
+openrouter('anthropic/claude-3.5-haiku')
+openrouter('anthropic/claude-3-opus')
+
+// Google
+openrouter('google/gemini-2.0-flash-001')
+openrouter('google/gemini-2.0-pro-exp-02-05')
+
+// Meta Llama
+openrouter('meta-llama/llama-3.1-405b-instruct')
+openrouter('meta-llama/llama-3.1-70b-instruct')
+
+// Mistral
+openrouter('mistralai/mistral-large')
+openrouter('mistralai/mixtral-8x22b-instruct')
+
+// DeepSeek
+openrouter('deepseek/deepseek-chat')
+openrouter('deepseek/deepseek-r1')
+
+// Auto routing — OpenRouter picks the best model
+openrouter('openrouter/auto')
+```
+
+Browse the full list at [openrouter.ai/models](https://openrouter.ai/models).
+
+---
+
+## Configuration
+
+```ts
+import { openrouter } from '@yourgpt/llm-sdk/openrouter';
+
+// With site attribution (improves model availability)
+const model = openrouter('anthropic/claude-3.5-sonnet', {
+  apiKey: 'sk-or-...',
+  siteUrl: 'https://myapp.com',
+  appName: 'My App',
+});
+
+// Provider preferences — control which underlying providers are used
+const model = openrouter('openai/gpt-4o', {
+  providerPreferences: {
+    allow: ['openai'],        // Only use OpenAI directly
+    order: 'latency',         // 'price' | 'latency' | 'throughput'
+  },
+});
+```
+
+---
+
+## Fetch available models
+
+```ts
+import { fetchOpenRouterModels, searchOpenRouterModels } from '@yourgpt/llm-sdk/openrouter';
+
+// Get all 500+ models
+const models = await fetchOpenRouterModels();
+
+// Search by name or provider
+const claudeModels = await searchOpenRouterModels('claude');
+const gptModels = await searchOpenRouterModels('gpt-4');
+```
+
+---
+
+## Tool Calling
+
+OpenRouter passes tool calls through to the underlying model. Support varies by model — most frontier models handle it well:
+
+```ts
+import { generateText, tool } from '@yourgpt/llm-sdk';
+import { openrouter } from '@yourgpt/llm-sdk/openrouter';
+import { z } from 'zod';
+
+const result = await generateText({
+  model: openrouter('openai/gpt-4o'),
+  prompt: 'What is the weather in Paris?',
+  tools: {
+    getWeather: tool({
+      description: 'Get weather for a city',
+      parameters: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ temperature: 18, condition: 'cloudy' }),
+    }),
+  },
+  maxSteps: 5,
+});
+```
+
+---
+
+## With Copilot UI
+
+```tsx title="app/providers.tsx"
+'use client';
+
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      {children}
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Next Steps
+
+- [Fireworks](/docs/providers/fireworks) - Fast open-source model inference
+- [Fallback Chain](/docs/providers/fallback) - Automatic failover between providers
+- [generateText()](/docs/llm-sdk) - Full LLM SDK reference

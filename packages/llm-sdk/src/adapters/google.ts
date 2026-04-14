@@ -447,6 +447,11 @@ export class GoogleAdapter implements LLMAdapter {
                 id: currentToolCall.id,
                 args: JSON.stringify(currentToolCall.args),
               };
+              yield {
+                type: "action:end",
+                id: currentToolCall.id,
+                name: currentToolCall.name,
+              };
             }
 
             currentToolCall = {
@@ -472,6 +477,12 @@ export class GoogleAdapter implements LLMAdapter {
               id: currentToolCall.id,
               args: JSON.stringify(currentToolCall.args),
             };
+            yield {
+              type: "action:end",
+              id: currentToolCall.id,
+              name: currentToolCall.name,
+            };
+            currentToolCall = null;
           }
         }
 

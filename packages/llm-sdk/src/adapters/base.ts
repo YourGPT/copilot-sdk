@@ -59,7 +59,13 @@ export interface CompletionResult {
   /** Text content */
   content: string;
   /** Tool calls */
-  toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    /** Provider-specific metadata (e.g. Gemini 3 thought_signature in extra_content.google) */
+    extra_content?: Record<string, unknown>;
+  }>;
   /** Thinking content (if extended thinking enabled) */
   thinking?: string;
   /** Token usage for billing/tracking */
@@ -767,11 +773,13 @@ export function formatMessagesForOpenAI(
         content: messageToOpenAIContent(msg),
       });
     } else if (msg.role === "assistant") {
+      const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
       const assistantMsg: OpenAIMessage = {
         role: "assistant",
-        content: msg.content,
+        // Gemini/xAI (OpenAI-compatible) reject content: "" on assistant messages with tool_calls
+        content: hasToolCalls ? msg.content || null : msg.content,
       };
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
+      if (hasToolCalls) {
         (assistantMsg as { tool_calls: typeof msg.tool_calls }).tool_calls =
           msg.tool_calls;
       }

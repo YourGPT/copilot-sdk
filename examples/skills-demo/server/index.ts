@@ -71,15 +71,14 @@ console.log(`Using model: ${model}`);
 // ============================================
 
 const systemPrompt = buildSystemPrompt(
-  `You are the AI Copilot for Dash, a SaaS analytics and operations platform.
-You assist the team with revenue analysis, customer health monitoring, and incident response.
+  `You are the HR Copilot for an HR management platform.
+You assist HR teams and managers with people operations, employee lifecycle, and team communication.
 
 When a user asks about:
-- Revenue, MRR, churn, growth, or financial metrics → load the "revenue-intelligence" skill
-- Customer risk, health scores, at-risk accounts, or engagement → load the "customer-health" skill
-- Incidents, outages, production issues, or on-call → load the "incident-runbook" skill
+- New hire setup, onboarding checklists, Day 1 plans, buddy programs, or 30/60/90 milestones → load the "employee-onboarding" skill
+- Performance reviews, self-assessments, calibration, ratings, feedback, or promotions → load the "performance-review" skill
 
-Always load the relevant skill before responding.`,
+Load the relevant skill before responding — but only if you have not already loaded it earlier in this conversation. If the skill result is already present in the conversation history, use it directly without calling load_skill again.`,
 );
 
 const runtime = createRuntime({
@@ -97,7 +96,7 @@ runtime.registerTool({
   inputSchema: tools.load_skill.parameters,
   handler: async (params: { name: string }) => {
     // Delay so the shimmer animation is visible in the UI
-    await new Promise((r) => setTimeout(r, 2200));
+    await new Promise((r) => setTimeout(r, 1200));
     // Check dynamicSkills first before falling back to file-based skills
     const dynamic = dynamicSkills.find((s) => s.name === params.name);
     if (dynamic) {

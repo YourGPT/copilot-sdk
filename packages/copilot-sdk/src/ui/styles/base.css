@@ -301,3 +301,24 @@
   color: hsl(var(--muted-foreground));
 }
 
+/* ── Streamdown code block overrides ──────────────────────────────────────────
+ * @streamdown/code injects hardcoded Tailwind classes (bg-sidebar, bg-background)
+ * which can conflict with the host app's theme. We override them here using
+ * SDK-scoped CSS variables so consumers can customise via --csdk-code-* vars.
+ * --------------------------------------------------------------------------- */
+
+.csdk-message-content [data-streamdown="code-block"] {
+  background: var(--csdk-code-bg, hsl(var(--muted)));
+  border-color: var(--csdk-code-border, hsl(var(--border)));
+  border-radius: var(--csdk-code-radius, 0.5rem);
+}
+
+.csdk-message-content [data-streamdown="code-block-body"] {
+  background: var(--csdk-code-body-bg, hsl(var(--card)));
+  border-color: var(--csdk-code-border, hsl(var(--border)));
+}
+
+.csdk-message-content [data-streamdown="code-block-header"] {
+  color: hsl(var(--muted-foreground));
+}
+

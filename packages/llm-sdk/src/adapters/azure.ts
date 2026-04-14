@@ -225,6 +225,11 @@ export class AzureAdapter implements LLMAdapter {
                   id: currentToolCall.id,
                   args: currentToolCall.arguments,
                 };
+                yield {
+                  type: "action:end",
+                  id: currentToolCall.id,
+                  name: currentToolCall.name,
+                };
               }
 
               currentToolCall = {
@@ -254,6 +259,12 @@ export class AzureAdapter implements LLMAdapter {
               id: currentToolCall.id,
               args: currentToolCall.arguments,
             };
+            yield {
+              type: "action:end",
+              id: currentToolCall.id,
+              name: currentToolCall.name,
+            };
+            currentToolCall = null;
           }
         }
       }

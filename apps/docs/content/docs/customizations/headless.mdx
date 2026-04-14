@@ -1,0 +1,256 @@
+---
+title: Headless Copilot
+description: Build fully custom chat UIs using raw SDK primitives — no built-in components required
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The SDK ships two layers. The **headless layer** lets you build your own UI from scratch using two low-level primitives — no built-in components involved.
+
+| Layer | What it is | When to use |
+|---|---|---|
+| UI layer | `<CopilotChat>`, built-in components | Get running fast |
+| **Headless layer** | Raw hooks + stream events | Build your own UI |
+
+---
+
+## Primitives
+
+### `useCopilotEvent`
+
+Subscribe to raw stream chunks as they flow through the pipeline.
+
+```ts
+import { useCopilotEvent } from '@yourgpt/copilot-sdk/react'
+
+function useCopilotEvent<T extends StreamChunkType | '*'>(
+  eventType: T,
+  handler: (chunk: ChunkOfType<T>) => void
+): void
+```
+
+The handler is always called with its **latest** version via a ref — no `useCallback` needed. Resubscribes only when `eventType` changes.
+
+#### Event types
+
+| Event | When | Key fields |
+|---|---|---|
+| `message:start` | New assistant message begins | `id` |
+| `message:delta` | Text token arrives | `content`, `messageId` |
+| `message:end` | Message turn complete | `messageId` |
+| `thinking:delta` | Reasoning token | `content`, `messageId` |
+| `action:start` | Server tool begins | `id`, `name`, `messageId` |
+| `action:args` | Tool args streamed | `id`, `args`, `messageId` |
+| `action:end` | Server tool completes | `id`, `name`, `result`, `messageId` |
+| `tool:status` | Client tool status change | `id`, `name`, `status`, `messageId` |
+| `tool:result` | Client tool result | `id`, `name`, `result`, `messageId` |
+| `source:add` | Knowledge source cited | `source`, `messageId` |
+| `loop:iteration` | Agent loop step | `iteration`, `maxIterations`, `messageId` |
+| `loop:complete` | Agent loop finished | `iterations`, `maxIterationsReached`, `messageId` |
+| `*` | Every event | all fields |
+
+---
+
+### `useMessageMeta`
+
+A reactive per-message key-value store. Attach any shape of data to a message ID — every component reading that ID re-renders on write.
+
+```ts
+import { useMessageMeta } from '@yourgpt/copilot-sdk/react'
+
+function useMessageMeta<T extends Record<string, unknown>>(
+  messageId: string | undefined
+): {
+  meta: T
+  setMeta: (meta: T) => void
+  updateMeta: (updater: (prev: T) => T) => void
+}
+```
+
+Passing `undefined` as `messageId` returns a no-op instance — safe for conditional use. `meta` is always an object, never `null`.
+
+---
+
+## Usage pattern
+
+Write metadata from event handlers, read it in message components:
+
+```tsx
+// 1. Write during streaming — use messageMeta store directly from useCopilot()
+const { messageMeta } = useCopilot()
+
+useCopilotEvent('thinking:delta', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    thinking: ((prev.thinking as string) ?? '') + e.content,
+  }))
+})
+
+useCopilotEvent('action:start', (e) => {
+  if (!e.messageId) return
+  messageMeta.updateMeta(e.messageId, prev => ({
+    ...prev,
+    activeTools: { ...(prev.activeTools as object ?? {}), [e.name]: 'running' }
+  }))
+})
+
+// 2. Read in your message component
+interface MyMeta {
+  thinking?: string
+  activeTools?: Record<string, 'running' | 'done'>
+}
+
+function Message({ message }) {
+  const { meta } = useMessageMeta<MyMeta>(message.id)
+
+  return (
+    <div>
+      {meta.thinking && <div className="thinking">{meta.thinking}</div>}
+      {Object.entries(meta.activeTools ?? {})
+        .filter(([, v]) => v === 'running')
+        .map(([name]) => <span key={name}>⚙ {name}</span>)
+      }
+      <p>{message.content}</p>
+    </div>
+  )
+}
+```
+
+<Callout type="info">
+Use `messageMeta` from `useCopilot()` inside event handlers (where React hooks can't be called). Use `useMessageMeta(id)` inside components for reactive reads.
+</Callout>
+
+---
+
+## Direct store access
+
+For non-component code, access the store imperatively:
+
+```tsx
+const { messageMeta } = useCopilot()
+
+messageMeta.getMeta(messageId)
+messageMeta.setMeta(messageId, { key: 'value' })
+messageMeta.updateMeta(messageId, prev => ({ ...prev, count: (prev.count as number ?? 0) + 1 }))
+```
+
+---
+
+## Notes
+
+- Metadata is **in-memory only** — resets when the provider unmounts. Sync to your own storage in event handlers if you need persistence.
+- Multiple components can read the same `messageId` — all re-render on any write.
+- Handlers in `useCopilotEvent` run synchronously during streaming — keep them fast.
+
+---
+
+## Attachment Primitives
+
+Build custom file upload UIs with the `useAttachments` hook and companion components.
+
+### `useAttachments`
+
+Core hook for file upload management — handles validation, upload progress, cancellation, retry, and drag-drop.
+
+```tsx
+import { useAttachments, AttachmentStrip, DropZoneOverlay } from "@yourgpt/copilot-sdk/ui";
+
+function MyCustomInput() {
+  const { send } = useCopilotChatContext();
+
+  const {
+    attachments,           // PendingAttachment[] — current files
+    addFiles,              // (files: FileList | File[]) => void
+    removeAttachment,      // (id: string) => void
+    cancelUpload,          // (id: string) => void
+    retryUpload,           // (id: string) => void
+    clearAll,              // () => void
+    getReadyAttachments,   // () => MessageAttachment[]
+    hasAttachments,        // boolean
+    isUploading,           // boolean
+    canSend,               // boolean (has ready files, none uploading)
+    dragHandlers,          // spread on container for drag-drop
+    isDragging,            // boolean
+    openFilePicker,        // () => void
+    fileInputRef,          // ref for hidden <input type="file">
+    onFileInputChange,     // onChange handler for file input
+  } = useAttachments({
+    // Server upload URL (string), URL + options (object), or custom handler (function)
+    upload: "/api/copilot/upload",
+    maxFiles: 5,                                    // default: 5
+    maxFileSize: 10 * 1024 * 1024,                  // default: 10MB
+    allowedFileTypes: ["image/*", "application/pdf"], // default
+  });
+
+  const handleSend = (text: string) => {
+    const files = getReadyAttachments();
+    send(text, files.length ? files : undefined);
+    clearAll();
+  };
+
+  return (
+    <div {...dragHandlers} className="relative">
+      <DropZoneOverlay isDragging={isDragging} />
+      <AttachmentStrip
+        attachments={attachments}
+        onRemove={removeAttachment}
+        onRetry={retryUpload}
+      />
+      <textarea ... />
+      <button onClick={openFilePicker}>Attach</button>
+      <input ref={fileInputRef} type="file" hidden multiple onChange={onFileInputChange} />
+      <button onClick={() => handleSend(text)}>Send</button>
+    </div>
+  );
+}
+```
+
+#### Config
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `upload` | `string \| object \| function` | — | Upload handler (see [Attachments](/docs/attachments)) |
+| `maxFiles` | `number` | `5` | Maximum concurrent files |
+| `maxFileSize` | `number` | `10MB` | Max file size in bytes |
+| `allowedFileTypes` | `string[]` | `["image/*", "application/pdf", ...]` | Allowed MIME types |
+
+#### PendingAttachment
+
+Each item in the `attachments` array:
+
+```ts
+{
+  id: string;
+  file: File;
+  preview?: string;       // object URL for image thumbnails
+  status: "uploading" | "ready" | "error";
+  progress: number;       // 0-100
+  error?: string;
+  attachment?: MessageAttachment; // final result when ready
+}
+```
+
+### `AttachmentStrip`
+
+Compact horizontal strip showing pending attachments. Each file shows a thumbnail (images) or type icon, filename, upload progress bar, and remove/retry button.
+
+```tsx
+<AttachmentStrip
+  attachments={attachments}
+  onRemove={removeAttachment}
+  onRetry={retryUpload}
+  className="mb-2"
+/>
+```
+
+### `DropZoneOverlay`
+
+Overlay that appears when files are dragged over the container. Spread `dragHandlers` from `useAttachments` on the parent element.
+
+```tsx
+<div {...dragHandlers} className="relative">
+  <DropZoneOverlay isDragging={isDragging} />
+  {/* your input */}
+</div>
+```

@@ -9,6 +9,29 @@ import type { StreamChunk } from "../../interfaces";
 import type { StreamingMessageState } from "../../types/index";
 
 /**
+ * Try to extract key-value pairs from an incomplete JSON string.
+ * Handles streaming scenarios where JSON is cut off mid-value.
+ * Returns null if nothing useful can be extracted.
+ */
+function parsePartialJson(partial: string): Record<string, unknown> | null {
+  if (!partial || !partial.startsWith("{")) return null;
+
+  const result: Record<string, unknown> = {};
+  // Match complete "key": "value" pairs (string values)
+  const stringPairs = partial.matchAll(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
+  for (const m of stringPairs) {
+    result[m[1]] = m[2];
+  }
+  // If the last string value is still open (no closing quote), extract the partial value
+  // Pattern: "key": "value-without-closing-quote <END>
+  const openString = partial.match(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)$/);
+  if (openString) {
+    result[openString[1]] = openString[2];
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
  * Process a stream chunk and return updated state
  *
  * This is a pure function - it takes state and chunk,
@@ -87,13 +110,19 @@ export function processStreamChunk(
       const existing = state.toolResults.get(chunk.id);
       if (existing) {
         const newResults = new Map(state.toolResults);
+        let parsed: Record<string, unknown> | null = null;
         try {
+          parsed = JSON.parse(chunk.args);
+        } catch {
+          // Partial JSON from streaming — try to extract string values
+          // This enables progressive rendering of tool args (e.g. generative UI html)
+          parsed = parsePartialJson(chunk.args);
+        }
+        if (parsed) {
           newResults.set(chunk.id, {
             ...existing,
-            args: JSON.parse(chunk.args),
+            args: parsed,
           });
-        } catch {
-          // Keep existing args if parse fails
         }
         return { ...state, toolResults: newResults };
       }

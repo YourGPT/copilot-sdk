@@ -1,5 +1,4 @@
 {
   "title": "Built-in Tools",
-  "icon": "Package",
   "pages": ["web-search", "screenshot", "console"]
 }

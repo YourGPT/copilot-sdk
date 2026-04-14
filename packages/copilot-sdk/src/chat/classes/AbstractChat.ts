@@ -1243,7 +1243,50 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Skip most chunks if streamState is null.
       // EXCEPTION: after a mid-stream message:end the server can still send
       // tool_calls + done for client-side tool dispatch. Handle those directly.
+      // Also handle action:start/action:args — these stream during tool call
+      // generation and are needed for progressive rendering of client tools.
       if (!this.streamState) {
+        if (chunk.type === "action:start") {
+          this.callbacks.onServerToolStart?.({
+            id: chunk.id,
+            name: chunk.name,
+            hidden: chunk.hidden,
+          });
+          continue;
+        }
+        if (chunk.type === "action:args") {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(chunk.args);
+          } catch {
+            try {
+              const partial = chunk.args;
+              if (partial && partial.startsWith("{")) {
+                const extracted: Record<string, unknown> = {};
+                const pairs = partial.matchAll(
+                  /"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+                );
+                for (const m of pairs) extracted[m[1]] = m[2];
+                const open = partial.match(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)$/);
+                if (open) extracted[open[1]] = open[2];
+                if (Object.keys(extracted).length > 0) args = extracted;
+              }
+            } catch {
+              // Keep empty args
+            }
+          }
+          // action:args doesn't carry name — use id as fallback
+          const execName = chunk.id;
+          this.callbacks.onServerToolArgs?.({
+            id: chunk.id,
+            name: execName,
+            args,
+          });
+          continue;
+        }
+        if (chunk.type === "action:end") {
+          continue; // Skip — client tools handle completion via executeToolCalls
+        }
         if (chunk.type === "tool_calls") {
           // Store for emission when done arrives. Do NOT update message state
           // here — done.messages carries the assistant message with tool_calls
@@ -1303,6 +1346,23 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Skip assistant messages whose tool_calls are all server-side (not in pendingIds)
+              // These are already represented in streamed toolExecutions — inserting would duplicate the card
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                (msg.tool_calls as Array<{ id?: string }>).every(
+                  (tc) => !pendingIds.has(tc?.id ?? ""),
+                )
+              )
+                continue;
+              // Skip tool result messages for client-side tools — client already executed them
+              if (
+                msg.role === "tool" &&
+                msg.tool_call_id &&
+                pendingIds.has(msg.tool_call_id)
+              )
+                continue;
               // Everything else (server tool results) needs inserting
               const insertedMsg = {
                 id: generateMessageId(),
@@ -1409,7 +1469,25 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         try {
           args = JSON.parse(chunk.args);
         } catch {
-          // Keep empty args
+          // Partial JSON from streaming — try to extract string values
+          // This enables progressive rendering (e.g. generative UI html)
+          try {
+            const partial = chunk.args;
+            if (partial && partial.startsWith("{")) {
+              const extracted: Record<string, unknown> = {};
+              // Match complete "key": "value" pairs
+              const pairs = partial.matchAll(
+                /"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+              );
+              for (const m of pairs) extracted[m[1]] = m[2];
+              // Match open string value at end (no closing quote)
+              const open = partial.match(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)$/);
+              if (open) extracted[open[1]] = open[2];
+              if (Object.keys(extracted).length > 0) args = extracted;
+            }
+          } catch {
+            // Keep empty args
+          }
         }
         // Get name from toolResults (set by action:start)
         const existingResult = this.streamState?.toolResults.get(chunk.id);
@@ -1460,6 +1538,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
+      // Adopt threadId early — emitted by server before any message events
+      if (chunk.type === "thread:created") {
+        const serverThreadId = chunk.threadId;
+        if (!this.config.threadId || this.config.threadId !== serverThreadId) {
+          this.config.threadId = serverThreadId;
+          this.sessionInitPromise = null;
+          this.setSessionStatus("ready");
+          this.callbacks.onThreadChange?.(serverThreadId);
+        }
+      }
+
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", {
@@ -1474,11 +1563,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         });
 
         // Adopt threadId from server storage adapter (if present)
-        if (
-          chunk.type === "done" &&
-          (chunk as { threadId?: string }).threadId
-        ) {
-          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+        if (chunk.type === "done" && chunk.threadId) {
+          const serverThreadId = chunk.threadId;
           if (
             !this.config.threadId ||
             this.config.threadId !== serverThreadId

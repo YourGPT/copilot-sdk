@@ -1,7 +1,6 @@
 ---
-title: Frontend Tools
+title: Client Tools
 description: Build client-side tools that run in the browser
-icon: MonitorSmartphone
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -151,6 +150,50 @@ useTools({
 <Callout type="info">
 Hidden tools are useful for navigation, analytics, or background operations that shouldn't clutter the chat UI.
 </Callout>
+
+---
+
+## Deferred Loading
+
+Mark tools with `deferLoading: true` to exclude them from every request. They are injected automatically only when the user's message semantically matches the tool — reducing token cost for large tool sets.
+
+```typescript
+useTool({
+  name: "run_sql_query",
+  description: "Execute a SQL query against the database",
+  deferLoading: true,
+  searchKeywords: ["sql", "query", "database", "table"],
+  inputSchema: z.object({ query: z.string() }),
+  handler: async ({ query }) => db.execute(query),
+});
+```
+
+Add `searchKeywords` alongside `description` for more accurate relevance matching.
+
+---
+
+## Fallback Renderer
+
+`<CopilotChat>` resolves a renderer for each tool call using this priority chain:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | `toolRenderers[toolName]` | Per-tool renderer on `<CopilotChat>` |
+| 2 | `tool.render` | Render function on the tool definition |
+| 3 | `mcpToolRenderer` | Catch-all for MCP tools |
+| 4 | `fallbackToolRenderer` | Catch-all for any unmatched tool |
+| 5 | Built-in default | Generic execution card |
+
+```tsx
+<CopilotChat
+  toolRenderers={{
+    get_weather: ({ args, result }) => <WeatherCard {...result} />,
+  }}
+  fallbackToolRenderer={({ toolName, args, result }) => (
+    <pre>{JSON.stringify(result, null, 2)}</pre>
+  )}
+/>
+```
 
 ---
 
