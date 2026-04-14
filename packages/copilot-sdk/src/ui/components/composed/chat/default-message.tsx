@@ -35,11 +35,13 @@ function FloatingActions({
   role,
   align = "left",
   onEdit,
+  className,
 }: {
   message: ChatMessage;
   role: "user" | "assistant";
   align?: "left" | "right";
   onEdit?: () => void;
+  className?: string;
 }) {
   const ctx = useMessageActionsContext();
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
@@ -51,9 +53,10 @@ function FloatingActions({
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 mt-1",
+        "csdk-message-actions flex items-center gap-0.5",
         "opacity-0 group-hover/message:opacity-100 transition-opacity duration-150",
         align === "right" ? "justify-end" : "justify-start",
+        className,
       )}
     >
       {actions.map((action) => {
@@ -72,7 +75,9 @@ function FloatingActions({
             title={action.tooltip}
             aria-label={action.tooltip}
             className={cn(
-              "flex items-center justify-center size-6 rounded-md",
+              "csdk-message-action-btn",
+              action.id === "copy" && "csdk-copy-btn",
+              "flex items-center justify-center size-6 rounded-md cursor-pointer",
               "text-muted-foreground hover:text-foreground hover:bg-muted",
               "transition-colors",
               action.className,
@@ -663,7 +668,7 @@ export function DefaultMessage({
             <Loader variant={loaderVariant} size="sm" />
           </div>
         ) : (
-          <>
+          <div className="relative">
             {/* Message Content - show FIRST (AI's words before tool calls) */}
             {cleanContent?.trim() && (
               <MessageContent
@@ -931,8 +936,13 @@ export function DefaultMessage({
             )}
 
             {/* Floating actions for assistant messages */}
-            <FloatingActions message={message} role="assistant" align="left" />
-          </>
+            <FloatingActions
+              message={message}
+              role="assistant"
+              align="right"
+              className="absolute bottom-1 right-1"
+            />
+          </div>
         )}
       </div>
     </Message>
