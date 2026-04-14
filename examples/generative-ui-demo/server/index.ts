@@ -1,9 +1,16 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import { createRuntime } from "@yourgpt/llm-sdk";
 import { createAnthropic } from "@yourgpt/llm-sdk/anthropic";
 import { createOpenAI } from "@yourgpt/llm-sdk/openai";
+import { generativeUISystemPrompt } from "@yourgpt/copilot-sdk/experimental";
+import { loadSkills } from "@yourgpt/copilot-sdk/server";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function resolveProvider() {
   if (process.env.ANTHROPIC_API_KEY) {
@@ -20,70 +27,70 @@ function resolveProvider() {
       providerName: "OpenAI",
     };
   }
-  throw new Error(
-    "Set ANTHROPIC_API_KEY or OPENAI_API_KEY to run the generative UI demo.",
-  );
+  throw new Error("Set ANTHROPIC_API_KEY or OPENAI_API_KEY");
 }
 
 const { provider, model, providerName } = resolveProvider();
 
+// ── Load skills from /skills directory ───────────────────────────────────────
+
+const { skills, buildSystemPrompt, tools } = await loadSkills({
+  dir: path.join(__dirname, "../skills"),
+});
+
+console.log(`Loaded ${skills.length} skill(s):`);
+for (const skill of skills) {
+  console.log(`  - ${skill.name} [${skill.strategy}]: ${skill.description}`);
+}
+
+// ── Build combined system prompt ─────────────────────────────────────────────
+
+const acmeContext = `You are the AI copilot for Acme Inc., a B2B SaaS company. Help with sales analytics, revenue, customer insights, and metrics.
+
+COMPANY DATA (use for all queries):
+- Acme Inc., B2B SaaS, founded 2019
+- Products: Starter ($29/mo), Pro ($79/mo), Enterprise (custom)
+- ARR: ~$4.2M, +18% YoY. ~320 customers, avg deal $13K
+- Markets: NA 55%, Europe 30%, APAC 15%. Sales team: 12 reps
+- Customer names: Meridian Health, Northstar Logistics, Cascade Analytics, Summit Financial, Pinecrest Media, Velocity Motors, Harborview Tech, Redwood Partners`;
+
+const systemPrompt = buildSystemPrompt(
+  acmeContext + "\n\n" + generativeUISystemPrompt(),
+);
+
 const runtime = createRuntime({
   provider,
   model,
-  systemPrompt: `You are a data-rich assistant that always renders visual UI components instead of plain text.
-
-You have a render_ui tool. Use it proactively based on the request:
-
-- "table" — any list of items, comparisons, records
-- "stat"  — numbers, KPIs, metrics with deltas
-- "card"  — single entity details (person, product, place)
-- "chart" — trends and distributions (bar, line, pie, area, scatter)
-- "html"  — rich, fully custom layouts (see below)
-
-━━━ HTML TYPE CAPABILITIES ━━━
-The html iframe has TWO libraries pre-loaded:
-1. Tailwind CSS (Play CDN) — use any utility class freely
-2. Chart.js — create inline charts with <canvas> + new Chart(...)
-
-Design in a shadcn/ui style:
-- Cards:    bg-white rounded-xl border border-gray-200 shadow-sm p-6
-- Headings: text-gray-900 font-semibold text-lg
-- Muted:    text-gray-500 text-sm
-- Badges:   bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full text-xs font-medium
-- Buttons:  bg-gray-900 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-gray-700
-- Grid:     grid grid-cols-3 gap-4 (or 2-col for cards)
-- Dividers: border-t border-gray-100 mt-4 pt-4
-
-Chart.js usage in html — inline script after canvas:
-<canvas id="c" height="220"></canvas>
-<script>
-new Chart(document.getElementById('c'), {
-  type: 'bar', // bar | line | pie | doughnut | radar | polarArea
-  data: {
-    labels: ['Jan','Feb','Mar'],
-    datasets: [{ label: 'Revenue', data: [120,190,170], backgroundColor: '#6366f1' }]
-  },
-  options: { responsive: true, plugins: { legend: { position: 'top' } } }
+  systemPrompt,
+  maxIterations: 1,
 });
-</script>
 
-Use html when asked for dashboards, interactive layouts, shadcn-style components, or anything combining charts + stats + cards in one view.
-For html, set the "height" field to fit the content — e.g. "600px" for dashboards, "320px" for a small card.
-Always prefer a structured type (table, stat, card) over html when the data fits a single type.`,
-  maxIterations: 3,
-});
+// ── Express server ───────────────────────────────────────────────────────────
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Skills API (for frontend skill cards)
+app.get("/api/skills", (_req, res) => {
+  res.json(
+    skills.map((s) => ({
+      name: s.name,
+      description: s.description,
+      strategy: s.strategy,
+      version: s.version,
+    })),
+  );
+});
+
+app.get("/api/skills/:name", (req, res) => {
+  const skill = skills.find((s) => s.name === req.params.name);
+  if (!skill) return res.status(404).json({ error: "Skill not found" });
+  res.json({ name: skill.name, content: skill.content });
+});
+
 app.get("/api/chat", (_req, res) => {
-  res.json({
-    status: "ok",
-    provider: providerName,
-    model,
-    demo: "generative-ui",
-  });
+  res.json({ status: "ok", provider: providerName, model });
 });
 
 app.post("/api/chat", async (req, res) => {
@@ -97,13 +104,28 @@ app.post("/api/chat", async (req, res) => {
   const response = await runtime.handleRequest(webReq);
   res.status(response.status);
   response.headers.forEach((val, key) => res.setHeader(key, val));
-  const body = await response.text();
-  res.send(body);
+
+  if (response.body) {
+    const reader = response.body.getReader();
+    const pump = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          res.end();
+          return;
+        }
+        res.write(value);
+      }
+    };
+    pump().catch(() => res.end());
+  } else {
+    res.send(await response.text());
+  }
 });
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3030;
 app.listen(PORT, () =>
   console.log(
-    `Generative UI server running on http://localhost:${PORT} (${providerName} / ${model})`,
+    `Generative UI server on http://localhost:${PORT} (${providerName} / ${model})`,
   ),
 );

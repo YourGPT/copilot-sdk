@@ -189,9 +189,9 @@ Comprehensive reference for all `csdk-*` CSS classes applied to every chat UI el
 
 ### 17. Generative UI — Experimental
 
-The AI can render structured UI components (cards, tables, charts, stat tiles) inline inside the chat, generated from tool call results. Ships with four built-in renderers plus a hook for custom ones.
+The AI can render rich HTML components inline inside the chat using Tailwind CSS and Chart.js, generated from tool call results. Ships with a single `HtmlRenderer` in a sandboxed iframe.
 
-- **Renderers:** `CardRenderer` · `TableRenderer` · `StatRenderer` · `HtmlRenderer`
+- **Renderer:** `HtmlRenderer` (sandboxed iframe with Tailwind CSS + Chart.js)
 - **API:** `import { generativeUITool, useGenerativeUI } from "@yourgpt/copilot-sdk/experimental"` — register `generativeUITool` as a tool, use `useGenerativeUI()` to render results
 - **Package:** `@yourgpt/copilot-sdk/experimental`
 - **Docs page:** `content/docs/generative-ui.mdx` (page existed on main; full demo + renderers added in beta)

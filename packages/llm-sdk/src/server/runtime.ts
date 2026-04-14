@@ -1091,43 +1091,58 @@ export class Runtime {
 
         case "action:args":
           if (currentToolCall) {
+            // Accumulate the raw args string — progressive action:args
+            // events carry the growing accumulated JSON, not deltas.
+            // Only finalize (push to toolCalls) when JSON is parseable.
+            currentToolCall.args = event.args || currentToolCall.args;
             try {
-              const parsedArgs = JSON.parse(event.args || "{}");
-              if (debug) {
-                console.log(
-                  `[Copilot SDK] Tool args for ${currentToolCall.name}:`,
-                  parsedArgs,
-                );
-              }
-              toolCalls.push({
+              const parsedArgs = JSON.parse(currentToolCall.args || "{}");
+              // Successfully parsed — update or create the toolCall entry
+              const existingIdx = toolCalls.findIndex(
+                (t) => t.id === currentToolCall!.id,
+              );
+              const entry = {
                 id: currentToolCall.id,
                 name: currentToolCall.name,
                 args: parsedArgs,
                 ...(currentToolCall.extra_content
                   ? { extra_content: currentToolCall.extra_content }
                   : {}),
-              });
-            } catch (e) {
-              console.error(
-                "[Copilot SDK] Failed to parse tool args:",
-                event.args,
-                e,
-              );
-              toolCalls.push({
-                id: currentToolCall.id,
-                name: currentToolCall.name,
-                args: {},
-                ...(currentToolCall.extra_content
-                  ? { extra_content: currentToolCall.extra_content }
-                  : {}),
-              });
+              };
+              if (existingIdx >= 0) {
+                toolCalls[existingIdx] = entry;
+              } else {
+                toolCalls.push(entry);
+              }
+              if (debug) {
+                console.log(
+                  `[Copilot SDK] Tool args for ${currentToolCall.name}:`,
+                  parsedArgs,
+                );
+              }
+            } catch {
+              // Partial JSON — not parseable yet. Keep accumulating.
+              // Ensure a placeholder entry exists so action:end can find it.
+              if (!toolCalls.find((t) => t.id === currentToolCall!.id)) {
+                toolCalls.push({
+                  id: currentToolCall.id,
+                  name: currentToolCall.name,
+                  args: {},
+                  ...(currentToolCall.extra_content
+                    ? { extra_content: currentToolCall.extra_content }
+                    : {}),
+                });
+              }
             }
-            currentToolCall = null;
+            // Do NOT null currentToolCall — more action:args may follow
           }
           yield event; // Forward to client
           break;
 
         case "action:end": {
+          // Clear currentToolCall — tool call generation is complete
+          currentToolCall = null;
+
           const toolName = (event as StreamEvent & { name?: string }).name;
           const tool = toolName ? selectedToolMap.get(toolName) : undefined;
 

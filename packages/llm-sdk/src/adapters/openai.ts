@@ -549,6 +549,12 @@ export class OpenAIAdapter implements LLMAdapter {
             } else if (currentToolCall && toolCall.function?.arguments) {
               // Append to current tool call arguments
               currentToolCall.arguments += toolCall.function.arguments;
+              // Emit progressive action:args for streaming rendering
+              yield {
+                type: "action:args",
+                id: currentToolCall.id,
+                args: currentToolCall.arguments,
+              };
             }
           }
         }

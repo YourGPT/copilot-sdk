@@ -193,12 +193,16 @@ export class ChatWithTools {
             }
             return;
           }
-          // Skip if this tool is registered client-side (will be tracked via executeToolCalls)
+          // Check if this tool is registered client-side
           const isClientTool = this.agentLoop.tools.some(
             (t) => t.name === info.name && t.location === "client",
           );
           if (isClientTool) {
-            this.debug("Skipping server tracking for client tool:", info.name);
+            // Still track the execution so the render function fires during
+            // streaming (progressive rendering). The execution will be reused
+            // when executeToolCalls runs later.
+            this.debug("Tracking client tool for streaming render:", info.name);
+            this.agentLoop.addServerToolExecution(info);
             return;
           }
           this.debug("Server tool started:", info.name, {
@@ -208,16 +212,14 @@ export class ChatWithTools {
           this.agentLoop.addServerToolExecution(info);
         },
         onServerToolArgs: (info) => {
-          // Skip if this tool is registered client-side
-          const isClientTool = this.agentLoop.tools.some(
-            (t) => t.name === info.name && t.location === "client",
-          );
-          if (isClientTool) return;
+          // Always update args — for client tools this enables progressive
+          // rendering (the render function sees partial args during streaming)
           this.debug("Server tool args:", info.name, info.args);
           this.agentLoop.updateServerToolArgs(info.id, info.args ?? {});
         },
         onServerToolEnd: (info) => {
-          // Skip if this tool is registered client-side
+          // Skip completion for client-side tools — the client handler will
+          // complete the execution via executeToolCalls
           const isClientTool = this.agentLoop.tools.some(
             (t) => t.name === info.name && t.location === "client",
           );

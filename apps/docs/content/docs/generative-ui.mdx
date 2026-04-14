@@ -1,41 +1,216 @@
 ---
 title: Generative UI
-description: Render rich React components from AI tool results — per-tool custom renderers or AI-driven built-in components
+description: Let the AI render rich visual UI — dashboards, charts, tables, cards — directly in the chat
 icon: AiMagic
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Instead of showing raw JSON or plain text from tool calls, render interactive UI directly inside the chat — from your own branded React components per tool, to fully AI-generated dashboards, charts, and layouts running in a sandboxed iframe.
+Render rich, interactive UI directly inside the chat — from AI-generated dashboards and charts to your own branded React components per tool.
 
 ---
 
 ## Two Approaches
 
-| | `toolRenderers` | `useGenerativeUI` (experimental) |
+| | AI-Generated HTML | Tool Renderers |
 |---|---|---|
-| **What it does** | Your React component renders per tool result | AI writes full HTML + Tailwind + Chart.js, runs in a sandboxed iframe — or picks a typed renderer (table, stat, card, chart) |
-| **Who decides the UI** | You — one renderer per tool | The AI — generates or selects based on the data |
-| **Setup** | Pass `toolRenderers` to `<CopilotChat>` | One `useGenerativeUI()` call + backend `generativeUITool()` |
-| **Best for** | Domain-specific, branded components | Dashboards, charts, tables, any data layout you haven't pre-built |
-| **Customization** | Full control | Override any built-in renderer |
+| **What it does** | AI writes HTML + Tailwind + Chart.js, rendered in a sandboxed iframe | Your React component renders per tool result |
+| **Who decides the UI** | The AI — generates any layout it wants | You — one renderer per tool |
+| **Best for** | Dashboards, charts, tables, cards, any visual you haven't pre-built | Domain-specific, branded components with full interactivity |
+| **Streaming** | Progressive — HTML builds up as AI generates | Shows loading → final states |
+| **Interactivity** | Via `copilot.action()` bridge | Native React (onClick, state, etc.) |
+
+Both approaches work together. Use AI-generated HTML for freeform visuals, and tool renderers for structured data with custom components.
 
 ---
 
-## Approach 1 — `toolRenderers`
+## AI-Generated HTML (Experimental)
 
-Map tool names to React components. Each component receives the tool's args and result as props.
+<Callout type="warn">
+`@yourgpt/copilot-sdk/experimental` — APIs may change without a semver major bump.
+</Callout>
+
+The AI writes HTML with Tailwind CSS and Chart.js directly in the chat response. The SDK detects it, extracts the HTML, and renders it in a sandboxed iframe — progressively as the AI generates it.
+
+This follows the same pattern as Claude Artifacts — content tags in the text stream, parsed by the frontend, rendered in an isolated iframe.
+
+```
+User: "Show me a dashboard of key web metrics"
+     ↓
+AI streams: <GENUI><div class="grid grid-cols-3 gap-4">...</div></GENUI>
+     ↓
+SDK detects <GENUI> tags → extracts HTML → renders in iframe
+     ↓
+User sees: [Live dashboard with stats, charts, tables — streaming progressively]
+```
+
+### Setup
+
+<Tabs items={['Backend', 'Frontend']}>
+  <Tab value="Backend">
+
+Add the generative UI system prompt to your runtime:
+
+```typescript
+import { createRuntime } from "@yourgpt/llm-sdk";
+import { generativeUISystemPrompt } from "@yourgpt/copilot-sdk/experimental";
+
+const runtime = createRuntime({
+  provider,
+  model,
+  systemPrompt: generativeUISystemPrompt(),
+});
+```
+
+The system prompt instructs the AI to wrap visual content in `<GENUI>` tags using Tailwind CSS classes. Chart.js is available for charts.
+
+  </Tab>
+  <Tab value="Frontend">
+
+Call `useGenerativeUI()` and pass `wrapMessage` to your chat:
+
+```tsx
+import { useGenerativeUI } from "@yourgpt/copilot-sdk/experimental";
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
+
+function App() {
+  const { wrapMessage } = useGenerativeUI();
+
+  return <CopilotChat wrapMessage={wrapMessage} />;
+}
+```
+
+That's it. The SDK handles `<GENUI>` detection, iframe rendering, auto-height, streaming, and script deferral.
+
+  </Tab>
+</Tabs>
+
+### What the AI generates
+
+The AI writes HTML with Tailwind classes wrapped in `<GENUI>` tags:
+
+```html
+<GENUI>
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <h2 class="text-lg font-semibold text-gray-900">Monthly Revenue</h2>
+  <p class="text-3xl font-bold text-gray-900 mt-1">$84,200</p>
+  <span class="bg-green-50 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium">+12%</span>
+</div>
+</GENUI>
+```
+
+The iframe automatically has **Tailwind CSS** and **Chart.js** pre-loaded. The AI can build anything: tables, stat cards, charts, pricing pages, data grids.
+
+### Chart.js support
+
+The AI can create charts using Chart.js with inline scripts:
+
+```html
+<GENUI>
+<div class="p-4">
+  <canvas id="c" height="220"></canvas>
+  <script>
+  new Chart(document.getElementById('c'), {
+    type: 'bar',
+    data: {
+      labels: ['Jan', 'Feb', 'Mar'],
+      datasets: [{ label: 'Revenue', data: [65, 80, 84], backgroundColor: '#6366f1' }]
+    },
+    options: { responsive: true }
+  });
+  </script>
+</div>
+</GENUI>
+```
+
+Scripts are deferred during streaming and only execute once the full HTML arrives.
+
+### Interactive actions (bridge API)
+
+The AI-generated HTML can communicate back to your app via the `copilot` bridge:
+
+```tsx
+// Frontend — register action handlers
+const { wrapMessage } = useGenerativeUI({
+  actions: {
+    addToCart: (data) => cartStore.add(data.itemId),
+    navigate: (data) => router.push(data.url),
+  },
+});
+```
+
+```typescript
+// Backend — tell the AI what actions are available
+systemPrompt: generativeUISystemPrompt({
+  actions: {
+    addToCart: "Add an item to the shopping cart. Params: { itemId: string, qty: number }",
+    navigate: "Navigate to a URL. Params: { url: string }",
+  },
+}),
+```
+
+The AI can then write interactive buttons:
+
+```html
+<button onclick="copilot.action('addToCart', { itemId: '123', qty: 1 })">
+  Add to Cart
+</button>
+<button onclick="copilot.sendMessage('Tell me more about this product')">
+  Ask AI
+</button>
+```
+
+- `copilot.action(name, data)` — calls your registered handler, returns a result
+- `copilot.sendMessage(text)` — sends a message in the chat as the user
+
+### Custom design guidelines
+
+Pass additional styling instructions to the system prompt:
+
+```typescript
+generativeUISystemPrompt({
+  designGuidelines: `
+    - Use the brand color #6366f1 for primary elements
+    - Always include a header with the company logo
+    - Tables should have zebra striping
+  `,
+})
+```
+
+### Using `GenUIFrame` directly
+
+For advanced use cases, render the iframe component directly:
+
+```tsx
+import { GenUIFrame } from "@yourgpt/copilot-sdk/experimental";
+
+<GenUIFrame
+  html="<div class='p-4'>Hello World</div>"
+  streaming={false}
+  onSendMessage={(msg) => sendMessage(msg)}
+  onAction={(name, data) => handleAction(name, data)}
+/>
+```
+
+---
+
+## Tool Renderers
+
+Map tool names to React components. The AI calls tools that return data, and your components render the results. This is the same pattern used by Vercel AI SDK and CopilotKit.
 
 ### Basic example
 
 ```tsx
 import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 
-function WeatherCard({ data, status }) {
-  if (status === "executing") {
+function WeatherCard({ execution }: ToolRendererProps) {
+  if (execution.status === "executing") {
     return <div className="animate-pulse">Loading weather...</div>;
   }
+  if (execution.status !== "completed") return null;
+
+  const data = execution.result;
   return (
     <div className="p-4 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white">
       <h3 className="text-xl font-bold">{data.city}</h3>
@@ -56,94 +231,44 @@ function WeatherCard({ data, status }) {
 
 ### ToolRendererProps
 
-Every renderer receives these props:
+Every renderer receives:
 
 ```typescript
 interface ToolRendererProps {
-  status: "pending" | "executing" | "completed" | "error" | "failed" | "rejected";
-  args: Record<string, unknown>;   // arguments passed to the tool
-  data?: unknown;                  // result (when completed)
-  error?: string;                  // error message (when failed)
-  executionId: string;
-  toolName: string;
-}
-```
-
-### Handling all states
-
-```tsx
-function ChartCard({ status, data, error, args }: ToolRendererProps) {
-  if (status === "pending" || status === "executing") {
-    return (
-      <div className="p-4 border rounded-lg">
-        <div className="animate-spin h-6 w-6 border-2 border-primary rounded-full border-t-transparent" />
-        <p className="text-sm text-muted-foreground mt-2">
-          Generating {args.metric} chart...
-        </p>
-      </div>
-    );
-  }
-
-  if (status === "error" || status === "failed") {
-    return (
-      <div className="p-4 border border-destructive rounded-lg">
-        <p className="text-destructive">Failed to load chart</p>
-        <p className="text-sm text-muted-foreground">{error}</p>
-      </div>
-    );
-  }
-
-  if (status === "rejected") {
-    return (
-      <div className="p-4 border rounded-lg bg-muted">
-        <p className="text-muted-foreground">Chart request was declined</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 border rounded-lg">
-      <h3 className="font-semibold mb-4">{data.title}</h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={data.chartData}>
-          <XAxis dataKey="date" />
-          <YAxis />
-          <Line type="monotone" dataKey="value" stroke="#8884d8" />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  execution: {
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    status: "pending" | "executing" | "completed" | "error" | "failed" | "rejected";
+    result?: unknown;
+    error?: string;
+    approvalStatus?: ToolApprovalStatus;
+    source?: "mcp" | "native" | "custom";
+  };
+  approval?: ToolApprovalCallbacks;
 }
 ```
 
 ### Interactive components
 
-Renderers can be fully interactive and call back into the chat:
+Tool renderers are native React components — full interactivity with no bridge needed:
 
 ```tsx
-function ProductCard({ data }: ToolRendererProps) {
+function ProductCard({ execution }: ToolRendererProps) {
   const [quantity, setQuantity] = useState(1);
   const { sendMessage } = useCopilot();
+  const data = execution.result;
 
   return (
     <div className="p-4 border rounded-lg">
-      <img src={data.image} alt={data.name} />
       <h3>{data.name}</h3>
       <p>${data.price}</p>
-      <div className="flex items-center gap-2 mt-4">
-        <input
-          type="number"
-          value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
-          className="w-16 border rounded px-2 py-1"
-        />
-        <button
-          onClick={() => sendMessage(`Add ${quantity} of ${data.name} to my cart`)}
-          className="btn-primary"
-        >
-          Add to Cart
-        </button>
-      </div>
+      <button
+        onClick={() => sendMessage(`Add ${quantity} of ${data.name} to my cart`)}
+        className="btn-primary"
+      >
+        Add to Cart
+      </button>
     </div>
   );
 }
@@ -151,9 +276,9 @@ function ProductCard({ data }: ToolRendererProps) {
 
 ### Control AI response verbosity
 
-Return `_aiResponseMode: "brief"` from your tool handler to prevent the AI from describing what the UI already shows:
+Return `_aiResponseMode: "brief"` from your tool handler to prevent the AI from narrating what the UI already shows:
 
-```tsx
+```typescript
 handler: async ({ timeRange }) => {
   const data = await fetchDashboardData(timeRange);
   return {
@@ -165,177 +290,23 @@ handler: async ({ timeRange }) => {
 },
 ```
 
-<Callout type="info">
-Use `_aiResponseMode: "brief"` when your UI component is self-explanatory. The AI gives a short acknowledgment instead of narrating the data.
-</Callout>
+### Priority order
+
+When multiple renderers are available, the SDK uses this priority:
+
+```
+toolRenderers[name] > mcpToolRenderer > fallbackToolRenderer > tool.render > default ToolSteps
+```
 
 ---
 
-## Approach 2 — AI-Generated UI (Experimental)
+## When to use which
 
-<Callout type="warn">
-`@yourgpt/copilot-sdk/experimental` — APIs may change without a semver major bump.
-</Callout>
-
-The AI calls a single `render_ui` tool and generates the UI itself. The standout capability is `type: "html"` — the AI writes full HTML with Tailwind CSS and Chart.js, rendered in a sandboxed iframe. No pre-built component needed. For structured data it can also pick typed renderers (`table`, `stat`, `card`, `chart`) automatically.
-
-```
-User: "Show Q1 revenue by region"
-     ↓
-AI calls: render_ui({ type: "chart", chartType: "bar", labels: ["NA","EU","APAC"], datasets: [...] })
-     ↓
-UI renders: [Bar chart]
-
-User: "Build an analytics dashboard"
-     ↓
-AI calls: render_ui({ type: "html", html: "<div class='grid grid-cols-3 gap-4'>...</div>", height: "600px" })
-     ↓
-UI renders: [Full dashboard in sandboxed iframe with Tailwind + Chart.js]
-```
-
-### Setup
-
-<Tabs items={['Backend', 'Frontend']}>
-  <Tab value="Backend">
-
-Register `generativeUITool()` in your route. The key becomes the tool name.
-
-```typescript
-import { generativeUITool } from "@yourgpt/copilot-sdk/experimental";
-import { streamText } from "@yourgpt/llm-sdk";
-
-export async function POST(req: Request) {
-  const { messages } = await req.json();
-
-  const result = await streamText({
-    model: openai("gpt-4o"),
-    system: "Use render_ui for any data, charts, or structured results.",
-    messages,
-    tools: {
-      render_ui: generativeUITool(),
-    },
-  });
-
-  return result.toDataStreamResponse();
-}
-```
-
-  </Tab>
-  <Tab value="Frontend">
-
-Call `useGenerativeUI()` once in your component tree — it registers the renderer automatically.
-
-```tsx
-import { useGenerativeUI } from "@yourgpt/copilot-sdk/experimental";
-import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
-
-function App() {
-  useGenerativeUI({
-    chartRenderer: MyChartComponent, // required for chart type
-  });
-
-  return <CopilotChat />;
-}
-```
-
-  </Tab>
-</Tabs>
-
-### Built-in component types
-
-| Type | When the AI uses it | Renderer |
-|------|-------------------|----------|
-| `html` | Dashboards, custom layouts, anything freeform | `HtmlRenderer` — sandboxed `<iframe>` with Tailwind CDN + Chart.js CDN pre-loaded |
-| `table` | Structured rows — comparisons, records, lists | `TableRenderer` |
-| `stat` | KPI metrics, numbers with change deltas | `StatRenderer` |
-| `card` | Entity summaries — profiles, products, key-value info | `CardRenderer` |
-| `chart` | Bar, line, pie, area, scatter graphs | Requires `chartRenderer` prop |
-
-### `html` type — AI-generated iframe UI
-
-When the AI uses `type: "html"`, it can write full HTML with Tailwind utility classes and inline Chart.js canvases. The SDK renders it in a sandboxed `<iframe>` so it's fully isolated from your app.
-
-The iframe automatically loads:
-- **Tailwind CSS** Play CDN — any utility class works
-- **Chart.js** — create charts with `<canvas>` + `new Chart(...)`
-
-```tsx
-// The AI generates something like this:
-render_ui({
-  type: "html",
-  height: "520px",
-  html: `
-    <div class="grid grid-cols-3 gap-4 p-6">
-      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <p class="text-sm text-gray-500">Monthly Revenue</p>
-        <p class="text-3xl font-bold text-gray-900 mt-1">$84,200</p>
-        <span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">+12%</span>
-      </div>
-      <!-- more cards... -->
-    </div>
-    <canvas id="chart" height="220"></canvas>
-    <script>
-    new Chart(document.getElementById('chart'), {
-      type: 'bar',
-      data: { labels: ['Jan','Feb','Mar'], datasets: [{ data: [65,80,84], backgroundColor: '#6366f1' }] }
-    });
-    </script>
-  `
-})
-```
-
-### Chart renderer
-
-Charts require a user-supplied renderer since the SDK doesn't bundle a charting library:
-
-```tsx
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import type { ChartRendererProps } from "@yourgpt/copilot-sdk/experimental";
-
-function MyChart({ payload }: ChartRendererProps) {
-  const data = payload.labels.map((label, i) => ({
-    name: label,
-    ...Object.fromEntries(payload.datasets.map((d) => [d.label, d.data[i]])),
-  }));
-
-  return (
-    <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={data}>
-        <XAxis dataKey="name" />
-        <YAxis />
-        <Tooltip />
-        {payload.datasets.map((d) => (
-          <Bar key={d.label} dataKey={d.label} fill={d.color ?? "#6366f1"} />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-useGenerativeUI({ chartRenderer: MyChart });
-```
-
-### Override built-in renderers
-
-Replace any built-in renderer with your own component:
-
-```tsx
-useGenerativeUI({
-  overrideRenderers: {
-    card: MyCustomCardRenderer,
-    table: MyCustomTableRenderer,
-  },
-});
-```
-
-### Custom tool name
-
-If you use a key other than `render_ui` in `tools`, pass the same name to `useGenerativeUI`:
-
-```typescript
-// Backend
-tools: { show_component: generativeUITool() }
-
-// Frontend
-useGenerativeUI({ name: "show_component" });
-```
+| Scenario | Use |
+|----------|-----|
+| "Show me a dashboard of sales data" | AI-Generated HTML — freeform layout |
+| Weather widget with specific design | Tool Renderer — `WeatherCard` component |
+| "Create a pricing page" | AI-Generated HTML — complex layout |
+| Shopping cart with add/remove buttons | Tool Renderer — native React interactivity |
+| "Compare these 5 products in a table" | AI-Generated HTML — dynamic columns |
+| File upload with progress bar | Tool Renderer — needs React state |
