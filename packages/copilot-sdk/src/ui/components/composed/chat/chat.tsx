@@ -545,6 +545,8 @@ function ChatComponent({
   followUpButtonClassName,
   // Citations/Sources
   citations,
+  // Message Actions
+  allowToCopyMessage = false,
   // Custom rendering
   messageView,
   renderMessage,
@@ -952,6 +954,13 @@ function ChatComponent({
 
           {/* Root-level custom Header (shows in both views) */}
           {rootHeader}
+
+          {/* Built-in copy action — auto-registered when allowToCopyMessage is true */}
+          {allowToCopyMessage && (
+            <MessageActions role="assistant">
+              <CopyAction />
+            </MessageActions>
+          )}
 
           {/* Behavior children — always mounted (MessageActions registrars, hook components) */}
           {behaviorChildren.length > 0 && behaviorChildren}
