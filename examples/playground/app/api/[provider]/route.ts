@@ -23,6 +23,7 @@ const envVarNames: Record<ProviderId, string> = {
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
   xai: "XAI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  "yourgpt-server": "YOURGPT_API_KEY",
 };
 
 export async function POST(
