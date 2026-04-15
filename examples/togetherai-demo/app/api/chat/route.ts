@@ -1,6 +1,7 @@
 import { createRuntime } from "@yourgpt/llm-sdk";
+import { createFallbackChain } from "@yourgpt/llm-sdk/fallback";
 import { createTogetherAI } from "@yourgpt/llm-sdk/togetherai";
-import { DEFAULT_MODEL } from "@/lib/models";
+import { DEFAULT_MODEL, FALLBACK_MODELS } from "@/lib/models";
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant powered by Together AI.
 You have access to many different open-source AI models and can help with a wide variety of tasks.
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
 
     // Get model from query param
     const model = url.searchParams.get("model") || DEFAULT_MODEL;
+    const useFallback = url.searchParams.get("fallback") === "true";
 
     // Get API key from environment
     const apiKey = process.env.TOGETHER_API_KEY;
@@ -26,10 +28,43 @@ export async function POST(request: Request) {
       );
     }
 
-    // Create Together AI provider
     const together = createTogetherAI({ apiKey });
 
-    // Create runtime with the selected model
+    if (useFallback) {
+      // Fallback chain: primary model → fallback models
+      const fallbackModelIds = FALLBACK_MODELS.filter((id) => id !== model);
+      const models = [model, ...fallbackModelIds].map((id) =>
+        together.languageModel(id),
+      );
+
+      const chain = createFallbackChain({
+        models,
+        strategy: "priority",
+        retries: 1,
+        retryDelay: 500,
+        retryBackoff: "exponential",
+        onRetry: ({ model, retryAttempt, maxRetries, delayMs, error }) => {
+          console.warn(
+            `[retry] ${model} attempt ${retryAttempt}/${maxRetries} — waiting ${delayMs}ms | ${(error as Error).message}`,
+          );
+        },
+        onFallback: ({ attemptedModel, nextModel, error, attempt }) => {
+          console.warn(
+            `[fallback] attempt ${attempt}: ${attemptedModel} → ${nextModel} | ${(error as Error).message}`,
+          );
+        },
+      });
+
+      const runtime = createRuntime({
+        adapter: chain,
+        systemPrompt: SYSTEM_PROMPT,
+        debug: process.env.NODE_ENV === "development",
+      });
+
+      return await runtime.handleRequest(request);
+    }
+
+    // Single model (no fallback)
     const runtime = createRuntime({
       provider: together,
       model,
@@ -37,8 +72,7 @@ export async function POST(request: Request) {
       debug: process.env.NODE_ENV === "development",
     });
 
-    const response = await runtime.handleRequest(request);
-    return response;
+    return await runtime.handleRequest(request);
   } catch (error) {
     console.error("[Chat Route] Error:", error);
     return Response.json(
@@ -51,13 +85,14 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const model = url.searchParams.get("model") || DEFAULT_MODEL;
-
-  const hasEnvKey = !!process.env.TOGETHER_API_KEY;
+  const useFallback = url.searchParams.get("fallback") === "true";
 
   return Response.json({
     status: "ok",
     provider: "togetherai",
     model,
-    configured: hasEnvKey,
+    fallback: useFallback,
+    fallbackModels: useFallback ? FALLBACK_MODELS : [],
+    configured: !!process.env.TOGETHER_API_KEY,
   });
 }

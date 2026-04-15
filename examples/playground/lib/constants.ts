@@ -102,18 +102,6 @@ export const providers: ProviderConfig[] = [
     createProvider: "createOpenRouter",
     importPath: "@yourgpt/llm-sdk/openrouter",
   },
-  {
-    id: "yourgpt-server",
-    name: "YourGPT Server",
-    model: "local demo",
-    color: "#f59e0b",
-    keyPlaceholder: "",
-    keyLink: "",
-    keyLinkText: "",
-    envVar: "",
-    createProvider: "",
-    importPath: "",
-  },
 ];
 
 // Sample person data for useAIContext demo
@@ -173,7 +161,6 @@ export const INITIAL_API_KEYS: ApiKeys = {
   google: "",
   xai: "",
   openrouter: "",
-  "yourgpt-server": "",
 };
 
 // OpenRouter model options for the model selector (static fallback)

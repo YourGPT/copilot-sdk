@@ -35,7 +35,6 @@ export interface ApiKeys {
   google: string;
   xai: string;
   openrouter: string;
-  "yourgpt-server"?: string;
 }
 
 export type ProviderId =
@@ -43,8 +42,7 @@ export type ProviderId =
   | "anthropic"
   | "google"
   | "xai"
-  | "openrouter"
-  | "yourgpt-server";
+  | "openrouter";
 
 export interface ProviderConfig {
   id: ProviderId;

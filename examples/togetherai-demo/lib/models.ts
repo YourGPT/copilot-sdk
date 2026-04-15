@@ -111,3 +111,15 @@ export const ALL_MODELS: ModelOption[] = MODEL_GROUPS.flatMap((g) => g.models);
 
 // Default model
 export const DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo";
+
+/**
+ * Fallback chain — models tried in order when the primary model fails.
+ * Priority: fast turbo models first, then larger/slower ones.
+ */
+export const FALLBACK_MODELS = [
+  "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "deepseek-ai/DeepSeek-V3",
+  "Qwen/Qwen3.5-9B",
+  "google/gemma-4-31B-it",
+  "MiniMaxAI/MiniMax-M2.5",
+];

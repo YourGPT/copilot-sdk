@@ -1252,14 +1252,14 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                 )
               )
                 continue;
-              // Skip tool result messages for client-side tools — client already executed them
-              if (
-                msg.role === "tool" &&
-                msg.tool_call_id &&
-                pendingIds.has(msg.tool_call_id)
-              )
-                continue;
-              // Everything else (server tool results) needs inserting
+              // Skip tool result messages — both client-side (already executed) and
+              // server-side (already represented in streamed metadata.toolExecutions).
+              // Server-side tool results are orphaned here because the corresponding
+              // assistant message with tool_calls was skipped above, so inserting
+              // just the tool result causes "role tool must follow tool_calls" errors
+              // and duplicate tool cards in the UI.
+              if (msg.role === "tool" && msg.tool_call_id) continue;
+              // Everything else needs inserting
               messagesToInsert.push({
                 id: generateMessageId(),
                 role: msg.role as T["role"],

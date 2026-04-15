@@ -31,26 +31,49 @@ Sign up and get your API key at [api.together.xyz/settings/api-keys](https://api
 TOGETHER_API_KEY=your-key-here
 ```
 
-### 4. Streaming API route
+### 4. Create runtime API route
 
 ```ts title="app/api/chat/route.ts"
-import { streamText } from '@yourgpt/llm-sdk';
-import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
 
-export async function POST(req: Request) {
-  const { messages } = await req.json();
+const together = createTogetherAI({
+  apiKey: process.env.TOGETHER_API_KEY,
+});
 
-  const result = await streamText({
-    model: togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
-    system: 'You are a helpful assistant.',
-    messages,
-  });
+const runtime = createRuntime({
+  provider: together,
+  model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+  systemPrompt: 'You are a helpful assistant.',
+});
 
-  return result.toTextStreamResponse();
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
 }
 ```
 
-### 5. Generate text
+### 5. Connect Copilot UI
+
+```tsx title="app/page.tsx"
+'use client';
+
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+export default function Page() {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Modern Pattern (Direct)
+
+For simpler use cases without the runtime, use `togetherai()` directly with `generateText` or `streamText`:
 
 ```ts
 import { generateText } from '@yourgpt/llm-sdk';
@@ -62,6 +85,19 @@ const result = await generateText({
 });
 
 console.log(result.text);
+```
+
+```ts
+import { streamText } from '@yourgpt/llm-sdk';
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+
+const result = await streamText({
+  model: togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
+  system: 'You are a helpful assistant.',
+  messages,
+});
+
+return result.toTextStreamResponse();
 ```
 
 ---
@@ -76,9 +112,6 @@ togetherai('deepseek-ai/DeepSeek-R1')       // reasoning model
 
 // Llama
 togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo')  // 131K ctx, fast
-togetherai('meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo')  // 130K ctx
-togetherai('meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo')
-togetherai('meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo')
 
 // Qwen
 togetherai('Qwen/Qwen3.5-397B-A17B')       // 262K ctx
@@ -87,11 +120,10 @@ togetherai('Qwen/Qwen3.5-9B')
 // Gemma
 togetherai('google/gemma-4-31B-it')
 
-// Kimi
+// Other
+togetherai('openai/gpt-oss-120b')
 togetherai('moonshotai/Kimi-K2.5')          // 262K ctx
-
-// GLM
-togetherai('zai-org/GLM-5.1')              // 202K ctx
+togetherai('MiniMaxAI/MiniMax-M2.5')
 ```
 
 Any model ID listed on [together.ai/models](https://api.together.xyz/models) works.
@@ -101,18 +133,76 @@ Any model ID listed on [together.ai/models](https://api.together.xyz/models) wor
 ## Configuration
 
 ```ts
-import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
 
-// Explicit API key
-const model = togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo', {
+// With explicit API key
+const together = createTogetherAI({
   apiKey: 'your-key',
 });
 
 // Custom base URL (e.g. self-hosted or proxy)
+const together = createTogetherAI({
+  apiKey: 'your-key',
+  baseUrl: 'https://my-proxy.example.com/v1',
+});
+```
+
+Or with the modern pattern:
+
+```ts
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+
 const model = togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo', {
+  apiKey: 'your-key',
   baseURL: 'https://my-proxy.example.com/v1',
 });
 ```
+
+---
+
+## Fallback Chain
+
+Automatically fail over to backup models when the primary is unavailable or rate-limited:
+
+```ts title="app/api/chat/route.ts"
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
+
+const together = createTogetherAI({
+  apiKey: process.env.TOGETHER_API_KEY,
+});
+
+const chain = createFallbackChain({
+  models: [
+    together.languageModel('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
+    together.languageModel('deepseek-ai/DeepSeek-V3'),
+    together.languageModel('Qwen/Qwen3.5-9B'),
+    together.languageModel('google/gemma-4-31B-it'),
+  ],
+  strategy: 'priority',
+  retries: 1,
+  retryDelay: 500,
+  retryBackoff: 'exponential',
+  onFallback: ({ attemptedModel, nextModel, error }) => {
+    console.warn(`[fallback] ${attemptedModel} → ${nextModel} | ${error.message}`);
+  },
+});
+
+const runtime = createRuntime({
+  adapter: chain,
+  systemPrompt: 'You are a helpful assistant.',
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+<Callout type="info">
+With `strategy: 'priority'`, the first model handles all traffic until it fails.
+Use `strategy: 'round-robin'` to distribute load evenly across models.
+</Callout>
 
 ---
 
@@ -142,24 +232,6 @@ const result = await generateText({
 <Callout type="info">
 `deepseek-ai/DeepSeek-R1` is a reasoning model and does not support tool calling. Use `DeepSeek-V3` or a Llama model for tool use.
 </Callout>
-
----
-
-## With Copilot UI
-
-```tsx title="app/providers.tsx"
-'use client';
-
-import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
-
-export function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <CopilotProvider runtimeUrl="/api/chat">
-      {children}
-    </CopilotProvider>
-  );
-}
-```
 
 ---
 
