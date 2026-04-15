@@ -409,6 +409,8 @@ export interface CopilotContextValue {
   status: "ready" | "submitted" | "streaming" | "error";
   error: Error | null;
   isLoading: boolean;
+  /** True from when stop() is called until the next sendMessage(). */
+  wasStopped: boolean;
 
   // Chat actions
   sendMessage: (
@@ -950,12 +952,16 @@ export function CopilotProvider(props: CopilotProviderProps) {
     async (content: string, attachments?: MessageAttachment[]) => {
       debugLog("Sending message:", content);
       setAgentIteration(0); // reset before each new user message
+      setWasStopped(false); // reset for new run
       await chatRef.current?.sendMessage(content, attachments);
     },
     [debugLog],
   );
 
+  const [wasStopped, setWasStopped] = useState(false);
+
   const stop = useCallback(() => {
+    setWasStopped(true);
     chatRef.current?.stop();
   }, []);
 
@@ -1055,6 +1061,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
       status,
       error,
       isLoading,
+      wasStopped,
 
       // Chat actions
       sendMessage,
@@ -1114,6 +1121,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
       status,
       error,
       isLoading,
+      wasStopped,
       sendMessage,
       stop,
       clearMessages,
