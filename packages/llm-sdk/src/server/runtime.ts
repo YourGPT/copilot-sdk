@@ -275,7 +275,7 @@ export class Runtime {
     const completionRequest: ChatCompletionRequest = {
       messages,
       actions: allActions.length > 0 ? allActions : undefined,
-      systemPrompt: request.systemPrompt || this.config.systemPrompt,
+      systemPrompt: this.config.systemPrompt ?? request.systemPrompt,
       config: request.config,
       signal,
       webSearch: this.getWebSearchConfig(),
@@ -1004,7 +1004,7 @@ export class Runtime {
     }
 
     // Build system prompt
-    const systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
+    const systemPrompt = this.config.systemPrompt ?? request.systemPrompt ?? "";
 
     // Accumulate data from stream
     let accumulatedText = "";
@@ -1421,7 +1421,7 @@ export class Runtime {
     let toolSearchState = _toolSearchState;
 
     // Build system prompt
-    const systemPrompt = request.systemPrompt || this.config.systemPrompt || "";
+    const systemPrompt = this.config.systemPrompt ?? request.systemPrompt ?? "";
 
     // Main agent loop
     let iteration = 0;
