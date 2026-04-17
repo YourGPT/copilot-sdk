@@ -1151,7 +1151,13 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         }
 
         // multi-step (default): finalize current turn as its own UIMessage
-        if (!this.streamState.content) {
+        // Must check both content AND toolResults so tool-only turns (no streamed
+        // text) are also finalized and streamState is reset — otherwise the next
+        // iteration's tool chunks get appended to the previous message's stream.
+        if (
+          !this.streamState.content &&
+          (this.streamState.toolResults?.size ?? 0) === 0
+        ) {
           // Nothing streamed yet for this turn — skip finalization
         } else {
           this.debug("message:end mid-stream", {
@@ -1603,8 +1609,21 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           // Track parent chain for inserted messages so they don't become
           // orphan root children in the MessageTree (which would redirect
           // the active path and blank the UI).
-          let insertChainParentId: string | undefined =
-            this.streamState?.messageId;
+          // In single-turn mode streamState is never reset between turns, so
+          // parenting from streamState.messageId would attach tool result messages
+          // as children of the current streaming assistant message. Instead parent
+          // from the message immediately before the streaming message.
+          let insertChainParentId: string | undefined;
+          if (this.config.streamMode === "single-turn" && this.streamState) {
+            const allMsgs = this._allMessages();
+            const streamIdx = allMsgs.findIndex(
+              (m) => m.id === this.streamState!.messageId,
+            );
+            insertChainParentId =
+              streamIdx > 0 ? allMsgs[streamIdx - 1].id : undefined;
+          } else {
+            insertChainParentId = this.streamState?.messageId;
+          }
 
           // Build hidden map from stream state's toolResults
           const toolCallsHidden: Record<string, boolean> = {};
@@ -1633,6 +1652,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             if (
               this.config.streamMode === "single-turn" &&
               msg.role === "assistant"
+            ) {
+              continue;
+            }
+
+            // single-turn: done.messages contains the FULL conversation history —
+            // every tool-result message from every previous turn is included.
+            // All server-tool results are already represented in streamState.toolResults
+            // (streamed via action:start/args/end). Inserting raw tool messages from
+            // done.messages creates duplicate cards attached to the wrong message.
+            // Skip ALL tool messages in single-turn mode.
+            if (
+              this.config.streamMode === "single-turn" &&
+              msg.role === "tool"
             ) {
               continue;
             }

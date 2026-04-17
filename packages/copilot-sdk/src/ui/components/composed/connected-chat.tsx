@@ -410,81 +410,102 @@ function CopilotChatBase(
           m.toolCalls.map((tc: { id: string }) => tc.id),
         );
 
-        // Try live executions first (from agentLoop)
-        const liveExecutions = toolExecutions.filter(
-          (exec: ToolExecutionData) => toolCallIds.has(exec.id),
-        );
+        // Determine if this is the last assistant message — live agentLoop executions
+        // only apply to the current (last) streaming message. Applying them to older
+        // messages would show the current turn's tools on previous message bubbles.
+        const isLastMsg =
+          m.id ===
+          [...messages]
+            .reverse()
+            .find((msg: UIMessage) => msg.role === "assistant")?.id;
 
-        if (liveExecutions.length > 0) {
-          // Enrich live executions with results from tool messages if not already present
-          messageToolExecutions = liveExecutions.map(
-            (exec: ToolExecutionData) => {
-              if (!exec.result && toolResultsMap.has(exec.id)) {
-                const resultContent = toolResultsMap.get(exec.id)!;
-                try {
-                  return { ...exec, result: JSON.parse(resultContent) };
-                } catch {
-                  return {
-                    ...exec,
-                    result: { success: false, message: resultContent },
-                  };
-                }
-              }
-              return exec;
-            },
-          );
+        // For non-last messages, prefer saved metadata executions (correct completed
+        // status) over rebuilding from tool_calls or live agentLoop executions (which
+        // would show wrong executing status from a different turn).
+        const savedMeta = (
+          m.metadata as { toolExecutions?: ToolExecutionData[] }
+        )?.toolExecutions;
+        if (!isLastMsg && savedMeta && savedMeta.length > 0) {
+          messageToolExecutions = savedMeta;
         } else {
-          // Build from stored tool_calls + tool messages (historical)
-          // Get hidden info from message metadata (set by handleJsonResponse)
-          const toolCallsHidden = (
-            m.metadata as { toolCallsHidden?: Record<string, boolean> }
-          )?.toolCallsHidden;
+          // Try live executions first (from agentLoop) — only for the last assistant message
+          const liveExecutions = isLastMsg
+            ? toolExecutions.filter((exec: ToolExecutionData) =>
+                toolCallIds.has(exec.id),
+              )
+            : [];
 
-          messageToolExecutions = m.toolCalls.map(
-            (tc: {
-              id: string;
-              function: { name: string; arguments: string };
-            }) => {
-              const resultContent = toolResultsMap.get(tc.id);
-              let result: ToolExecutionData["result"] = undefined;
-              if (resultContent) {
-                try {
-                  result = JSON.parse(resultContent);
-                } catch {
-                  result = { success: false, message: resultContent };
+          if (liveExecutions.length > 0) {
+            // Enrich live executions with results from tool messages if not already present
+            messageToolExecutions = liveExecutions.map(
+              (exec: ToolExecutionData) => {
+                if (!exec.result && toolResultsMap.has(exec.id)) {
+                  const resultContent = toolResultsMap.get(exec.id)!;
+                  try {
+                    return { ...exec, result: JSON.parse(resultContent) };
+                  } catch {
+                    return {
+                      ...exec,
+                      result: { success: false, message: resultContent },
+                    };
+                  }
                 }
-              }
-              let args: Record<string, unknown> = {};
-              try {
-                args = JSON.parse(tc.function.arguments || "{}");
-              } catch {
-                // Keep empty args
-              }
-              // Check hidden from metadata first (from server response),
-              // then fall back to registeredTools
-              let hidden = toolCallsHidden?.[tc.id];
-              if (hidden === undefined) {
-                const toolDef = registeredTools?.find(
-                  (t) => t.name === tc.function.name,
-                );
-                hidden = toolDef?.hidden;
-              }
-              return {
-                id: tc.id,
-                name: tc.function.name,
-                args,
-                status: (result
-                  ? "completed"
-                  : "pending") as ToolExecutionData["status"],
-                result,
-                timestamp:
-                  m.createdAt instanceof Date
-                    ? m.createdAt.getTime()
-                    : Date.now(),
-                hidden,
-              };
-            },
-          );
+                return exec;
+              },
+            );
+          } else {
+            // Build from stored tool_calls + tool messages (historical)
+            // Get hidden info from message metadata (set by handleJsonResponse)
+            const toolCallsHidden = (
+              m.metadata as { toolCallsHidden?: Record<string, boolean> }
+            )?.toolCallsHidden;
+
+            messageToolExecutions = m.toolCalls.map(
+              (tc: {
+                id: string;
+                function: { name: string; arguments: string };
+              }) => {
+                const resultContent = toolResultsMap.get(tc.id);
+                let result: ToolExecutionData["result"] = undefined;
+                if (resultContent) {
+                  try {
+                    result = JSON.parse(resultContent);
+                  } catch {
+                    result = { success: false, message: resultContent };
+                  }
+                }
+                let args: Record<string, unknown> = {};
+                try {
+                  args = JSON.parse(tc.function.arguments || "{}");
+                } catch {
+                  // Keep empty args
+                }
+                // Check hidden from metadata first (from server response),
+                // then fall back to registeredTools
+                let hidden = toolCallsHidden?.[tc.id];
+                if (hidden === undefined) {
+                  const toolDef = registeredTools?.find(
+                    (t) => t.name === tc.function.name,
+                  );
+                  hidden = toolDef?.hidden;
+                }
+                return {
+                  id: tc.id,
+                  name: tc.function.name,
+                  args,
+                  status: (result
+                    ? "completed"
+                    : "pending") as ToolExecutionData["status"],
+                  result,
+                  timestamp:
+                    m.createdAt instanceof Date
+                      ? m.createdAt.getTime()
+                      : Date.now(),
+                  hidden,
+                };
+              },
+            );
+          }
         }
       }
 
@@ -503,7 +524,17 @@ function CopilotChatBase(
       // For the last assistant message during streaming, attach any unmatched
       // tool executions (created by action:start before tool_calls arrive).
       // This enables progressive rendering of client tools like generative UI.
+      // IMPORTANT: Only run for the last assistant message — running for ALL
+      // assistant messages causes previous-turn tool cards (plan approval, specialist
+      // working indicators) to bleed into older message bubbles when agentLoop
+      // toolExecutions haven't been cleared between turns.
+      const isLastAssistant =
+        m.id ===
+        [...messages]
+          .reverse()
+          .find((msg: UIMessage) => msg.role === "assistant")?.id;
       if (
+        isLastAssistant &&
         !messageToolExecutions &&
         m.role === "assistant" &&
         isLoading &&
@@ -517,8 +548,16 @@ function CopilotChatBase(
               (msg.toolCalls || []).map((tc: { id: string }) => tc.id),
             ),
         );
+        // Only attach executions that are actively running (pending/executing).
+        // Completed/failed executions from a previous turn persist in agentLoop
+        // state between turns and would otherwise bleed into the new streaming
+        // message as stale plan cards or specialist indicators.
         const unmatchedExecutions = toolExecutions.filter(
-          (exec: ToolExecutionData) => !allMatchedIds.has(exec.id),
+          (exec: ToolExecutionData) =>
+            !allMatchedIds.has(exec.id) &&
+            (exec.status === "executing" ||
+              exec.status === "pending" ||
+              exec.approvalStatus === "required"),
         );
         if (unmatchedExecutions.length > 0) {
           messageToolExecutions = unmatchedExecutions;
@@ -551,7 +590,8 @@ function CopilotChatBase(
       };
     })
     // Filter out empty assistant messages that only had hidden tools
-    .filter((m) => {
+    .filter((m): m is NonNullable<typeof m> => {
+      if (!m) return false;
       if (
         m.role === "assistant" &&
         !m.content &&
