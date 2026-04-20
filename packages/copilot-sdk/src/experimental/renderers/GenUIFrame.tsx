@@ -13,6 +13,8 @@ export interface GenUIFrameProps {
   className?: string;
   /** Max width of the iframe (default: none) */
   maxWidth?: string;
+  /** Theme CSS variables to inject into the iframe (e.g. from getComputedStyle(document.documentElement)) */
+  themeVars?: Record<string, string>;
   /** Callback when a copilot.sendMessage() is called from inside the iframe */
   onSendMessage?: (message: string) => void;
   /** Callback when a copilot.action() is called from inside the iframe */
@@ -28,6 +30,7 @@ export interface GenUIFrameProps {
  * - Auto-height via ResizeObserver
  * - Unique frame ID prevents cross-iframe interference
  * - Scripts deferred during streaming, executed on completion
+ * - Theme vars injected via postMessage (not baked into srcDoc)
  * - `window.copilot` bridge for iframe → parent communication
  *
  * @experimental
@@ -37,13 +40,20 @@ export function GenUIFrame({
   streaming = false,
   className,
   maxWidth,
+  themeVars,
   onSendMessage,
   onAction,
 }: GenUIFrameProps) {
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
   const readyRef = React.useRef(false);
+  const themeVarsRef = React.useRef(themeVars);
   const [height, setHeight] = React.useState(0);
   const frameId = React.useRef(`genui_${++_frameIdCounter}`);
+
+  // Keep ref in sync so onLoad always sees latest themeVars
+  React.useEffect(() => {
+    themeVarsRef.current = themeVars;
+  });
 
   // During streaming: strip last incomplete line + remove scripts
   const displayHtml = React.useMemo(() => {
@@ -53,20 +63,22 @@ export function GenUIFrame({
     return lines.join("\n").replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
   }, [html, streaming]);
 
-  // Static shell — loaded once per iframe instance
-  const shell = React.useMemo(
-    () => `<!DOCTYPE html>
+  // Static shell — never changes, no themeVars baked in
+  const shell = React.useMemo(() => {
+    const id = frameId.current;
+    return `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"/>
 <script src="https://cdn.tailwindcss.com"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>
 <style>
-  html,body{margin:0;padding:0;font-family:ui-sans-serif,system-ui,sans-serif;overflow:hidden;background:transparent}
+  html,body{margin:0;padding:0;font-family:ui-sans-serif,system-ui,sans-serif;overflow:hidden;background:var(--background,transparent)!important}
   *{box-sizing:border-box}
   #root{padding:0}
+  canvas{background:transparent!important}
 </style>
 <script>
-var FRAME_ID='${frameId.current}';
+var FRAME_ID='${id}';
 var _callId=0,_pending={};
 
 // ── Auto-height reporting ──
@@ -90,14 +102,87 @@ window.copilot={
 // ── Message handler ──
 window.addEventListener('message',function(e){
   if(!e.data||e.data.id!==FRAME_ID)return;
+  if(e.data.action==='theme'){
+    var css=':root{';
+    var vars=e.data.vars||{};
+    for(var k in vars){if(vars.hasOwnProperty(k))css+=k+':'+vars[k]+';'}
+    css+='}';
+    var el=document.getElementById('theme-vars');
+    if(!el){el=document.createElement('style');el.id='theme-vars';document.head.appendChild(el);}
+    el.textContent=css;
+    // Resolve CSS vars via a temporary element so oklch/hsl/etc are computed by the browser
+    var probe=document.createElement('div');
+    probe.style.position='absolute';probe.style.visibility='hidden';
+    document.body.appendChild(probe);
+    // Normalize any CSS color (oklch, hsl, etc.) to rgb() via canvas so Chart.js can always use it
+    var normCanvas=document.createElement('canvas');
+    normCanvas.width=1;normCanvas.height=1;
+    var normCtx=normCanvas.getContext('2d');
+    function resolveColor(varName){
+      probe.style.color='var('+varName+')';
+      var computed=getComputedStyle(probe).color||'';
+      if(!computed)return'';
+      // Pass through canvas to guarantee rgb() output regardless of input color space
+      normCtx.fillStyle=computed;
+      var hex=normCtx.fillStyle;
+      if(hex&&hex.startsWith('#')&&hex.length===7){
+        var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+        return'rgb('+r+','+g+','+b+')';
+      }
+      return hex||computed;
+    }
+    var chartColors=[
+      resolveColor('--chart-1')||'rgb(224,85,34)',
+      resolveColor('--chart-2')||'rgb(34,170,197)',
+      resolveColor('--chart-3')||'rgb(80,120,180)',
+      resolveColor('--chart-4')||'rgb(200,170,34)',
+      resolveColor('--chart-5')||'rgb(170,80,200)',
+    ];
+    var fg=resolveColor('--foreground')||'#888';
+    var border=resolveColor('--border')||'rgba(128,128,128,0.2)';
+    document.body.removeChild(probe);
+    if(window.Chart){
+      Chart.defaults.color=fg;
+      Chart.defaults.borderColor=border;
+      if(Chart.defaults.plugins&&Chart.defaults.plugins.legend)
+        Chart.defaults.plugins.legend.labels.color=fg;
+      // Set chart color palette so AI-generated charts using var(--chart-N) get real colors
+      Chart.defaults.datasets=Chart.defaults.datasets||{};
+      var ds=Chart.defaults.datasets;
+      // line/radar: semi-transparent fill using first chart color
+      ['line','radar'].forEach(function(t){
+        ds[t]=ds[t]||{};
+        ds[t].backgroundColor=chartColors[0].replace(')',', 0.5)').replace('rgb(','rgba(');
+      });
+      // pie/doughnut: solid resolved palette so canvas segments get real colors
+      ['pie','doughnut'].forEach(function(t){
+        ds[t]=ds[t]||{};
+        ds[t].backgroundColor=chartColors;
+        ds[t].borderColor=chartColors;
+      });
+    }
+    // Expose resolved colors so AI scripts can use window._chartColors[n] directly
+    window._chartColors=chartColors;
+    // Semi-transparent versions: rgb(r,g,b) → rgba(r,g,b,0.5) — for bar/line backgrounds only
+    window._chartColorsA=chartColors.map(function(c){return c.replace('rgb(','rgba(').replace(')',',0.5)');});
+    // Store ALL resolved vars for full script replacement in hydrate
+    window._themeVars=vars;
+  }
   if(e.data.action==='hydrate'){
-    document.getElementById('root').innerHTML=e.data.html;
+    var rawHtml=e.data.html;
+    // Replace ALL var(--*) with resolved rgb values so Chart.js canvas can use them
+    rawHtml=rawHtml.replace(/var\(--[\w-]+\)/g,function(ref){
+      var name=ref.slice(4,-1);
+      return (window._themeVars&&window._themeVars[name])||ref;
+    });
+    document.getElementById('root').innerHTML=rawHtml;
     if(!e.data.streaming){
       document.querySelectorAll('#root script').forEach(function(s){
         var n=document.createElement('script');n.text=s.text;s.parentNode.replaceChild(n,s);
       });
     }
-    requestAnimationFrame(function(){setTimeout(reportHeight,30)});
+    // Poll at 30ms, 150ms, 400ms, 800ms to catch async renders (e.g. Chart.js)
+    [30,150,400,800].forEach(function(ms){setTimeout(reportHeight,ms)});
   }
   if(e.data.action==='copilot:actionResult'&&_pending[e.data.callId]){
     _pending[e.data.callId](e.data.result);
@@ -107,9 +192,8 @@ window.addEventListener('message',function(e){
 
 new ResizeObserver(function(){reportHeight()}).observe(document.getElementById('root'));
 <\/script>
-</head><body><div id="root"></div></body></html>`,
-    [],
-  );
+</head><body><div id="root"></div></body></html>`;
+  }, []);
 
   // Listen for messages from THIS iframe only
   React.useEffect(() => {
@@ -148,13 +232,30 @@ new ResizeObserver(function(){reportHeight()}).observe(document.getElementById('
     return () => window.removeEventListener("message", handleMessage);
   }, [onSendMessage, onAction]);
 
-  // Push content on iframe load
+  // Helper: send theme vars to iframe
+  const sendTheme = React.useCallback(
+    (vars: Record<string, string> | undefined) => {
+      if (!vars || !iframeRef.current?.contentWindow) return;
+      iframeRef.current.contentWindow.postMessage(
+        { action: "theme", id: frameId.current, vars },
+        "*",
+      );
+    },
+    [],
+  );
+
+  // Push content on iframe load + send theme
   React.useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
     const id = frameId.current;
     const onLoad = () => {
       readyRef.current = true;
+      // Send theme first so vars are available when HTML is injected
+      const vars = themeVarsRef.current;
+      if (vars && Object.keys(vars).length > 0) {
+        iframe.contentWindow?.postMessage({ action: "theme", id, vars }, "*");
+      }
       iframe.contentWindow?.postMessage(
         { action: "hydrate", id, html: displayHtml, streaming },
         "*",
@@ -172,6 +273,12 @@ new ResizeObserver(function(){reportHeight()}).observe(document.getElementById('
       "*",
     );
   }, [displayHtml, streaming]);
+
+  // Push theme updates (when themeVars prop changes)
+  React.useEffect(() => {
+    if (!readyRef.current) return;
+    sendTheme(themeVars);
+  }, [themeVars, sendTheme]);
 
   return (
     <iframe
