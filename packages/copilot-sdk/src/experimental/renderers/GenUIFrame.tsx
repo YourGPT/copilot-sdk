@@ -110,23 +110,72 @@ window.addEventListener('message',function(e){
     var el=document.getElementById('theme-vars');
     if(!el){el=document.createElement('style');el.id='theme-vars';document.head.appendChild(el);}
     el.textContent=css;
+    // Resolve CSS vars via a temporary element so oklch/hsl/etc are computed by the browser
+    var probe=document.createElement('div');
+    probe.style.position='absolute';probe.style.visibility='hidden';
+    document.body.appendChild(probe);
+    // Normalize any CSS color (oklch, hsl, etc.) to rgb() via canvas so Chart.js can always use it
+    var normCanvas=document.createElement('canvas');
+    normCanvas.width=1;normCanvas.height=1;
+    var normCtx=normCanvas.getContext('2d');
+    function resolveColor(varName){
+      probe.style.color='var('+varName+')';
+      var computed=getComputedStyle(probe).color||'';
+      if(!computed)return'';
+      // Pass through canvas to guarantee rgb() output regardless of input color space
+      normCtx.fillStyle=computed;
+      var hex=normCtx.fillStyle;
+      if(hex&&hex.startsWith('#')&&hex.length===7){
+        var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+        return'rgb('+r+','+g+','+b+')';
+      }
+      return hex||computed;
+    }
+    var chartColors=[
+      resolveColor('--chart-1')||'rgb(224,85,34)',
+      resolveColor('--chart-2')||'rgb(34,170,197)',
+      resolveColor('--chart-3')||'rgb(80,120,180)',
+      resolveColor('--chart-4')||'rgb(200,170,34)',
+      resolveColor('--chart-5')||'rgb(170,80,200)',
+    ];
+    var fg=resolveColor('--foreground')||'#888';
+    var border=resolveColor('--border')||'rgba(128,128,128,0.2)';
+    document.body.removeChild(probe);
     if(window.Chart){
-      var fg=vars['--foreground']||'#888';
-      var border=vars['--border']||'rgba(128,128,128,0.2)';
       Chart.defaults.color=fg;
       Chart.defaults.borderColor=border;
       if(Chart.defaults.plugins&&Chart.defaults.plugins.legend)
         Chart.defaults.plugins.legend.labels.color=fg;
-      // Prevent black area fills — default to semi-transparent if AI didn't set one
-      var ds=Chart.defaults.datasets=Chart.defaults.datasets||{};
+      // Set chart color palette so AI-generated charts using var(--chart-N) get real colors
+      Chart.defaults.datasets=Chart.defaults.datasets||{};
+      var ds=Chart.defaults.datasets;
+      // line/radar: semi-transparent fill using first chart color
       ['line','radar'].forEach(function(t){
         ds[t]=ds[t]||{};
-        if(!ds[t].backgroundColor) ds[t].backgroundColor='rgba(99,102,241,0.15)';
+        ds[t].backgroundColor=chartColors[0].replace(')',', 0.5)').replace('rgb(','rgba(');
+      });
+      // pie/doughnut: solid resolved palette so canvas segments get real colors
+      ['pie','doughnut'].forEach(function(t){
+        ds[t]=ds[t]||{};
+        ds[t].backgroundColor=chartColors;
+        ds[t].borderColor=chartColors;
       });
     }
+    // Expose resolved colors so AI scripts can use window._chartColors[n] directly
+    window._chartColors=chartColors;
+    // Semi-transparent versions: rgb(r,g,b) → rgba(r,g,b,0.5) — for bar/line backgrounds only
+    window._chartColorsA=chartColors.map(function(c){return c.replace('rgb(','rgba(').replace(')',',0.5)');});
+    // Store ALL resolved vars for full script replacement in hydrate
+    window._themeVars=vars;
   }
   if(e.data.action==='hydrate'){
-    document.getElementById('root').innerHTML=e.data.html;
+    var rawHtml=e.data.html;
+    // Replace ALL var(--*) with resolved rgb values so Chart.js canvas can use them
+    rawHtml=rawHtml.replace(/var\(--[\w-]+\)/g,function(ref){
+      var name=ref.slice(4,-1);
+      return (window._themeVars&&window._themeVars[name])||ref;
+    });
+    document.getElementById('root').innerHTML=rawHtml;
     if(!e.data.streaming){
       document.querySelectorAll('#root script').forEach(function(s){
         var n=document.createElement('script');n.text=s.text;s.parentNode.replaceChild(n,s);
