@@ -37,7 +37,14 @@ export interface UseInternalThreadManagerReturn {
   threadManager: ReturnType<typeof useThreadManager>;
   handleSwitchThread: (threadId: string) => Promise<void>;
   handleNewThread: () => Promise<void>;
+  /** Whether the currently-active thread is busy (submitted or streaming). */
   isBusy: boolean;
+  /**
+   * Set of thread IDs that currently have an in-flight request. Empty unless
+   * `concurrentThreads` is enabled on the CopilotProvider. Use for per-thread
+   * busy indicators in a thread picker.
+   */
+  busyThreadIds: ReadonlySet<string>;
 }
 
 // ── State machine ────────────────────────────────────────────────────────────
@@ -236,6 +243,10 @@ export function useInternalThreadManager(
     switchBranch,
     threadId: sdkThreadId,
     setActiveThread,
+    concurrentThreads,
+    busyThreadIds,
+    assignLocalThreadId,
+    sessionStatus,
   } = useCopilot();
 
   // ── Auto-restore on mount ──────────────────────────────────────────────
@@ -249,8 +260,20 @@ export function useInternalThreadManager(
     if (currentThread.messages && currentThread.messages.length > 0) {
       const uiMessages = currentThread.messages.map(coreToUI);
       const snapshot = getMessageSnapshot(uiMessages);
-      setMessages(uiMessages);
-      if (currentThread.activeLeafId) switchBranch(currentThread.activeLeafId);
+      if (concurrentThreads) {
+        // Re-key the active instance to the restored thread id AND hydrate
+        // messages. Without this, subsequent sends would create a brand new
+        // session (since the instance's threadId wasn't set), and the picker
+        // row for the restored thread would never appear in busyThreadIds.
+        setActiveThread(currentThread.id, {
+          hydrateMessages: uiMessages,
+          hydrateActiveLeafId: currentThread.activeLeafId,
+        });
+      } else {
+        setMessages(uiMessages);
+        if (currentThread.activeLeafId)
+          switchBranch(currentThread.activeLeafId);
+      }
       onThreadChange?.(currentThread.id);
       dispatch({
         type: "RESTORE_COMPLETE",
@@ -258,6 +281,9 @@ export function useInternalThreadManager(
         snapshot,
       });
     } else {
+      if (concurrentThreads) {
+        setActiveThread(currentThread.id);
+      }
       onThreadChange?.(currentThread.id);
       dispatch({
         type: "RESTORE_COMPLETE",
@@ -276,6 +302,8 @@ export function useInternalThreadManager(
     setMessages,
     switchBranch,
     onThreadChange,
+    concurrentThreads,
+    setActiveThread,
   ]);
 
   // Mark initialized if no thread to restore
@@ -291,18 +319,52 @@ export function useInternalThreadManager(
   }, [enabled, autoRestoreLastThread, state.initialized]);
 
   // ── Phase: idle → awaiting_server_id ───────────────────────────────────
-
+  //
+  // Single-thread mode: wait for the response to finish (status ready) before
+  // creating the thread record, so the record captures the final messages.
+  //
+  // Multi-thread mode: fire as soon as the first send starts so the thread
+  // becomes visible in the picker (with a spinner) mid-generation. If the
+  // backend supplies its session id early — either because yourgptConfig /
+  // onCreateSession resolved pre-stream, or because the server emits
+  // `thread:created` at the top of the stream — we wait for that id and use
+  // it as the thread id, so UI and backend stay in lockstep (preserving the
+  // pre-multi-thread contract where `useCopilot().threadId` === backend
+  // session id). Only when NO early id is available do we mint a local one.
+  //
+  // `sessionStatus === "creating"` means a session creator is in flight;
+  // holding back for that keeps yourgptConfig / onCreateSession consumers on
+  // their server-assigned id instead of a local uuid.
   useEffect(() => {
     if (!enabled) return;
     if (state.phase !== "idle") return;
     if (isLoadingRef.current) return;
-    if (status === "streaming" || status === "submitted") return;
     if (messages.length === 0) return;
     if (currentThreadId) return; // Already have a thread
 
-    // First message response just completed
+    const streaming = status === "streaming" || status === "submitted";
+    if (streaming && !concurrentThreads) return; // legacy: wait for ready
+
+    // Multi-thread: if a pre-stream session creator is still running, defer
+    // so we can use its id. If it already resolved (sessionStatus moved to
+    // "ready") and sdkThreadId is set, proceed immediately and use the id.
+    // If there's no session creator at all, sessionStatus stays "idle" and
+    // we proceed without waiting.
+    if (concurrentThreads && sessionStatus === "creating" && !sdkThreadId) {
+      return;
+    }
+
     dispatch({ type: "FIRST_RESPONSE_COMPLETE" });
-  }, [enabled, state.phase, status, messages.length, currentThreadId]);
+  }, [
+    enabled,
+    state.phase,
+    status,
+    messages.length,
+    currentThreadId,
+    concurrentThreads,
+    sdkThreadId,
+    sessionStatus,
+  ]);
 
   // ── Phase: awaiting_server_id → creating ───────────────────────────────
 
@@ -330,11 +392,19 @@ export function useInternalThreadManager(
     const activeLeafId = messages[messages.length - 1]?.id;
     const snapshot = getMessageSnapshot(messages);
 
+    const usingLocalId = !sdkThreadId;
+
     createThread({
       id: sdkThreadId ?? undefined,
       messages: coreMessages,
       activeLeafId,
     }).then((thread) => {
+      // Multi-thread mode without a server-assigned id yet: bind the pending
+      // chat instance to this manager-generated local id so the thread shows
+      // up in busyThreadIds / the picker while it streams.
+      if (concurrentThreads && usingLocalId) {
+        assignLocalThreadId(thread.id);
+      }
       dispatch({ type: "THREAD_CREATED", threadId: thread.id, snapshot });
       onThreadChange?.(thread.id);
     });
@@ -383,24 +453,42 @@ export function useInternalThreadManager(
       isLoadingRef.current = true;
 
       const thread = await switchThread(threadId);
-      if (thread?.messages) {
-        const uiMessages = thread.messages.map(coreToUI);
-        const snapshot = getMessageSnapshot(uiMessages);
-        setMessages(uiMessages);
-        if (thread.activeLeafId) switchBranch(thread.activeLeafId);
-        onThreadChange?.(threadId);
-        dispatch({ type: "SWITCH_COMPLETE", threadId, snapshot });
+      const uiMessages = thread?.messages ? thread.messages.map(coreToUI) : [];
+      const snapshot = thread?.messages ? getMessageSnapshot(uiMessages) : "";
+
+      if (concurrentThreads) {
+        // Multi-thread mode: delegate to the provider, which swaps the active
+        // chat instance. The provider hydrates messages only if the target
+        // instance is fresh; an existing (possibly streaming) instance is
+        // left alone so its in-flight stream is preserved.
+        setActiveThread(threadId, {
+          hydrateMessages: uiMessages,
+          hydrateActiveLeafId: thread?.activeLeafId,
+        });
       } else {
-        setMessages([]);
-        onThreadChange?.(threadId);
-        dispatch({ type: "SWITCH_COMPLETE", threadId, snapshot: "" });
+        // Single-thread mode: write the loaded messages into the shared chat
+        if (thread?.messages) {
+          setMessages(uiMessages);
+          if (thread.activeLeafId) switchBranch(thread.activeLeafId);
+        } else {
+          setMessages([]);
+        }
       }
+      onThreadChange?.(threadId);
+      dispatch({ type: "SWITCH_COMPLETE", threadId, snapshot });
 
       requestAnimationFrame(() => {
         isLoadingRef.current = false;
       });
     },
-    [switchThread, setMessages, switchBranch, onThreadChange],
+    [
+      switchThread,
+      setMessages,
+      switchBranch,
+      onThreadChange,
+      concurrentThreads,
+      setActiveThread,
+    ],
   );
 
   // ── New thread ─────────────────────────────────────────────────────────
@@ -409,7 +497,12 @@ export function useInternalThreadManager(
     isLoadingRef.current = true;
 
     clearCurrentThread();
-    setMessages([]);
+    // In multi-thread mode, skip setMessages([]) — it would clobber the
+    // currently-active instance's messages (possibly mid-stream). The
+    // provider's switchActiveInstance mints a fresh, empty pending slot.
+    if (!concurrentThreads) {
+      setMessages([]);
+    }
     setActiveThread(null); // Clear SDK session so next message creates a new one
     onThreadChange?.(null);
     dispatch({ type: "NEW_THREAD" });
@@ -417,7 +510,13 @@ export function useInternalThreadManager(
     requestAnimationFrame(() => {
       isLoadingRef.current = false;
     });
-  }, [clearCurrentThread, setMessages, setActiveThread, onThreadChange]);
+  }, [
+    clearCurrentThread,
+    setMessages,
+    setActiveThread,
+    onThreadChange,
+    concurrentThreads,
+  ]);
 
   // ── Return ─────────────────────────────────────────────────────────────
 
@@ -428,5 +527,6 @@ export function useInternalThreadManager(
     handleSwitchThread,
     handleNewThread,
     isBusy,
+    busyThreadIds,
   };
 }

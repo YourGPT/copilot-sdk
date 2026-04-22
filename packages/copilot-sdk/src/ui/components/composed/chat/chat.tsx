@@ -68,6 +68,11 @@ interface CopilotChatInternalContext {
   onSwitchThread?: (id: string) => void;
   onDeleteThread?: (id: string) => void;
   isThreadBusy?: boolean;
+  /**
+   * Set of thread IDs that currently have an in-flight request. Populated
+   * only when `concurrentThreads` is enabled on the CopilotProvider.
+   */
+  busyThreadIds?: ReadonlySet<string>;
 }
 
 const CopilotChatContext = createContext<CopilotChatInternalContext | null>(
@@ -564,6 +569,7 @@ function ChatComponent({
   currentThreadId,
   onSwitchThread,
   isThreadBusy,
+  busyThreadIds,
   // Branching
   getBranchInfo,
   onSwitchBranch,
@@ -897,6 +903,7 @@ function ChatComponent({
       onSwitchThread,
       onDeleteThread,
       isThreadBusy,
+      busyThreadIds,
     }),
     [
       view,
@@ -913,6 +920,7 @@ function ChatComponent({
       onSwitchThread,
       onDeleteThread,
       isThreadBusy,
+      busyThreadIds,
     ],
   );
 
