@@ -372,7 +372,7 @@ const INITIAL_MESSAGES = [
     id: "welcome-1",
     role: "assistant" as const,
     content:
-      "Hey! I'm your **HR Copilot** — your AI assistant for people operations.\n\nI can help you with:\n- **Employee Onboarding** — checklists, Day 1 plans, 30/60/90 milestones\n- **Performance Reviews** — review cycles, calibration, feedback frameworks\n\nJust ask me anything to get started.",
+      "Hey! I'm your **HR Copilot** — your AI assistant for people operations.\n\nJust ask me anything to get started.",
     createdAt: new Date(),
   },
 ];

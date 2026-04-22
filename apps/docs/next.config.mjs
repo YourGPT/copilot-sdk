@@ -31,7 +31,37 @@ const config = {
       },
       {
         source: "/docs/smart-ai-context",
-        destination: "/docs/advanced",
+        destination: "/docs/skills",
+        permanent: true,
+      },
+      {
+        source: "/docs/ai-context",
+        destination: "/docs/skills",
+        permanent: true,
+      },
+      {
+        source: "/docs/custom-tools",
+        destination: "/docs/tools/frontend-tools",
+        permanent: true,
+      },
+      {
+        source: "/docs/streaming",
+        destination: "/docs/llm-sdk/stream-text",
+        permanent: true,
+      },
+      {
+        source: "/docs/ai-response-control",
+        destination: "/docs/tools/agentic-loop",
+        permanent: true,
+      },
+      {
+        source: "/docs/tool-approval",
+        destination: "/docs/tools/frontend-tools",
+        permanent: true,
+      },
+      {
+        source: "/docs/tools/screenshot",
+        destination: "/docs/tools/built-in/screenshot",
         permanent: true,
       },
       // ── context/ → advanced/ ─────────────────────────────────────────────

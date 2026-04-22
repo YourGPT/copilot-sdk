@@ -18,6 +18,28 @@ const VIDEO_BASE_URL = "https://assets.yourgpt.ai/web/copilot-sdk";
 
 const examples: Example[] = [
   {
+    id: "skills-demo",
+    title: "Skills System",
+    description:
+      "Dynamic skill loading for domain-specific AI behavior. Skills are markdown files that get loaded on-demand — the AI discovers and activates them when relevant. Drag & drop to add skills at runtime.",
+    preview: "/images/skills-demo.png",
+    tags: ["Skills", "Dynamic Loading", "Drag & Drop", "HR Copilot"],
+    github:
+      "https://github.com/YourGPT/copilot-sdk/tree/main/examples/skills-demo",
+    video: `${VIDEO_BASE_URL}/skills-demo.mp4`,
+  },
+  {
+    id: "generative-ui-demo",
+    title: "Generative UI",
+    description:
+      "AI-generated interactive UI components rendered in real-time. Tables, charts, metric cards, and insights — all generated dynamically from natural language queries.",
+    preview: "/images/gen-ui-demo.png",
+    tags: ["Generative UI", "Charts", "Tables", "Data Visualization"],
+    github:
+      "https://github.com/YourGPT/copilot-sdk/tree/main/examples/generative-ui-demo",
+    video: `${VIDEO_BASE_URL}/gen-ui-demo.mp4`,
+  },
+  {
     id: "mcp-demo",
     title: "MCP Integration",
     description:

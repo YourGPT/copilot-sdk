@@ -548,6 +548,13 @@ export type ChatProps = {
     footer?: string;
   };
 
+  // === Message Actions ===
+  /**
+   * Show a copy-to-clipboard button below assistant messages on hover.
+   * @default false
+   */
+  allowToCopyMessage?: boolean;
+
   // === Citations/Sources (Web Search) ===
   /**
    * Configuration for displaying citations from web search results.

@@ -35,11 +35,16 @@ function FloatingActions({
   role,
   align = "left",
   onEdit,
+  className,
+  copyContent,
 }: {
   message: ChatMessage;
   role: "user" | "assistant";
   align?: "left" | "right";
   onEdit?: () => void;
+  className?: string;
+  /** Text to copy. When provided, copy button uses this instead of message.content. When explicitly null, copy button is hidden. */
+  copyContent?: string | null;
 }) {
   const ctx = useMessageActionsContext();
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
@@ -51,9 +56,10 @@ function FloatingActions({
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 mt-1",
+        "csdk-message-actions flex items-center gap-0.5",
         "opacity-0 group-hover/message:opacity-100 transition-opacity duration-150",
         align === "right" ? "justify-end" : "justify-start",
+        className,
       )}
     >
       {actions.map((action) => {
@@ -61,6 +67,10 @@ function FloatingActions({
           typeof action.hidden === "function"
             ? action.hidden({ message })
             : action.hidden;
+        // Hide copy button when there is no displayable text content
+        if (action.id === "copy" && copyContent != null && !copyContent.trim())
+          return null;
+        if (action.id === "copy" && copyContent === null) return null;
         if (isHidden) return null;
 
         const isCopied = copiedId === action.id;
@@ -72,7 +82,9 @@ function FloatingActions({
             title={action.tooltip}
             aria-label={action.tooltip}
             className={cn(
-              "flex items-center justify-center size-6 rounded-md",
+              "csdk-message-action-btn",
+              action.id === "copy" && "csdk-copy-btn",
+              "flex items-center justify-center size-6 rounded-md cursor-pointer",
               "text-muted-foreground hover:text-foreground hover:bg-muted",
               "transition-colors",
               action.className,
@@ -83,7 +95,11 @@ function FloatingActions({
                 return;
               }
               if (action.id === "copy") {
-                navigator.clipboard.writeText(message.content ?? "");
+                const text =
+                  copyContent !== undefined
+                    ? (copyContent ?? "")
+                    : (message.content ?? "");
+                navigator.clipboard.writeText(text);
                 setCopiedId("copy");
                 setTimeout(() => setCopiedId(null), 1500);
                 return;
@@ -663,19 +679,29 @@ export function DefaultMessage({
             <Loader variant={loaderVariant} size="sm" />
           </div>
         ) : (
-          <>
+          <div className="relative">
             {/* Message Content - show FIRST (AI's words before tool calls) */}
             {cleanContent?.trim() && (
-              <MessageContent
-                className={cn(
-                  "csdk-message-assistant rounded-lg px-4 py-2 bg-muted",
-                  assistantMessageClassName,
-                )}
-                markdown
-                size={size}
-              >
-                {cleanContent}
-              </MessageContent>
+              <div className="relative">
+                <MessageContent
+                  className={cn(
+                    "csdk-message-assistant rounded-lg px-4 py-2 bg-muted",
+                    assistantMessageClassName,
+                  )}
+                  markdown
+                  size={size}
+                >
+                  {cleanContent}
+                </MessageContent>
+                {/* Copy button — positioned inside the content bubble */}
+                <FloatingActions
+                  message={message}
+                  role="assistant"
+                  align="right"
+                  className="absolute bottom-1 right-1"
+                  copyContent={cleanContent}
+                />
+              </div>
             )}
 
             {/* Custom Tool Renderers - Priority: tool.render > fallbackToolRenderer > toolRenderers */}
@@ -929,10 +955,7 @@ export function DefaultMessage({
                 buttonClassName={followUpButtonClassName}
               />
             )}
-
-            {/* Floating actions for assistant messages */}
-            <FloatingActions message={message} role="assistant" align="left" />
-          </>
+          </div>
         )}
       </div>
     </Message>
