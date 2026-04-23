@@ -570,6 +570,16 @@ export interface CopilotContextValue {
   busyThreadIds: ReadonlySet<string>;
 
   /**
+   * Reactive map of per-thread pending tool approvals. Key = thread id,
+   * value = ToolExecutions whose approvalStatus is "required". Empty when
+   * `concurrentThreads` is false. UI can use this to light up indicators
+   * on background threads that are blocked waiting for the user to approve
+   * or reject a tool — the approval card only renders on the active thread,
+   * so without this, a background thread's block is invisible.
+   */
+  pendingApprovalsByThread: ReadonlyMap<string, ToolExecution[]>;
+
+  /**
    * Dispose the chat instance backing a given thread ID and remove it from
    * the registry. Aborts its in-flight stream if any. Call this when a
    * thread is deleted so its background stream doesn't keep running.
@@ -779,10 +789,41 @@ export function CopilotProvider(props: CopilotProviderProps) {
     });
   }, [concurrentThreads]);
 
+  // Reactive map of per-thread pending approvals. Built by scanning every
+  // instance in instancesRef — the only place background threads are visible.
+  const [pendingApprovalsByThread, setPendingApprovalsByThread] = useState<
+    ReadonlyMap<string, ToolExecution[]>
+  >(() => new Map());
+
+  const recomputePendingApprovalsByThread = useCallback(() => {
+    if (!concurrentThreads) return;
+    const next = new Map<string, ToolExecution[]>();
+    for (const [key, inst] of instancesRef.current) {
+      if (key === SINGLE_INSTANCE_KEY) continue;
+      if (key.startsWith("__pending_")) continue;
+      const pending = inst.toolExecutions.filter(
+        (e) => e.approvalStatus === "required",
+      );
+      if (pending.length > 0) next.set(key, pending);
+    }
+    setPendingApprovalsByThread((prev) => {
+      if (prev.size !== next.size) return next;
+      for (const [id, execs] of next) {
+        const prevExecs = prev.get(id);
+        if (!prevExecs || prevExecs.length !== execs.length) return next;
+        for (let i = 0; i < execs.length; i++) {
+          if (prevExecs[i] !== execs[i]) return next;
+        }
+      }
+      return prev;
+    });
+  }, [concurrentThreads]);
+
   const notifyStateChange = useCallback(() => {
     for (const cb of subscribersRef.current) cb();
     recomputeBusyThreadIds();
-  }, [recomputeBusyThreadIds]);
+    recomputePendingApprovalsByThread();
+  }, [recomputeBusyThreadIds, recomputePendingApprovalsByThread]);
 
   // Keep latest prop/callback values in refs so the imperative factory doesn't
   // need a useCallback dep list the size of the universe.
@@ -875,8 +916,14 @@ export function CopilotProvider(props: CopilotProviderProps) {
       // so future requests hit the server's session; we just don't propagate
       // to React state or the registry key.
       recomputeBusyThreadIds();
+      recomputePendingApprovalsByThread();
     },
-    [concurrentThreads, debugLog, recomputeBusyThreadIds],
+    [
+      concurrentThreads,
+      debugLog,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
   );
 
   // Create a new chat instance and register it under `key`. Wires all
@@ -939,9 +986,15 @@ export function CopilotProvider(props: CopilotProviderProps) {
               setToolExecutions(executions);
               setAgentIteration(inst.iteration ?? 0);
             }
+            // Per-thread pending-approvals must refresh for ANY instance —
+            // background threads entering approval-required won't be seen
+            // otherwise, since the reactState `subscribe` channel only fires
+            // on message changes.
+            recomputePendingApprovalsByThread();
           },
           onApprovalRequired: (execution) => {
             debugLog("Tool approval required:", execution.name);
+            recomputePendingApprovalsByThread();
           },
           onContextUsageChange: (usage) => {
             if (inst === chatRef.current) {
@@ -991,7 +1044,12 @@ export function CopilotProvider(props: CopilotProviderProps) {
       instancesRef.current.set(key, inst);
       return inst;
     },
-    [debugLog, handleInstanceThreadAssigned, notifyStateChange],
+    [
+      debugLog,
+      handleInstanceThreadAssigned,
+      notifyStateChange,
+      recomputePendingApprovalsByThread,
+    ],
   );
 
   // Initialize the first instance on first render. If disposed (React
@@ -1260,9 +1318,15 @@ export function CopilotProvider(props: CopilotProviderProps) {
         switchActiveInstance(null);
       } else {
         recomputeBusyThreadIds();
+        recomputePendingApprovalsByThread();
       }
     },
-    [concurrentThreads, switchActiveInstance, recomputeBusyThreadIds],
+    [
+      concurrentThreads,
+      switchActiveInstance,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
   );
 
   // Re-key the active pending instance to a caller-supplied local thread id
@@ -1306,9 +1370,15 @@ export function CopilotProvider(props: CopilotProviderProps) {
         callbacksRef.current.onThreadChange?.(localId);
       }
       recomputeBusyThreadIds();
+      recomputePendingApprovalsByThread();
       debugLog("Assigned local thread id", { localId });
     },
-    [concurrentThreads, debugLog, recomputeBusyThreadIds],
+    [
+      concurrentThreads,
+      debugLog,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
   );
 
   const renewSession = useCallback(() => {
@@ -1660,6 +1730,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
       // Multi-thread streaming
       concurrentThreads,
       busyThreadIds,
+      pendingApprovalsByThread,
       disposeThreadInstance,
       assignLocalThreadId,
     }),
@@ -1704,6 +1775,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
       toolsConfig,
       concurrentThreads,
       busyThreadIds,
+      pendingApprovalsByThread,
       disposeThreadInstance,
       assignLocalThreadId,
     ],
