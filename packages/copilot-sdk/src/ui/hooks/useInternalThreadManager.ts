@@ -520,7 +520,12 @@ export function useInternalThreadManager(
 
   // ── Return ─────────────────────────────────────────────────────────────
 
-  const isBusy = isLoading || status === "streaming" || status === "submitted";
+  // In concurrent-threads mode, the user must be able to switch away from a
+  // streaming thread — per-thread busy state is surfaced via `busyThreadIds`
+  // instead. In single-thread mode, streaming locks picker & new-chat button.
+  const isBusy =
+    !concurrentThreads &&
+    (isLoading || status === "streaming" || status === "submitted");
 
   return {
     threadManager,
