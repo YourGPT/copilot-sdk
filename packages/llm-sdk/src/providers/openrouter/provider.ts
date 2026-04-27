@@ -64,6 +64,8 @@ export interface OpenRouterProviderOptions {
     /** Order preference: 'price' | 'latency' | 'throughput' */
     order?: "price" | "latency" | "throughput";
   };
+  /** Disable extended thinking/reasoning (default: thinking enabled) */
+  disableThinking?: boolean;
 }
 
 // ============================================
@@ -139,7 +141,7 @@ export function openrouter(
       supportsTools: modelConfig.tools,
       supportsStreaming: true,
       supportsJsonMode: modelConfig.jsonMode,
-      supportsThinking: false,
+      supportsThinking: true,
       supportsPDF: false,
       maxTokens: modelConfig.maxTokens,
       supportedImageTypes: modelConfig.vision
@@ -209,6 +211,9 @@ export function openrouter(
         temperature: params.temperature,
         max_tokens: params.maxTokens,
         stream: true,
+        ...(!options.disableThinking
+          ? { reasoning: { max_tokens: 8000 }, include_reasoning: true }
+          : {}),
       };
 
       // Add tools if provided
@@ -232,6 +237,7 @@ export function openrouter(
 
       let totalPromptTokens = 0;
       let totalCompletionTokens = 0;
+      let orReasoningStarted = false;
 
       for await (const chunk of stream) {
         // Check abort
@@ -241,11 +247,35 @@ export function openrouter(
         }
 
         const choice = chunk.choices[0];
-        const delta = choice?.delta;
+        const delta = choice?.delta as any;
 
         // Text content
         if (delta?.content) {
           yield { type: "text-delta", text: delta.content };
+        }
+
+        // Native reasoning tokens (OpenRouter models with reasoning_content)
+        const rc = delta?.reasoning_content ?? delta?.reasoning ?? null;
+        if (rc) {
+          const rcText =
+            typeof rc === "string"
+              ? rc
+              : Array.isArray(rc) && rc[0]?.text
+                ? rc[0].text
+                : "";
+          if (rcText) {
+            if (!orReasoningStarted) {
+              yield { type: "thinking:start" } as any;
+              orReasoningStarted = true;
+            }
+            yield { type: "thinking:delta", content: rcText } as any;
+          }
+        } else if (
+          orReasoningStarted &&
+          (delta?.content || choice?.finish_reason)
+        ) {
+          yield { type: "thinking:end" } as any;
+          orReasoningStarted = false;
         }
 
         // Tool calls

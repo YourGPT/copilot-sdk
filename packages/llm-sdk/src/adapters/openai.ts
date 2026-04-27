@@ -57,6 +57,7 @@ export class OpenAIAdapter implements LLMAdapter {
     if (baseUrl.includes("generativelanguage.googleapis.com")) return "google";
     if (baseUrl.includes("x.ai")) return "xai";
     if (baseUrl.includes("azure")) return "azure";
+    if (baseUrl.includes("openrouter.ai")) return "openrouter";
     return "openai";
   }
 
@@ -427,7 +428,8 @@ export class OpenAIAdapter implements LLMAdapter {
               },
             }
           : openaiToolOptions?.toolChoice;
-      const payload = {
+      const isOpenRouter = this.provider === "openrouter";
+      const payload: any = {
         model: request.config?.model || this.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
@@ -438,6 +440,9 @@ export class OpenAIAdapter implements LLMAdapter {
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
         stream_options: { include_usage: true },
+        ...(isOpenRouter
+          ? { reasoning: { max_tokens: 8000 }, include_reasoning: true }
+          : {}),
       };
       logProviderPayload("openai", "request payload", payload, request.debug);
       const stream = await client.chat.completions.create(payload);
@@ -461,6 +466,8 @@ export class OpenAIAdapter implements LLMAdapter {
           }
         | undefined;
 
+      let adapterReasoningStarted = false;
+
       for await (const chunk of stream) {
         logProviderPayload("openai", "stream chunk", chunk, request.debug);
         // Check for abort
@@ -468,12 +475,38 @@ export class OpenAIAdapter implements LLMAdapter {
           break;
         }
 
-        const delta = chunk.choices[0]?.delta;
+        const delta = chunk.choices[0]?.delta as any;
         const choice = chunk.choices[0];
 
         // Handle content
         if (delta?.content) {
           yield { type: "message:delta", content: delta.content };
+        }
+
+        // Handle native reasoning tokens (OpenRouter models with reasoning_content)
+        if (isOpenRouter) {
+          const rc = delta?.reasoning_content ?? delta?.reasoning ?? null;
+          if (rc) {
+            const rcText =
+              typeof rc === "string"
+                ? rc
+                : Array.isArray(rc) && (rc[0] as any)?.text
+                  ? (rc[0] as any).text
+                  : "";
+            if (rcText) {
+              if (!adapterReasoningStarted) {
+                yield { type: "thinking:start" } as any;
+                adapterReasoningStarted = true;
+              }
+              yield { type: "thinking:delta", content: rcText } as any;
+            }
+          } else if (
+            adapterReasoningStarted &&
+            (delta?.content || choice?.finish_reason)
+          ) {
+            yield { type: "thinking:end" } as any;
+            adapterReasoningStarted = false;
+          }
         }
 
         // Handle annotations (citations from web search) - OpenAI includes these in delta

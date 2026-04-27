@@ -60,6 +60,8 @@ export interface OpenRouterProviderConfig {
   siteUrl?: string;
   /** Your app name for OpenRouter rankings */
   appName?: string;
+  /** Disable extended thinking/reasoning */
+  disableThinking?: boolean;
 }
 
 // ============================================
