@@ -97,6 +97,7 @@ export function createOpenRouter(
       apiKey,
       model: modelId,
       baseUrl,
+      disableThinking: config.disableThinking,
     });
   };
 

@@ -17,6 +17,7 @@ export interface RequestLLMConfig {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**

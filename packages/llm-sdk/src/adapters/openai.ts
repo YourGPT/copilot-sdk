@@ -27,6 +27,8 @@ export interface OpenAIAdapterConfig {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
+  /** Disable extended thinking/reasoning for OpenRouter models */
+  disableThinking?: boolean;
   /**
    * Enable native web search for GPT models.
    * Uses OpenAI's web_search_preview tool.
@@ -429,19 +431,42 @@ export class OpenAIAdapter implements LLMAdapter {
             }
           : openaiToolOptions?.toolChoice;
       const isOpenRouter = this.provider === "openrouter";
+      const activeModel = request.config?.model || this.model;
+      // Detect o-series OpenAI models (both direct and via OpenRouter)
+      // Matches: o1, o3, o4-mini, o1-preview, o3-mini, o3-2025-04-16, etc.
+      const modelSlug = activeModel.replace("openai/", "");
+      const isOSeries = /^o[1-9]/.test(modelSlug);
+      const isOpenAIOnOpenRouter =
+        isOpenRouter && activeModel.startsWith("openai/");
+      const maxTokensValue = request.config?.maxTokens ?? this.config.maxTokens;
       const payload: any = {
-        model: request.config?.model || this.model,
+        model: activeModel,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         tool_choice: tools.length > 0 ? toolChoice : undefined,
         parallel_tool_calls:
           tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
-        temperature: request.config?.temperature ?? this.config.temperature,
-        max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         stream: true,
         stream_options: { include_usage: true },
-        ...(isOpenRouter
-          ? { reasoning: { max_tokens: 8000 }, include_reasoning: true }
+        // o-series: use max_completion_tokens + reasoning_effort, no temperature
+        // regular models: use max_tokens + temperature
+        ...(isOSeries
+          ? {
+              max_completion_tokens: maxTokensValue,
+              reasoning_effort: request.config?.reasoningEffort ?? "medium",
+            }
+          : {
+              temperature:
+                request.config?.temperature ?? this.config.temperature,
+              max_tokens: maxTokensValue,
+            }),
+        // Non-OpenAI OpenRouter models support OR's reasoning/include_reasoning params.
+        // When disableThinking=true we must explicitly send include_reasoning:false because
+        // models like Qwen3 and DeepSeek-R1 reason by default even without the reasoning param.
+        ...(isOpenRouter && !isOpenAIOnOpenRouter
+          ? this.config.disableThinking
+            ? { include_reasoning: false }
+            : { reasoning: { max_tokens: 8000 }, include_reasoning: true }
           : {}),
       };
       logProviderPayload("openai", "request payload", payload, request.debug);
@@ -693,16 +718,27 @@ export class OpenAIAdapter implements LLMAdapter {
           }
         : openaiToolOptions?.toolChoice;
 
-    const payload = {
-      model: request.config?.model || this.model,
+    const activeModel2 = request.config?.model || this.model;
+    const modelSlug2 = activeModel2.replace("openai/", "");
+    const isOSeries2 = /^o[1-9]/.test(modelSlug2);
+    const maxTokensValue2 = request.config?.maxTokens ?? this.config.maxTokens;
+    const payload: any = {
+      model: activeModel2,
       messages,
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? toolChoice : undefined,
       parallel_tool_calls:
         tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
-      temperature: request.config?.temperature ?? this.config.temperature,
-      max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
       stream: false,
+      ...(isOSeries2
+        ? {
+            max_completion_tokens: maxTokensValue2,
+            reasoning_effort: request.config?.reasoningEffort ?? "medium",
+          }
+        : {
+            temperature: request.config?.temperature ?? this.config.temperature,
+            max_tokens: maxTokensValue2,
+          }),
     };
 
     logProviderPayload("openai", "request payload", payload, request.debug);
