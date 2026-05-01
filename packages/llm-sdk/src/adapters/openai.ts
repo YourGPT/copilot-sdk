@@ -4,6 +4,7 @@ import type {
   WebSearchConfig,
   Citation,
   ToolDefinition,
+  ActionDefinition,
 } from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
 import type {
@@ -223,6 +224,306 @@ export class OpenAIAdapter implements LLMAdapter {
     };
   }
 
+  /**
+   * OpenAI reasoning models on OpenRouter (o1/o3/o4/gpt-5 family) hide their
+   * reasoning content on the chat-completions endpoint. To surface reasoning
+   * SUMMARIES (not raw CoT, which OpenAI never exposes) we have to use the
+   * Responses API, which streams `response.reasoning_summary_text.delta` events.
+   *
+   * Match by prefix on the OpenRouter model id. Excludes openai/gpt-4o,
+   * openai/gpt-4.1, openai/chatgpt-* — those continue on chat-completions.
+   */
+  private isOpenAIReasoningModelOnOpenRouter(activeModel: string): boolean {
+    if (this.provider !== "openrouter") return false;
+    return (
+      activeModel.startsWith("openai/o1") ||
+      activeModel.startsWith("openai/o3") ||
+      activeModel.startsWith("openai/o4") ||
+      activeModel.startsWith("openai/gpt-5")
+    );
+  }
+
+  /**
+   * Convert ActionDefinition[] (the chat-completions tool shape used by the
+   * adapter) to the Responses API tool shape.
+   */
+  private buildResponsesToolsFromActions(
+    actions: ActionDefinition[] | undefined,
+  ): Array<Record<string, unknown>> | undefined {
+    if (!actions || actions.length === 0) return undefined;
+    const formatted = formatTools(actions);
+    return formatted.map((t) => ({
+      type: "function",
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    }));
+  }
+
+  /**
+   * Streaming Responses API path for OpenAI reasoning models on OpenRouter.
+   *
+   * Maps Responses API SSE events back to the same StreamEvent shapes the
+   * chat-completions path emits, so downstream consumers (processChunk.ts,
+   * frontend tool handlers, plan approval, specialist delegations) see
+   * identical events regardless of which path produced them.
+   *
+   *   response.reasoning_summary_text.delta  → thinking:start (once) + thinking:delta
+   *   response.output_text.delta             → message:delta
+   *   response.output_item.added (function_call) → action:start (queued buffer)
+   *   response.function_call_arguments.delta → action:args (progressive)
+   *   response.output_item.done (function_call) → final action:args + action:end
+   *   response.completed                     → message:end + done(usage)
+   *   response.error                         → error
+   */
+  private async *streamWithResponsesAPI(
+    request: ChatCompletionRequest,
+    activeModel: string,
+    messageId: string,
+  ): AsyncGenerator<StreamEvent> {
+    const client = await this.getClient();
+    const maxTokensValue = request.config?.maxTokens ?? this.config.maxTokens;
+    const payload: Record<string, unknown> = {
+      model: activeModel,
+      input: this.buildResponsesInput(request),
+      stream: true,
+      reasoning: {
+        effort: request.config?.reasoningEffort ?? "medium",
+        summary: "auto",
+      },
+    };
+    if (request.systemPrompt) payload.instructions = request.systemPrompt;
+    if (typeof maxTokensValue === "number")
+      payload.max_output_tokens = maxTokensValue;
+    const tools = this.buildResponsesToolsFromActions(request.actions);
+    if (tools && tools.length > 0) payload.tools = tools;
+
+    logProviderPayload(
+      "openai",
+      "responses-api request payload",
+      payload,
+      request.debug,
+    );
+
+    let stream: any;
+    try {
+      stream = await client.responses.create(payload);
+    } catch (error) {
+      yield {
+        type: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+        code: "OPENAI_RESPONSES_ERROR",
+      };
+      return;
+    }
+
+    // Tool-call accumulators keyed by call_id (the id used in function_call_output).
+    // Some relays use item_id internally and call_id externally; we key on whichever
+    // arrives, but normalize to call_id when emitting.
+    const toolBuffers = new Map<
+      string,
+      { id: string; name: string; arguments: string; emittedStart: boolean }
+    >();
+    const itemIdToCallId = new Map<string, string>();
+
+    let usage:
+      | {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+        }
+      | undefined;
+    let reasoningStarted = false;
+    let textStarted = false;
+    let finishEmitted = false;
+
+    const resolveCallId = (evt: any): string => {
+      if (evt?.call_id) return evt.call_id;
+      if (evt?.item_id) return itemIdToCallId.get(evt.item_id) ?? evt.item_id;
+      if (evt?.item?.call_id) return evt.item.call_id;
+      if (evt?.item?.id) return evt.item.id;
+      return "";
+    };
+
+    try {
+      for await (const evt of stream) {
+        logProviderPayload(
+          "openai",
+          "responses-api stream chunk",
+          evt,
+          request.debug,
+        );
+
+        if (request.signal?.aborted) break;
+
+        const t: string = evt?.type ?? "";
+
+        if (t === "response.reasoning_summary_text.delta") {
+          const delta: string = evt.delta ?? "";
+          if (!delta) continue;
+          if (!reasoningStarted) {
+            yield { type: "thinking:start" } as any;
+            reasoningStarted = true;
+          }
+          yield { type: "thinking:delta", content: delta } as any;
+          continue;
+        }
+        if (
+          t === "response.reasoning_summary_text.done" ||
+          t === "response.reasoning.done"
+        ) {
+          continue;
+        }
+
+        if (t === "response.output_text.delta") {
+          const text: string = evt.delta ?? "";
+          if (!text) continue;
+          if (reasoningStarted && !textStarted) {
+            yield { type: "thinking:end" } as any;
+            textStarted = true;
+          }
+          yield { type: "message:delta", content: text };
+          continue;
+        }
+
+        if (t === "response.output_item.added") {
+          const item = evt.item;
+          if (item?.type === "function_call") {
+            const callId: string = item.call_id ?? item.id ?? "";
+            const itemId: string = item.id ?? callId;
+            if (callId) {
+              if (itemId && itemId !== callId) {
+                itemIdToCallId.set(itemId, callId);
+              }
+              if (!toolBuffers.has(callId)) {
+                toolBuffers.set(callId, {
+                  id: callId,
+                  name: item.name ?? "",
+                  arguments: item.arguments ?? "",
+                  emittedStart: false,
+                });
+              }
+              const buf = toolBuffers.get(callId)!;
+              if (buf.name && !buf.emittedStart) {
+                yield { type: "action:start", id: buf.id, name: buf.name };
+                buf.emittedStart = true;
+              }
+            }
+          }
+          continue;
+        }
+
+        if (t === "response.function_call_arguments.delta") {
+          const callId = resolveCallId(evt);
+          const delta: string = evt.delta ?? "";
+          if (!callId || !delta) continue;
+          let buf = toolBuffers.get(callId);
+          if (!buf) {
+            buf = { id: callId, name: "", arguments: "", emittedStart: false };
+            toolBuffers.set(callId, buf);
+          }
+          buf.arguments += delta;
+          if (buf.emittedStart) {
+            yield {
+              type: "action:args",
+              id: buf.id,
+              args: buf.arguments,
+            };
+          }
+          continue;
+        }
+
+        if (t === "response.output_item.done") {
+          const item = evt.item;
+          if (item?.type === "function_call") {
+            const callId: string = item.call_id ?? item.id ?? "";
+            const buf = toolBuffers.get(callId);
+            const name = buf?.name || item.name || "";
+            const argsStr = buf?.arguments || item.arguments || "{}";
+            if (callId && name) {
+              if (!buf?.emittedStart) {
+                yield { type: "action:start", id: callId, name };
+              }
+              yield {
+                type: "action:args",
+                id: callId,
+                args: argsStr,
+              };
+              yield {
+                type: "action:end",
+                id: callId,
+                name,
+              };
+            }
+            toolBuffers.delete(callId);
+          }
+          continue;
+        }
+
+        if (t === "response.completed") {
+          const u = evt.response?.usage;
+          if (u) {
+            usage = {
+              prompt_tokens: u.input_tokens ?? 0,
+              completion_tokens: u.output_tokens ?? 0,
+              total_tokens:
+                u.total_tokens ??
+                (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+            };
+          }
+          // Defensive: flush any tool buffers that didn't get an explicit done event.
+          for (const buf of toolBuffers.values()) {
+            if (!buf.id || !buf.name) continue;
+            if (!buf.emittedStart) {
+              yield { type: "action:start", id: buf.id, name: buf.name };
+            }
+            yield {
+              type: "action:args",
+              id: buf.id,
+              args: buf.arguments || "{}",
+            };
+            yield { type: "action:end", id: buf.id, name: buf.name };
+          }
+          toolBuffers.clear();
+          if (reasoningStarted && !textStarted) {
+            yield { type: "thinking:end" } as any;
+          }
+          yield { type: "message:end" };
+          yield { type: "done", usage };
+          finishEmitted = true;
+          continue;
+        }
+
+        if (t === "response.error" || t === "error") {
+          const msg: string =
+            evt.error?.message || evt.message || "Responses API error";
+          yield {
+            type: "error",
+            message: msg,
+            code: "OPENAI_RESPONSES_ERROR",
+          };
+          return;
+        }
+      }
+    } catch (error) {
+      yield {
+        type: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+        code: "OPENAI_RESPONSES_ERROR",
+      };
+      return;
+    }
+
+    // Stream ended without an explicit response.completed — emit a synthetic finish.
+    if (!finishEmitted) {
+      if (reasoningStarted && !textStarted) {
+        yield { type: "thinking:end" } as any;
+      }
+      yield { type: "message:end" };
+      yield { type: "done", usage };
+    }
+  }
+
   private async completeWithResponses(
     request: ChatCompletionRequest,
   ): Promise<CompletionResult> {
@@ -438,6 +739,17 @@ export class OpenAIAdapter implements LLMAdapter {
       const isOSeries = /^o[1-9]/.test(modelSlug);
       const isOpenAIOnOpenRouter =
         isOpenRouter && activeModel.startsWith("openai/");
+
+      // OpenAI reasoning models on OpenRouter: chat-completions hides reasoning
+      // entirely. Route to Responses API to surface reasoning summaries.
+      // disableThinking opts out (falls through to chat-completions, no reasoning shown).
+      if (
+        !this.config.disableThinking &&
+        this.isOpenAIReasoningModelOnOpenRouter(activeModel)
+      ) {
+        yield* this.streamWithResponsesAPI(request, activeModel, messageId);
+        return;
+      }
       const maxTokensValue = request.config?.maxTokens ?? this.config.maxTokens;
       const payload: any = {
         model: activeModel,

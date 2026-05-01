@@ -42,6 +42,23 @@ const DEFAULT_MODEL_CONFIG = {
   maxTokens: 128000,
 };
 
+/**
+ * OpenAI reasoning models that hide reasoning on chat-completions but expose
+ * reasoning summaries on the Responses API. Match by prefix on the OpenRouter
+ * model id (e.g. "openai/o3", "openai/o3-mini-high", "openai/gpt-5-thinking").
+ *
+ * Excludes non-reasoning OpenAI models like openai/gpt-4o, openai/gpt-4.1,
+ * openai/chatgpt-* — those continue on chat-completions.
+ */
+function isOpenAIReasoningModel(modelId: string): boolean {
+  return (
+    modelId.startsWith("openai/o1") ||
+    modelId.startsWith("openai/o3") ||
+    modelId.startsWith("openai/o4") ||
+    modelId.startsWith("openai/gpt-5")
+  );
+}
+
 // ============================================
 // Provider Options
 // ============================================
@@ -200,6 +217,16 @@ export function openrouter(
     },
 
     async *doStream(params: DoGenerateParams): AsyncGenerator<StreamChunk> {
+      // OpenAI o-series and GPT-5 reasoning models do NOT expose reasoning content
+      // on chat-completions through OpenRouter — only summaries via the Responses API.
+      // Route those through doStreamResponsesAPI so the UI can show thinking summaries.
+      // disableThinking opts out (falls through to chat-completions, no thinking shown).
+      if (!options.disableThinking && isOpenAIReasoningModel(modelId)) {
+        const client = await getClient();
+        yield* doStreamResponsesAPI(client, modelId, params);
+        return;
+      }
+
       const client = await getClient();
 
       const messages = formatMessagesForOpenRouter(params.messages);
@@ -426,6 +453,357 @@ function formatMessagesForOpenRouter(messages: CoreMessage[]): any[] {
         return msg;
     }
   });
+}
+
+// ============================================
+// Responses API path (OpenAI reasoning models only)
+// ============================================
+
+/**
+ * Convert CoreMessage[] to OpenAI Responses API `input` array shape.
+ * Responses API uses {type:"message", role, content:[{type:"input_text", text}]}
+ * — different from chat-completions' messages array.
+ *
+ * Multimodal images use `input_image` with image_url. Tool messages become
+ * function_call_output items keyed by tool_call_id.
+ */
+function formatMessagesForResponsesAPI(messages: CoreMessage[]): any[] {
+  const out: any[] = [];
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      // System content is hoisted onto a top-level instructions field by the caller;
+      // include here as a regular developer message for safety in case caller didn't.
+      out.push({
+        type: "message",
+        role: "system",
+        content: [
+          {
+            type: "input_text",
+            text: typeof msg.content === "string" ? msg.content : "",
+          },
+        ],
+      });
+      continue;
+    }
+    if (msg.role === "user") {
+      const parts: any[] = [];
+      if (typeof msg.content === "string") {
+        parts.push({ type: "input_text", text: msg.content });
+      } else {
+        for (const part of msg.content) {
+          if (part.type === "text") {
+            parts.push({ type: "input_text", text: part.text });
+          } else if (part.type === "image") {
+            const imageData =
+              typeof part.image === "string"
+                ? part.image
+                : Buffer.from(part.image).toString("base64");
+            const url = imageData.startsWith("data:")
+              ? imageData
+              : `data:${part.mimeType ?? "image/png"};base64,${imageData}`;
+            parts.push({ type: "input_image", image_url: url });
+          }
+        }
+      }
+      out.push({ type: "message", role: "user", content: parts });
+      continue;
+    }
+    if (msg.role === "assistant") {
+      // If the assistant message carried tool calls, emit each as a function_call item.
+      // Note: we deliberately drop the assistant text bubble when tool_calls exist —
+      // Responses API treats function_call as an output item, not nested in a message.
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        for (const tc of msg.toolCalls) {
+          out.push({
+            type: "function_call",
+            call_id: tc.id,
+            name: tc.name,
+            arguments: JSON.stringify(tc.args ?? {}),
+          });
+        }
+        if (typeof msg.content === "string" && msg.content.length > 0) {
+          out.push({
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: msg.content }],
+          });
+        }
+      } else {
+        const text = typeof msg.content === "string" ? msg.content : "";
+        out.push({
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text }],
+        });
+      }
+      continue;
+    }
+    if (msg.role === "tool") {
+      out.push({
+        type: "function_call_output",
+        call_id: msg.toolCallId,
+        output:
+          typeof msg.content === "string"
+            ? msg.content
+            : JSON.stringify(msg.content),
+      });
+      continue;
+    }
+  }
+  return out;
+}
+
+/**
+ * Convert chat-completions tool definitions ({type:"function", function:{...}})
+ * to Responses API tool shape ({type:"function", name, description, parameters}).
+ */
+function formatToolsForResponsesAPI(
+  tools: unknown[] | undefined,
+): any[] | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map((t: any) => {
+    // Already in Responses API shape (flat name/parameters)
+    if (t?.name && t?.parameters && t?.type === "function") return t;
+    // Chat-completions shape — unwrap function.{name,parameters,description}
+    const fn = t?.function ?? t;
+    return {
+      type: "function",
+      name: fn.name,
+      description: fn.description,
+      parameters: fn.parameters ?? { type: "object", properties: {} },
+    };
+  });
+}
+
+/**
+ * Stream from OpenRouter's Responses API and translate events into the same
+ * StreamChunk shape that the chat-completions path emits, so downstream
+ * consumers (processChunk.ts, frontend tool handlers, plan approval, etc.)
+ * see identical chunks regardless of which path produced them.
+ *
+ * Event mapping:
+ *   response.reasoning_summary_text.delta  → thinking:start (once) + thinking:delta
+ *   response.output_text.delta             → text-delta
+ *   response.output_item.added (function_call) → open new tool-call buffer
+ *   response.function_call_arguments.delta → append to tool-call buffer
+ *   response.output_item.done (function_call) → emit tool-call chunk
+ *   response.completed                     → finish
+ *   response.error                         → error
+ */
+async function* doStreamResponsesAPI(
+  client: any,
+  modelId: string,
+  params: DoGenerateParams,
+): AsyncGenerator<StreamChunk> {
+  // Hoist system messages into top-level instructions (Responses API convention).
+  const systemTexts: string[] = [];
+  const nonSystem: CoreMessage[] = [];
+  for (const m of params.messages) {
+    if (m.role === "system" && typeof m.content === "string") {
+      systemTexts.push(m.content);
+    } else {
+      nonSystem.push(m);
+    }
+  }
+  const instructions = systemTexts.join("\n\n") || undefined;
+  const input = formatMessagesForResponsesAPI(nonSystem);
+
+  const requestBody: any = {
+    model: modelId,
+    input,
+    stream: true,
+    reasoning: { effort: "medium", summary: "auto" },
+  };
+  if (instructions) requestBody.instructions = instructions;
+  if (typeof params.maxTokens === "number")
+    requestBody.max_output_tokens = params.maxTokens;
+  if (typeof params.temperature === "number")
+    requestBody.temperature = params.temperature;
+  const tools = formatToolsForResponsesAPI(params.tools);
+  if (tools) requestBody.tools = tools;
+
+  let stream: any;
+  try {
+    stream = await client.responses.create(requestBody);
+  } catch (err) {
+    yield {
+      type: "error",
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+    return;
+  }
+
+  // Tool-call accumulators keyed by item_id (Responses API streams args as deltas
+  // under the same output item, then signals completion via output_item.done).
+  const toolCalls = new Map<
+    string,
+    { id: string; name: string; arguments: string }
+  >();
+
+  let reasoningStarted = false;
+  let textStarted = false;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let finishEmitted = false;
+
+  for await (const evt of stream) {
+    if (params.signal?.aborted) {
+      yield { type: "error", error: new Error("Aborted") };
+      return;
+    }
+
+    const t: string = evt?.type ?? "";
+
+    // Reasoning summary deltas (the whole reason this path exists)
+    if (t === "response.reasoning_summary_text.delta") {
+      const delta: string = evt.delta ?? "";
+      if (!delta) continue;
+      if (!reasoningStarted) {
+        yield { type: "thinking:start" } as any;
+        reasoningStarted = true;
+      }
+      yield { type: "thinking:delta", content: delta } as any;
+      continue;
+    }
+    if (
+      t === "response.reasoning_summary_text.done" ||
+      t === "response.reasoning.done"
+    ) {
+      // No-op here — we close reasoning when text starts (mirrors chat-completions behavior)
+      continue;
+    }
+
+    // Visible answer text
+    if (t === "response.output_text.delta") {
+      const text: string = evt.delta ?? "";
+      if (!text) continue;
+      if (reasoningStarted && !textStarted) {
+        yield { type: "thinking:end" } as any;
+        textStarted = true;
+      }
+      yield { type: "text-delta", text };
+      continue;
+    }
+
+    // Tool call lifecycle
+    if (t === "response.output_item.added") {
+      const item = evt.item;
+      if (item?.type === "function_call") {
+        const id: string = item.call_id ?? item.id ?? "";
+        if (id) {
+          toolCalls.set(id, {
+            id,
+            name: item.name ?? "",
+            arguments: item.arguments ?? "",
+          });
+        }
+      }
+      continue;
+    }
+    if (t === "response.function_call_arguments.delta") {
+      // Item may be referenced by item_id or call_id depending on OpenRouter's relay.
+      const id: string = evt.call_id ?? evt.item_id ?? "";
+      const delta: string = evt.delta ?? "";
+      if (!id || !delta) continue;
+      const existing = toolCalls.get(id);
+      if (existing) {
+        existing.arguments += delta;
+      } else {
+        // Some relays emit args before the output_item.added envelope.
+        toolCalls.set(id, { id, name: "", arguments: delta });
+      }
+      continue;
+    }
+    if (t === "response.output_item.done") {
+      const item = evt.item;
+      if (item?.type === "function_call") {
+        const id: string = item.call_id ?? item.id ?? "";
+        const tc = toolCalls.get(id);
+        const name = tc?.name || item.name || "";
+        const argsStr = tc?.arguments || item.arguments || "{}";
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(argsStr || "{}");
+        } catch {
+          args = {};
+        }
+        if (id && name) {
+          yield {
+            type: "tool-call",
+            toolCall: { id, name, args },
+          };
+        }
+        toolCalls.delete(id);
+      }
+      continue;
+    }
+
+    // Terminal events
+    if (t === "response.completed") {
+      const usage = evt.response?.usage;
+      if (usage) {
+        totalPromptTokens = usage.input_tokens ?? 0;
+        totalCompletionTokens = usage.output_tokens ?? 0;
+      }
+      // Emit any tool calls that didn't get an explicit done event (defensive)
+      for (const tc of toolCalls.values()) {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(tc.arguments || "{}");
+        } catch {
+          args = {};
+        }
+        if (tc.id && tc.name) {
+          yield {
+            type: "tool-call",
+            toolCall: { id: tc.id, name: tc.name, args },
+          };
+        }
+      }
+      toolCalls.clear();
+
+      if (reasoningStarted && !textStarted) {
+        yield { type: "thinking:end" } as any;
+      }
+
+      const finishReason: FinishReason =
+        toolCalls.size > 0 ? "tool-calls" : "stop";
+      yield {
+        type: "finish",
+        finishReason,
+        usage: {
+          promptTokens: totalPromptTokens,
+          completionTokens: totalCompletionTokens,
+          totalTokens: totalPromptTokens + totalCompletionTokens,
+        },
+      };
+      finishEmitted = true;
+      continue;
+    }
+    if (t === "response.error" || t === "error") {
+      const msg: string =
+        evt.error?.message || evt.message || "Responses API error";
+      yield { type: "error", error: new Error(msg) };
+      return;
+    }
+  }
+
+  // Stream ended without an explicit response.completed — emit a synthetic finish
+  // so downstream state machines settle. Mirrors the chat-completions guarantee.
+  if (!finishEmitted) {
+    if (reasoningStarted && !textStarted) {
+      yield { type: "thinking:end" } as any;
+    }
+    yield {
+      type: "finish",
+      finishReason: "stop",
+      usage: {
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+        totalTokens: totalPromptTokens + totalCompletionTokens,
+      },
+    };
+  }
 }
 
 // ============================================
