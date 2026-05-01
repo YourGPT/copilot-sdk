@@ -1,0 +1,183 @@
+---
+title: MCP Integration
+description: Connect to MCP servers and use their tools in your app
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Provider-Level Config
+
+The simplest way to add MCP servers — configure them directly on `CopilotProvider`:
+
+```tsx
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+function App() {
+  return (
+    <CopilotProvider
+      runtimeUrl="/api/chat"
+      mcpServers={[
+        {
+          name: "mcp360",
+          transport: "http",
+          url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
+        },
+        {
+          name: "github",
+          transport: "http",
+          url: "https://mcp.github.com",
+          headers: { Authorization: `Bearer ${githubToken}` },
+        },
+      ]}
+    >
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+All servers connect automatically and tools are registered with the AI.
+
+### MCPServerConfig Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | Required | Unique identifier for this server |
+| `transport` | `"http" \| "sse"` | Required | Transport type |
+| `url` | `string` | Required | Server URL |
+| `headers` | `Record<string, string>` | `{}` | Custom HTTP headers |
+| `timeout` | `number` | `30000` | Request timeout in ms |
+| `prefixToolNames` | `boolean` | `true` | Prefix tools with server name |
+
+---
+
+## useMCPTools Hook
+
+For more control, use the hook directly inside `CopilotProvider`:
+
+```tsx
+function Chat() {
+  const { isConnected, isLoading, toolDefinitions } = useMCPTools({
+    name: "mcp360",
+    transport: "http",
+    url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
+  });
+
+  return <CopilotChat />;
+}
+```
+
+### Hook Return Values
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isConnected` | `boolean` | Whether connected to the server |
+| `isLoading` | `boolean` | Whether connection is in progress |
+| `toolDefinitions` | `ToolDefinition[]` | Available tools |
+| `state` | `MCPClientState` | Full connection state including errors |
+| `connect` | `() => Promise` | Manually connect |
+| `disconnect` | `() => Promise` | Disconnect |
+| `callTool` | `(name, args) => Promise` | Call a tool directly |
+
+### Transport Types
+
+<Tabs items={['HTTP (Recommended)', 'SSE']}>
+  <Tab value="HTTP (Recommended)">
+```tsx
+useMCPTools({ name: "server", transport: "http", url: "https://mcp.example.com" });
+```
+Best for most remote MCP servers.
+  </Tab>
+  <Tab value="SSE">
+```tsx
+useMCPTools({ name: "realtime", transport: "sse", url: "https://mcp.example.com/events" });
+```
+Best for real-time streaming connections.
+  </Tab>
+</Tabs>
+
+---
+
+## Multiple Servers
+
+Call the hook multiple times — all tools register with the same `CopilotProvider`:
+
+```tsx
+function Chat() {
+  useMCPTools({ name: "github", transport: "http", url: "https://mcp.github.com", headers: { Authorization: `Bearer ${githubToken}` } });
+  useMCPTools({ name: "slack", transport: "http", url: "https://mcp.slack.com", headers: { Authorization: `Bearer ${slackToken}` } });
+
+  return <CopilotChat />;
+}
+```
+
+<Callout type="info">
+With `prefixToolNames: true` (default), tools are namespaced to avoid conflicts: `github_create_issue`, `slack_send_message`.
+</Callout>
+
+---
+
+## MCP-UI
+
+[MCP-UI](https://github.com/idosal/mcp-ui) extends MCP to allow tools to return interactive HTML components — product cards, forms, charts — rendered inline in chat.
+
+```tsx
+function Chat() {
+  useMCPTools({ name: "shop", transport: "http", url: "/api/mcp" });
+
+  const { handleIntent } = useMCPUIIntents({
+    onIntent: (action, data) => {
+      if (action === "add_to_cart") addToCart(data.productId, data.quantity);
+    },
+    onPrompt: (text) => setChatInput(text),
+    onNotify: (message, level) => toast[level || "info"](message),
+  });
+
+  return <CopilotChat onUIIntent={handleIntent} />;
+}
+```
+
+### Intent Types
+
+| Type | Handler | Description |
+|------|---------|-------------|
+| `intent` | `onIntent` | Semantic action for your app |
+| `prompt` | `onPrompt` | Add text to chat input |
+| `notify` | `onNotify` | Show notification |
+| `link` | `onLink` | Open a URL |
+| `tool` | `onToolCall` | Call another MCP tool |
+
+---
+
+## Error Handling
+
+```tsx
+const { state } = useMCPTools({
+  name: "server",
+  transport: "http",
+  url: "https://mcp.example.com",
+  onError: (error) => console.error(`MCP Error: ${error.message}`),
+});
+
+// state.connectionState: "disconnected" | "connecting" | "connected" | "error"
+```
+
+---
+
+## MCP360 Gateway
+
+Access 100+ tools through a single connection with [MCP360](https://mcp360.ai):
+
+```tsx
+useMCPTools({
+  name: "mcp360",
+  transport: "http",
+  url: "https://connect.mcp360.ai/v1/mcp360/mcp?token=YOUR_TOKEN",
+});
+```
+
+<Callout type="info">
+MCP360 includes web search, scraping, SEO tools, e-commerce data, and more. [Explore all tools →](https://mcp360.ai)
+</Callout>

@@ -4,12 +4,12 @@
 #
 
 # Add homebrew to PATH for non-interactive shells
-export PATH="/opt/homebrew/bin:$PATH"
+export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
 
 echo "🔍 Running Gitleaks to check for secrets..."
 
 # Check if gitleaks is installed
-if ! command -v gitleaks &> /dev/null; then
+if ! command -v gitleaks > /dev/null 2>&1; then
     echo ""
     echo "❌ ERROR: Gitleaks is not installed!"
     echo ""

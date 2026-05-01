@@ -6,16 +6,11 @@ import {
   Package,
   Atom,
   Palette,
-  Server,
-  Wrench,
-  BookOpen,
   Zap,
   Code2,
   Settings,
   Blocks,
-  MessageSquare,
   Hammer,
-  FileCode,
   Plug,
   Globe,
   Layers,
@@ -28,7 +23,6 @@ import {
   Triangle,
   Image,
   Lightbulb,
-  Paintbrush,
   Database,
 } from "lucide-react";
 
@@ -41,6 +35,14 @@ import {
   MessageQuestionIcon,
   AiChip1,
   Grid1,
+  SlidersHorizontalIcon,
+  AiBookIcon,
+  MagicWandIcon,
+  PuzzleIcon,
+  BubbleChatIcon,
+  FileCodeIcon,
+  ServerStackIcon,
+  AiMagicIcon,
 } from "@/components/icons";
 
 const icons: Record<string, React.ComponentType> = {
@@ -49,16 +51,11 @@ const icons: Record<string, React.ComponentType> = {
   Package,
   Atom,
   Palette,
-  Server,
-  Wrench,
-  BookOpen,
   Zap,
   Code2,
   Settings,
   Blocks,
-  MessageSquare,
   Hammer,
-  FileCode,
   Plug,
   Globe,
   Layers,
@@ -71,7 +68,7 @@ const icons: Record<string, React.ComponentType> = {
   TriangleRight: Triangle,
   Image,
   Lightbulb,
-  Paintbrush,
+  Database,
   // Custom icons
   Brain: BrainIcon,
   Robot: RobotIcon,
@@ -80,7 +77,15 @@ const icons: Record<string, React.ComponentType> = {
   MessageQuestion: MessageQuestionIcon,
   AiChip1: AiChip1,
   Grid1: Grid1,
-  Database: Database,
+  // Hugeicons duotone
+  SlidersHorizontal: SlidersHorizontalIcon,
+  AiBook: AiBookIcon,
+  MagicWand: MagicWandIcon,
+  Puzzle: PuzzleIcon,
+  BubbleChat: BubbleChatIcon,
+  FileCode: FileCodeIcon,
+  Server: ServerStackIcon,
+  AiMagic: AiMagicIcon,
 };
 
 export const source = loader({

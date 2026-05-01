@@ -293,6 +293,11 @@ export function anthropic(
                 name: event.content_block.name,
                 input: "",
               };
+              yield {
+                type: "tool-call-start" as const,
+                toolCallId: event.content_block.id,
+                toolName: event.content_block.name,
+              };
             }
             break;
 
@@ -304,6 +309,11 @@ export function anthropic(
               currentToolUse
             ) {
               currentToolUse.input += event.delta.partial_json;
+              yield {
+                type: "tool-call-delta" as const,
+                toolCallId: currentToolUse.id,
+                argsText: currentToolUse.input,
+              };
             }
             break;
 

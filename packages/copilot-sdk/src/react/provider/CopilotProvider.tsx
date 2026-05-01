@@ -321,6 +321,15 @@ export interface CopilotProviderProps {
   /** Enable/disable streaming (default: true) */
   streaming?: boolean;
   /**
+   * Controls how multi-turn agent responses appear in the UI.
+   *
+   * - `'multi-step'` (default) — each server agent iteration gets its own
+   *   assistant bubble. Mirrors OpenAI / LiteLLM multi-turn structure.
+   * - `'single-turn'` — all iterations are accumulated into one bubble,
+   *   finalized when the server sends `done`. Same as Vercel AI SDK / Claude.ai.
+   */
+  streamMode?: "multi-step" | "single-turn";
+  /**
    * Custom headers to send with each request
    * Can be static object or getter function for dynamic resolution.
    */
@@ -560,6 +569,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
     onError,
     parseError,
     streaming,
+    streamMode,
     headers,
     body,
     debug = false,
@@ -658,6 +668,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
         yourgptConfig,
         initialMessages: uiInitialMessages,
         streaming,
+        streamMode,
         headers,
         body,
         parseError,

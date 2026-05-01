@@ -272,8 +272,10 @@ export class AbstractAgentLoop implements AgentLoopActions {
     }
 
     // Create new abort controller for this batch
+    // Do NOT reset _isCancelled here — if stop() was called between the
+    // iteration check above and this line, we must not wipe that signal.
+    // _isCancelled is only reset in resetIterations() (called by sendMessage).
     this.abortController = new AbortController();
-    this._isCancelled = false;
     this._isProcessing = true;
 
     this.setIteration(this._iteration + 1);
@@ -306,19 +308,36 @@ export class AbstractAgentLoop implements AgentLoopActions {
   ): Promise<ToolResponse> {
     const tool = this.getTool(toolCall.name);
 
-    // Create execution record
-    const execution: ToolExecution = {
-      id: toolCall.id,
-      toolCallId: toolCall.id,
-      name: toolCall.name,
-      args: toolCall.args,
-      status: "pending",
-      approvalStatus: "none",
-      startedAt: new Date(),
-      hidden: tool?.hidden,
-    };
+    // Check if this execution already exists (created during streaming for
+    // progressive rendering of client tools). If so, update it in place
+    // rather than creating a duplicate.
+    const existingExecution = this._toolExecutions.find(
+      (e) => e.id === toolCall.id,
+    );
 
-    this.addToolExecution(execution);
+    let execution: ToolExecution;
+    if (existingExecution) {
+      // Reuse the streaming execution — update args with the final parsed values
+      // Keep status as "executing" to avoid UI flash (don't reset to "pending")
+      execution = existingExecution;
+      this.updateToolExecution(toolCall.id, {
+        args: toolCall.args,
+      });
+    } else {
+      // Create fresh execution record
+      execution = {
+        id: toolCall.id,
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        args: toolCall.args,
+        status: "pending",
+        approvalStatus: "none",
+        startedAt: new Date(),
+        hidden: tool?.hidden,
+      };
+      this.addToolExecution(execution);
+    }
+
     this.callbacks.onToolStart?.(execution);
 
     // Tool not found

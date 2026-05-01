@@ -240,8 +240,11 @@ export function useTools(tools: ToolSet): void {
   // Update ref when tools change
   toolsRef.current = tools;
 
-  // Create a stable key from tool names to detect actual changes
-  const toolsKey = Object.keys(tools).sort().join(",");
+  // Create a stable key from tool names + availability flags to detect actual changes
+  const toolsKey = Object.entries(tools)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, def]) => `${name}:${def.available ?? true}`)
+    .join(",");
 
   useEffect(() => {
     const currentTools = toolsRef.current;
@@ -269,7 +272,7 @@ export function useTools(tools: ToolSet): void {
       registeredToolsRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolsKey]); // Only re-run when tool names change, not on every render
+  }, [toolsKey]); // Re-run when tool names or availability flags change
 }
 
 /**

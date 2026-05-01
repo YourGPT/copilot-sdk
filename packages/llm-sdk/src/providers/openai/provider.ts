@@ -282,9 +282,19 @@ export function openai(
                 name: tc.function?.name ?? "",
                 arguments: tc.function?.arguments ?? "",
               };
+              yield {
+                type: "tool-call-start" as const,
+                toolCallId: tc.id,
+                toolName: tc.function?.name ?? "",
+              };
             } else if (currentToolCall && tc.function?.arguments) {
               // Append arguments
               currentToolCall.arguments += tc.function.arguments;
+              yield {
+                type: "tool-call-delta" as const,
+                toolCallId: currentToolCall.id,
+                argsText: currentToolCall.arguments,
+              };
             }
           }
         }

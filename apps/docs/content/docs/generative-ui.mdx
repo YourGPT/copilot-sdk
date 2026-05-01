@@ -1,44 +1,216 @@
 ---
 title: Generative UI
-description: Render custom React components from tool results
-icon: Blocks
+description: Let the AI render rich visual UI — dashboards, charts, tables, cards — directly in the chat
+icon: AiMagic
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Transform tool results into rich, interactive React components instead of plain text.
-
----
-
-## Overview
-
-When AI calls a tool, instead of showing raw JSON, you can render custom UI:
-
-```
-User: "What's the weather in Miami?"
-     ↓
-AI calls: get_weather({ city: "Miami" })
-     ↓
-Tool returns: { temp: 82, conditions: "Sunny" }
-     ↓
-UI renders: [Beautiful weather card component]
-```
+Render rich, interactive UI directly inside the chat — from AI-generated dashboards and charts to your own branded React components per tool.
 
 ---
 
-## Basic Setup
+## Two Approaches
 
-### 1. Define Tool Renderers
+| | AI-Generated HTML | Tool Renderers |
+|---|---|---|
+| **What it does** | AI writes HTML + Tailwind + Chart.js, rendered in a sandboxed iframe | Your React component renders per tool result |
+| **Who decides the UI** | The AI — generates any layout it wants | You — one renderer per tool |
+| **Best for** | Dashboards, charts, tables, cards, any visual you haven't pre-built | Domain-specific, branded components with full interactivity |
+| **Streaming** | Progressive — HTML builds up as AI generates | Shows loading → final states |
+| **Interactivity** | Via `copilot.action()` bridge | Native React (onClick, state, etc.) |
+
+Both approaches work together. Use AI-generated HTML for freeform visuals, and tool renderers for structured data with custom components.
+
+---
+
+## AI-Generated HTML (Experimental)
+
+<Callout type="warn">
+`@yourgpt/copilot-sdk/experimental` — APIs may change without a semver major bump.
+</Callout>
+
+The AI writes HTML with Tailwind CSS and Chart.js directly in the chat response. The SDK detects it, extracts the HTML, and renders it in a sandboxed iframe — progressively as the AI generates it.
+
+This follows the same pattern as Claude Artifacts — content tags in the text stream, parsed by the frontend, rendered in an isolated iframe.
+
+```
+User: "Show me a dashboard of key web metrics"
+     ↓
+AI streams: <GENUI><div class="grid grid-cols-3 gap-4">...</div></GENUI>
+     ↓
+SDK detects <GENUI> tags → extracts HTML → renders in iframe
+     ↓
+User sees: [Live dashboard with stats, charts, tables — streaming progressively]
+```
+
+### Setup
+
+<Tabs items={['Backend', 'Frontend']}>
+  <Tab value="Backend">
+
+Add the generative UI system prompt to your runtime:
+
+```typescript
+import { createRuntime } from "@yourgpt/llm-sdk";
+import { generativeUISystemPrompt } from "@yourgpt/copilot-sdk/experimental";
+
+const runtime = createRuntime({
+  provider,
+  model,
+  systemPrompt: generativeUISystemPrompt(),
+});
+```
+
+The system prompt instructs the AI to wrap visual content in `<GENUI>` tags using Tailwind CSS classes. Chart.js is available for charts.
+
+  </Tab>
+  <Tab value="Frontend">
+
+Call `useGenerativeUI()` and pass `wrapMessage` to your chat:
 
 ```tsx
-import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+import { useGenerativeUI } from "@yourgpt/copilot-sdk/experimental";
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
 
-// Custom component for weather results
-function WeatherCard({ data, status }) {
-  if (status === 'executing') {
+function App() {
+  const { wrapMessage } = useGenerativeUI();
+
+  return <CopilotChat wrapMessage={wrapMessage} />;
+}
+```
+
+That's it. The SDK handles `<GENUI>` detection, iframe rendering, auto-height, streaming, and script deferral.
+
+  </Tab>
+</Tabs>
+
+### What the AI generates
+
+The AI writes HTML with Tailwind classes wrapped in `<GENUI>` tags:
+
+```html
+<GENUI>
+<div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+  <h2 class="text-lg font-semibold text-gray-900">Monthly Revenue</h2>
+  <p class="text-3xl font-bold text-gray-900 mt-1">$84,200</p>
+  <span class="bg-green-50 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium">+12%</span>
+</div>
+</GENUI>
+```
+
+The iframe automatically has **Tailwind CSS** and **Chart.js** pre-loaded. The AI can build anything: tables, stat cards, charts, pricing pages, data grids.
+
+### Chart.js support
+
+The AI can create charts using Chart.js with inline scripts:
+
+```html
+<GENUI>
+<div class="p-4">
+  <canvas id="c" height="220"></canvas>
+  <script>
+  new Chart(document.getElementById('c'), {
+    type: 'bar',
+    data: {
+      labels: ['Jan', 'Feb', 'Mar'],
+      datasets: [{ label: 'Revenue', data: [65, 80, 84], backgroundColor: '#6366f1' }]
+    },
+    options: { responsive: true }
+  });
+  </script>
+</div>
+</GENUI>
+```
+
+Scripts are deferred during streaming and only execute once the full HTML arrives.
+
+### Interactive actions (bridge API)
+
+The AI-generated HTML can communicate back to your app via the `copilot` bridge:
+
+```tsx
+// Frontend — register action handlers
+const { wrapMessage } = useGenerativeUI({
+  actions: {
+    addToCart: (data) => cartStore.add(data.itemId),
+    navigate: (data) => router.push(data.url),
+  },
+});
+```
+
+```typescript
+// Backend — tell the AI what actions are available
+systemPrompt: generativeUISystemPrompt({
+  actions: {
+    addToCart: "Add an item to the shopping cart. Params: { itemId: string, qty: number }",
+    navigate: "Navigate to a URL. Params: { url: string }",
+  },
+}),
+```
+
+The AI can then write interactive buttons:
+
+```html
+<button onclick="copilot.action('addToCart', { itemId: '123', qty: 1 })">
+  Add to Cart
+</button>
+<button onclick="copilot.sendMessage('Tell me more about this product')">
+  Ask AI
+</button>
+```
+
+- `copilot.action(name, data)` — calls your registered handler, returns a result
+- `copilot.sendMessage(text)` — sends a message in the chat as the user
+
+### Custom design guidelines
+
+Pass additional styling instructions to the system prompt:
+
+```typescript
+generativeUISystemPrompt({
+  designGuidelines: `
+    - Use the brand color #6366f1 for primary elements
+    - Always include a header with the company logo
+    - Tables should have zebra striping
+  `,
+})
+```
+
+### Using `GenUIFrame` directly
+
+For advanced use cases, render the iframe component directly:
+
+```tsx
+import { GenUIFrame } from "@yourgpt/copilot-sdk/experimental";
+
+<GenUIFrame
+  html="<div class='p-4'>Hello World</div>"
+  streaming={false}
+  onSendMessage={(msg) => sendMessage(msg)}
+  onAction={(name, data) => handleAction(name, data)}
+/>
+```
+
+---
+
+## Tool Renderers
+
+Map tool names to React components. The AI calls tools that return data, and your components render the results. This is the same pattern used by Vercel AI SDK and CopilotKit.
+
+### Basic example
+
+```tsx
+import { CopilotChat } from "@yourgpt/copilot-sdk/ui";
+
+function WeatherCard({ execution }: ToolRendererProps) {
+  if (execution.status === "executing") {
     return <div className="animate-pulse">Loading weather...</div>;
   }
+  if (execution.status !== "completed") return null;
 
+  const data = execution.result;
   return (
     <div className="p-4 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white">
       <h3 className="text-xl font-bold">{data.city}</h3>
@@ -48,278 +220,93 @@ function WeatherCard({ data, status }) {
   );
 }
 
-// Pass to CopilotChat
-<CopilotChat
-  toolRenderers={{
-    get_weather: WeatherCard,
-  }}
-/>
-```
-
-### 2. Register the Tool
-
-```tsx
-useTools({
-  get_weather: {
-    description: 'Get current weather for a city',
-    parameters: z.object({
-      city: z.string(),
-    }),
-    handler: async ({ city }) => {
-      const weather = await fetchWeather(city);
-      return {
-        success: true,
-        data: {
-          city,
-          temp: weather.temperature,
-          conditions: weather.conditions,
-        },
-      };
-    },
-  },
-});
-```
-
----
-
-## ToolRendererProps
-
-Every tool renderer receives these props:
-
-```typescript
-interface ToolRendererProps {
-  // Current execution status
-  status: 'pending' | 'executing' | 'completed' | 'error' | 'failed' | 'rejected';
-
-  // Arguments passed to the tool
-  args: Record<string, unknown>;
-
-  // Result data (when completed)
-  data?: unknown;
-
-  // Error message (when failed)
-  error?: string;
-
-  // Unique execution ID
-  executionId: string;
-
-  // Tool name
-  toolName: string;
-}
-```
-
----
-
-## Handling All States
-
-```tsx
-function ChartCard({ status, data, error, args }: ToolRendererProps) {
-  // Loading state
-  if (status === 'pending' || status === 'executing') {
-    return (
-      <div className="p-4 border rounded-lg">
-        <div className="animate-spin h-6 w-6 border-2 border-primary rounded-full border-t-transparent" />
-        <p className="text-sm text-muted-foreground mt-2">
-          Generating {args.metric} chart...
-        </p>
-      </div>
-    );
-  }
-
-  // Error state
-  if (status === 'error' || status === 'failed') {
-    return (
-      <div className="p-4 border border-destructive rounded-lg">
-        <p className="text-destructive">Failed to load chart</p>
-        <p className="text-sm text-muted-foreground">{error}</p>
-      </div>
-    );
-  }
-
-  // Rejected (user denied approval)
-  if (status === 'rejected') {
-    return (
-      <div className="p-4 border rounded-lg bg-muted">
-        <p className="text-muted-foreground">Chart request was declined</p>
-      </div>
-    );
-  }
-
-  // Success state
-  return (
-    <div className="p-4 border rounded-lg">
-      <h3 className="font-semibold mb-4">{data.title}</h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={data.chartData}>
-          <XAxis dataKey="date" />
-          <YAxis />
-          <Line type="monotone" dataKey="value" stroke="#8884d8" />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-```
-
----
-
-## Multiple Tool Renderers
-
-```tsx
 <CopilotChat
   toolRenderers={{
     get_weather: WeatherCard,
     get_chart: ChartCard,
-    get_stats: StatsCard,
     search_products: ProductGrid,
-    create_task: TaskConfirmation,
   }}
 />
 ```
 
----
+### ToolRendererProps
 
-## Interactive Components
+Every renderer receives:
 
-Tool renderers can be fully interactive:
+```typescript
+interface ToolRendererProps {
+  execution: {
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    status: "pending" | "executing" | "completed" | "error" | "failed" | "rejected";
+    result?: unknown;
+    error?: string;
+    approvalStatus?: ToolApprovalStatus;
+    source?: "mcp" | "native" | "custom";
+  };
+  approval?: ToolApprovalCallbacks;
+}
+```
+
+### Interactive components
+
+Tool renderers are native React components — full interactivity with no bridge needed:
 
 ```tsx
-function ProductCard({ data }: ToolRendererProps) {
+function ProductCard({ execution }: ToolRendererProps) {
   const [quantity, setQuantity] = useState(1);
   const { sendMessage } = useCopilot();
-
-  const handleAddToCart = () => {
-    // Trigger AI to call add_to_cart tool
-    sendMessage(`Add ${quantity} of ${data.name} to my cart`);
-  };
+  const data = execution.result;
 
   return (
     <div className="p-4 border rounded-lg">
-      <img src={data.image} alt={data.name} />
       <h3>{data.name}</h3>
       <p>${data.price}</p>
-
-      <div className="flex items-center gap-2 mt-4">
-        <input
-          type="number"
-          value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
-          className="w-16 border rounded px-2 py-1"
-        />
-        <button onClick={handleAddToCart} className="btn-primary">
-          Add to Cart
-        </button>
-      </div>
+      <button
+        onClick={() => sendMessage(`Add ${quantity} of ${data.name} to my cart`)}
+        className="btn-primary"
+      >
+        Add to Cart
+      </button>
     </div>
   );
 }
 ```
 
----
+### Control AI response verbosity
 
-## With AI Response Control
+Return `_aiResponseMode: "brief"` from your tool handler to prevent the AI from narrating what the UI already shows:
 
-Combine with `_aiResponseMode` to control AI behavior:
-
-```tsx
-useTools({
-  show_dashboard: {
-    description: 'Display analytics dashboard',
-    parameters: z.object({ timeRange: z.string() }),
-    handler: async ({ timeRange }) => {
-      const data = await fetchDashboardData(timeRange);
-      return {
-        success: true,
-        data,
-        // Tell AI to be brief - UI speaks for itself
-        _aiResponseMode: 'brief',
-        _aiContext: `Dashboard displayed for ${timeRange}`,
-      };
-    },
-  },
-});
+```typescript
+handler: async ({ timeRange }) => {
+  const data = await fetchDashboardData(timeRange);
+  return {
+    success: true,
+    data,
+    _aiResponseMode: "brief",
+    _aiContext: `Dashboard for ${timeRange}`,
+  };
+},
 ```
 
-<Callout type="info">
-Use `_aiResponseMode: 'brief'` when your UI component is self-explanatory. The AI will give a short acknowledgment instead of describing the data.
-</Callout>
+### Priority order
 
----
+When multiple renderers are available, the SDK uses this priority:
 
-## Best Practices
-
-1. **Handle all states** - Show loading, error, and success states
-2. **Keep it focused** - One component per tool, single responsibility
-3. **Make it responsive** - Components appear inline with chat messages
-4. **Use AI Response Control** - Prevent AI from redundantly describing visual data
-5. **Add interactivity** - Let users take actions directly from the UI
-
----
-
-## Example: Complete Weather Tool
-
-```tsx
-// Tool definition
-useTools({
-  get_weather: {
-    description: 'Get current weather for any city',
-    parameters: z.object({
-      city: z.string().describe('City name'),
-      units: z.enum(['celsius', 'fahrenheit']).optional(),
-    }),
-    handler: async ({ city, units = 'fahrenheit' }) => {
-      const weather = await fetchWeatherAPI(city, units);
-      return {
-        success: true,
-        data: {
-          city,
-          temp: weather.temperature,
-          conditions: weather.conditions,
-          humidity: weather.humidity,
-          wind: weather.wind,
-          units,
-        },
-        _aiResponseMode: 'brief',
-        _aiContext: `Weather: ${weather.temperature}° ${weather.conditions} in ${city}`,
-      };
-    },
-  },
-});
-
-// Renderer component
-function WeatherCard({ data, status }: ToolRendererProps) {
-  if (status !== 'completed') {
-    return <WeatherSkeleton />;
-  }
-
-  const { city, temp, conditions, humidity, wind, units } = data;
-  const tempUnit = units === 'celsius' ? '°C' : '°F';
-
-  return (
-    <div className="w-72 p-6 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 text-white shadow-lg">
-      <div className="flex justify-between items-start">
-        <div>
-          <h3 className="text-lg font-medium opacity-90">{city}</h3>
-          <p className="text-5xl font-bold mt-2">{temp}{tempUnit}</p>
-        </div>
-        <WeatherIcon conditions={conditions} className="w-16 h-16" />
-      </div>
-
-      <p className="text-lg mt-4">{conditions}</p>
-
-      <div className="flex gap-4 mt-4 text-sm opacity-80">
-        <span>💧 {humidity}%</span>
-        <span>💨 {wind} mph</span>
-      </div>
-    </div>
-  );
-}
+```
+toolRenderers[name] > mcpToolRenderer > fallbackToolRenderer > tool.render > default ToolSteps
 ```
 
 ---
 
-## Next Steps
+## When to use which
 
-- [Custom Tools](/docs/custom-tools) - Build more tools
-- [AI Response Control](/docs/ai-response-control) - Control AI behavior
-- [Tool Approval](/docs/tool-approval) - Add user confirmation
+| Scenario | Use |
+|----------|-----|
+| "Show me a dashboard of sales data" | AI-Generated HTML — freeform layout |
+| Weather widget with specific design | Tool Renderer — `WeatherCard` component |
+| "Create a pricing page" | AI-Generated HTML — complex layout |
+| Shopping cart with add/remove buttons | Tool Renderer — native React interactivity |
+| "Compare these 5 products in a table" | AI-Generated HTML — dynamic columns |
+| File upload with progress bar | Tool Renderer — needs React state |

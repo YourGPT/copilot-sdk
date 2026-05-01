@@ -256,6 +256,8 @@ export interface TokenUsage {
  */
 export type StreamChunk =
   | TextDeltaChunk
+  | ToolCallStartChunk
+  | ToolCallDeltaChunk
   | ToolCallChunk
   | ToolResultChunk
   | FinishChunk
@@ -264,6 +266,19 @@ export type StreamChunk =
 export interface TextDeltaChunk {
   type: "text-delta";
   text: string;
+}
+
+export interface ToolCallStartChunk {
+  type: "tool-call-start";
+  toolCallId: string;
+  toolName: string;
+}
+
+export interface ToolCallDeltaChunk {
+  type: "tool-call-delta";
+  toolCallId: string;
+  /** Accumulated args text so far (not a delta — full accumulated string) */
+  argsText: string;
 }
 
 export interface ToolCallChunk {

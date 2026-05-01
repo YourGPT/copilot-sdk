@@ -737,6 +737,15 @@ export class AnthropicAdapter implements LLMAdapter {
               currentToolUse
             ) {
               currentToolUse.input += event.delta.partial_json;
+              // Emit progressive action:args so the client can render
+              // partial tool results during streaming (e.g. generative UI)
+              if (currentToolUse.name !== "web_search") {
+                yield {
+                  type: "action:args",
+                  id: currentToolUse.id,
+                  args: currentToolUse.input,
+                };
+              }
             }
             break;
 

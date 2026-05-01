@@ -7,13 +7,13 @@ import type { HtmlPayload } from "../types";
 interface HtmlRendererProps {
   payload: HtmlPayload;
   className?: string;
+  /** When true, defers script execution and strips the last incomplete line */
+  streaming?: boolean;
 }
 
 /**
- * Strip only external script src= tags (e.g. duplicate CDN loads the AI might add).
- * Inline <script> blocks are kept — they're needed for Chart.js initialization
- * and are safe inside the sandboxed iframe.
- * Inline event handlers (onclick=, onerror=) are stripped as defense-in-depth.
+ * Strip external script src= tags (duplicate CDN loads the AI might add).
+ * Inline event handlers are stripped as defense-in-depth.
  */
 function sanitizeHtml(html: string): string {
   return html
@@ -23,12 +23,29 @@ function sanitizeHtml(html: string): string {
 }
 
 /**
- * Renders AI-generated HTML inside an isolated iframe.
- * Tailwind CSS is loaded via CDN — iframes provide a full document context
- * so the Tailwind Play CDN can scan and style classes correctly.
+ * During streaming, strip the last incomplete line and remove
+ * inline <script> blocks (deferred until streaming completes).
  */
-export function HtmlRenderer({ payload, className }: HtmlRendererProps) {
-  const clean = sanitizeHtml(payload.html);
+function prepareStreamingHtml(html: string): string {
+  const lines = html.split("\n");
+  if (lines.length > 1) lines.pop();
+  let result = lines.join("\n");
+  result = result.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  return result;
+}
+
+/**
+ * Renders AI-generated HTML inside an isolated iframe.
+ * Uses srcdoc for simplicity and reliability.
+ */
+export function HtmlRenderer({
+  payload,
+  className,
+  streaming = false,
+}: HtmlRendererProps) {
+  const rawHtml = payload.html ?? "";
+  const clean = sanitizeHtml(rawHtml);
+  const displayHtml = streaming ? prepareStreamingHtml(clean) : clean;
 
   const srcdoc = `<!DOCTYPE html>
 <html>
@@ -41,7 +58,7 @@ export function HtmlRenderer({ payload, className }: HtmlRendererProps) {
     * { box-sizing: border-box; }
   </style>
 </head>
-<body>${clean}</body>
+<body>${displayHtml}</body>
 </html>`;
 
   return (

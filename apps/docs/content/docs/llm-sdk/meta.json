@@ -1,5 +1,5 @@
 {
-  "title": "AI SDK",
+  "title": "LLM SDK",
   "icon": "AiChip1",
   "pages": ["generate-text", "stream-text", "tools"]
 }

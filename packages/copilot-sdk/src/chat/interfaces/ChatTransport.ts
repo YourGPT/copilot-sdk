@@ -109,6 +109,11 @@ export type StreamChunk =
   | { type: "source:add"; source: unknown }
   | { type: "error"; message: string }
   | {
+      /** Emitted early in the stream (before message events) when server storage creates a session */
+      type: "thread:created";
+      threadId: string;
+    }
+  | {
       type: "done";
       messages?: Array<{
         role: string;

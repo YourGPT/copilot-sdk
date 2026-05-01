@@ -51,7 +51,7 @@ export {
 } from "./google";
 
 // xAI Grok
-export { XAIAdapter, createXAIAdapter, type XAIAdapterConfig } from "./xai";
+export { createXAIAdapter, type XAIAdapterConfig } from "./xai";
 
 // Azure OpenAI
 export {

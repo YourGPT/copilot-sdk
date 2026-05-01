@@ -1,5 +1,5 @@
 {
   "title": "Server",
-  "icon": "Wrench",
+  "icon": "Server",
   "pages": ["storage", "deployment"]
 }

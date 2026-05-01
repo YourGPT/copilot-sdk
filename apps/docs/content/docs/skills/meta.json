@@ -1,5 +1,5 @@
 {
   "title": "Skills",
-  "icon": "BookOpen",
+  "icon": "AiBook",
   "pages": ["client", "server"]
 }

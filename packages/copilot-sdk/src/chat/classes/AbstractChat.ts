@@ -118,6 +118,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       debug: init.debug,
       optimization: init.optimization,
       yourgptConfig: init.yourgptConfig,
+      streamMode: init.streamMode,
     };
 
     // Use provided state or create default
@@ -482,6 +483,15 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // before the next request fires. Promise.resolve() is a microtask and
       // is not enough for React 18 to render the loading state.
       await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // If stop() was called during the macrotask yield, status will have been
+      // reset to "ready" — don't restart the loop in that case.
+      if (this.status === "ready" || this.status === "error") {
+        this.debug(
+          "Skipping processRequest — status reset during yield (stop was called)",
+        );
+        return;
+      }
 
       // Continue request
       await this.processRequest();
@@ -1070,11 +1080,25 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       if (existing) {
         assistantMessage = existing;
       } else {
-        assistantMessage = createEmptyAssistantMessage() as T;
+        const visibleMessages = this.state.messages;
+        const currentLeafId =
+          visibleMessages.length > 0
+            ? visibleMessages[visibleMessages.length - 1].id
+            : undefined;
+        assistantMessage = createEmptyAssistantMessage(undefined, {
+          parentId: currentLeafId,
+        }) as T;
         this.state.pushMessage(assistantMessage);
       }
     } else {
-      assistantMessage = createEmptyAssistantMessage() as T;
+      const visibleMessages = this.state.messages;
+      const currentLeafId =
+        visibleMessages.length > 0
+          ? visibleMessages[visibleMessages.length - 1].id
+          : undefined;
+      assistantMessage = createEmptyAssistantMessage(undefined, {
+        parentId: currentLeafId,
+      }) as T;
       this.state.pushMessage(assistantMessage);
     }
 
@@ -1107,58 +1131,99 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         return;
       }
 
-      // Handle message:end mid-stream (server-side agent loop turn completed)
-      // This creates separate messages for each turn instead of combining them
-      if (chunk.type === "message:end" && this.streamState?.content) {
-        this.debug("message:end mid-stream", {
-          messageId: this.streamState.messageId,
-          contentLength: this.streamState.content.length,
-          toolCallsInState: this.streamState.toolCalls?.length ?? 0,
-          chunkCount,
-        });
-
-        // Finalize current message with its content and tool calls
-        const turnMessage = streamStateToMessage(this.streamState) as T;
-
-        // Add toolCallsHidden metadata if applicable
-        const toolCallsHidden: Record<string, boolean> = {};
-        for (const [id, result] of this.streamState.toolResults) {
-          if (result.hidden !== undefined) {
-            toolCallsHidden[id] = result.hidden;
-          }
-        }
-        if (
-          turnMessage.toolCalls?.length &&
-          Object.keys(toolCallsHidden).length > 0
-        ) {
-          (turnMessage as T & { metadata?: Record<string, unknown> }).metadata =
+      // Handle message:end mid-stream (server-side agent loop turn completed).
+      // Behaviour depends on streamMode:
+      //   'multi-step' (default) — finalize a new UIMessage per iteration.
+      //   'single-turn'          — skip entirely; keep accumulating into the
+      //                            same streamState so all iterations collapse
+      //                            into one bubble (Vercel AI SDK / Claude.ai style).
+      if (chunk.type === "message:end" && this.streamState) {
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:end mid-stream (single-turn: keeping streamState alive)",
             {
+              messageId: this.streamState.messageId,
+              contentLength: this.streamState.content.length,
+              chunkCount,
+            },
+          );
+          continue;
+        }
+
+        // multi-step (default): finalize current turn as its own UIMessage
+        // Must check both content AND toolResults so tool-only turns (no streamed
+        // text) are also finalized and streamState is reset — otherwise the next
+        // iteration's tool chunks get appended to the previous message's stream.
+        if (
+          !this.streamState.content &&
+          (this.streamState.toolResults?.size ?? 0) === 0
+        ) {
+          // Nothing streamed yet for this turn — skip finalization
+        } else {
+          this.debug("message:end mid-stream", {
+            messageId: this.streamState.messageId,
+            contentLength: this.streamState.content.length,
+            toolCallsInState: this.streamState.toolCalls?.length ?? 0,
+            chunkCount,
+          });
+
+          // Finalize current message with its content and tool calls
+          const turnMessage = streamStateToMessage(this.streamState) as T;
+
+          // Add toolCallsHidden metadata if applicable
+          const toolCallsHidden: Record<string, boolean> = {};
+          for (const [id, result] of this.streamState.toolResults) {
+            if (result.hidden !== undefined) {
+              toolCallsHidden[id] = result.hidden;
+            }
+          }
+          if (
+            turnMessage.toolCalls?.length &&
+            Object.keys(toolCallsHidden).length > 0
+          ) {
+            (
+              turnMessage as T & { metadata?: Record<string, unknown> }
+            ).metadata = {
               ...(turnMessage as T & { metadata?: Record<string, unknown> })
                 .metadata,
               toolCallsHidden,
             };
+          }
+
+          this.state.updateMessageById(
+            this.streamState.messageId,
+            (existing) => ({
+              ...turnMessage,
+              ...(existing.parentId !== undefined
+                ? { parentId: existing.parentId }
+                : {}),
+              ...(existing.childrenIds !== undefined
+                ? { childrenIds: existing.childrenIds }
+                : {}),
+            }),
+          );
+          this.callbacks.onMessageFinish?.(turnMessage);
+
+          // Reset stream state — next message:start will create a new message
+          this.streamState = null;
+          continue;
         }
-
-        this.state.updateMessageById(
-          this.streamState.messageId,
-          (existing) => ({
-            ...turnMessage,
-            ...(existing.parentId !== undefined
-              ? { parentId: existing.parentId }
-              : {}),
-            ...(existing.childrenIds !== undefined
-              ? { childrenIds: existing.childrenIds }
-              : {}),
-          }),
-        );
-        this.callbacks.onMessageFinish?.(turnMessage);
-
-        // Reset stream state for next turn - will be initialized on next message:start
-        this.streamState = null;
-        continue;
       }
 
-      // Handle message:start after a mid-stream finalization
+      // Handle message:start mid-stream:
+      //   single-turn — streamState is still alive, skip to keep accumulating.
+      //   multi-step  — streamState was reset to null above; fall through to
+      //                 the message:start === null handler below.
+      if (chunk.type === "message:start" && this.streamState !== null) {
+        if (this.config.streamMode === "single-turn") {
+          this.debug(
+            "message:start mid-stream (single-turn: streamState already active, skipping)",
+          );
+          continue;
+        }
+      }
+
+      // Handle message:start after a mid-stream finalization (multi-step mode)
       if (chunk.type === "message:start" && this.streamState === null) {
         this.debug("message:start after mid-stream end - creating new message");
         // Capture the current leaf BEFORE pushing the new message so the
@@ -1184,7 +1249,50 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
       // Skip most chunks if streamState is null.
       // EXCEPTION: after a mid-stream message:end the server can still send
       // tool_calls + done for client-side tool dispatch. Handle those directly.
+      // Also handle action:start/action:args — these stream during tool call
+      // generation and are needed for progressive rendering of client tools.
       if (!this.streamState) {
+        if (chunk.type === "action:start") {
+          this.callbacks.onServerToolStart?.({
+            id: chunk.id,
+            name: chunk.name,
+            hidden: chunk.hidden,
+          });
+          continue;
+        }
+        if (chunk.type === "action:args") {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(chunk.args);
+          } catch {
+            try {
+              const partial = chunk.args;
+              if (partial && partial.startsWith("{")) {
+                const extracted: Record<string, unknown> = {};
+                const pairs = partial.matchAll(
+                  /"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+                );
+                for (const m of pairs) extracted[m[1]] = m[2];
+                const open = partial.match(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)$/);
+                if (open) extracted[open[1]] = open[2];
+                if (Object.keys(extracted).length > 0) args = extracted;
+              }
+            } catch {
+              // Keep empty args
+            }
+          }
+          // action:args doesn't carry name — use id as fallback
+          const execName = chunk.id;
+          this.callbacks.onServerToolArgs?.({
+            id: chunk.id,
+            name: execName,
+            args,
+          });
+          continue;
+        }
+        if (chunk.type === "action:end") {
+          continue; // Skip — client tools handle completion via executeToolCalls
+        }
         if (chunk.type === "tool_calls") {
           // Store for emission when done arrives. Do NOT update message state
           // here — done.messages carries the assistant message with tool_calls
@@ -1219,6 +1327,14 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             const messagesToInsert: T[] = [];
             let clientAssistantToolCalls: unknown[] | undefined;
 
+            // Track parent chain for inserted messages so they don't become
+            // orphan root children in the MessageTree.
+            const lastVisibleMsgs = this.state.messages;
+            let postEndInsertParentId: string | undefined =
+              lastVisibleMsgs.length > 0
+                ? lastVisibleMsgs[lastVisibleMsgs.length - 1].id
+                : undefined;
+
             for (const msg of chunk.messages) {
               // This is the client-tool assistant message already in state
               // (finalized by message:end but without toolCalls).
@@ -1236,15 +1352,37 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
+              // Skip assistant messages whose tool_calls are all server-side (not in pendingIds)
+              // These are already represented in streamed toolExecutions — inserting would duplicate the card
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                (msg.tool_calls as Array<{ id?: string }>).every(
+                  (tc) => !pendingIds.has(tc?.id ?? ""),
+                )
+              )
+                continue;
+              // Skip tool result messages for client-side tools — client already executed them
+              if (
+                msg.role === "tool" &&
+                msg.tool_call_id &&
+                pendingIds.has(msg.tool_call_id)
+              )
+                continue;
               // Everything else (server tool results) needs inserting
-              messagesToInsert.push({
+              const insertedMsg = {
                 id: generateMessageId(),
                 role: msg.role as T["role"],
                 content: msg.content ?? "",
                 toolCalls: msg.tool_calls as T["toolCalls"],
                 toolCallId: msg.tool_call_id,
                 createdAt: new Date(),
-              } as T);
+                ...(postEndInsertParentId
+                  ? { parentId: postEndInsertParentId }
+                  : {}),
+              } as T;
+              postEndInsertParentId = insertedMsg.id;
+              messagesToInsert.push(insertedMsg);
             }
 
             // Merge OpenAI-format tool_calls into the existing last assistant message
@@ -1266,8 +1404,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             }
 
             if (messagesToInsert.length > 0) {
-              // Insert server tool results before the last assistant message
-              const currentMessages = this.state.messages;
+              // Insert server tool results before the last assistant message.
+              // Use _allMessages() to preserve inactive branch messages.
+              const currentMessages = this._allMessages();
               let insertIdx = currentMessages.length;
               for (let i = currentMessages.length - 1; i >= 0; i--) {
                 if (currentMessages[i].role === "assistant") {
@@ -1336,7 +1475,25 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         try {
           args = JSON.parse(chunk.args);
         } catch {
-          // Keep empty args
+          // Partial JSON from streaming — try to extract string values
+          // This enables progressive rendering (e.g. generative UI html)
+          try {
+            const partial = chunk.args;
+            if (partial && partial.startsWith("{")) {
+              const extracted: Record<string, unknown> = {};
+              // Match complete "key": "value" pairs
+              const pairs = partial.matchAll(
+                /"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+              );
+              for (const m of pairs) extracted[m[1]] = m[2];
+              // Match open string value at end (no closing quote)
+              const open = partial.match(/"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)$/);
+              if (open) extracted[open[1]] = open[2];
+              if (Object.keys(extracted).length > 0) args = extracted;
+            }
+          } catch {
+            // Keep empty args
+          }
         }
         // Get name from toolResults (set by action:start)
         const existingResult = this.streamState?.toolResults.get(chunk.id);
@@ -1387,6 +1544,17 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         this.callbacks.onMessageDelta?.(assistantMessage.id, chunk.content);
       }
 
+      // Adopt threadId early — emitted by server before any message events
+      if (chunk.type === "thread:created") {
+        const serverThreadId = chunk.threadId;
+        if (!this.config.threadId || this.config.threadId !== serverThreadId) {
+          this.config.threadId = serverThreadId;
+          this.sessionInitPromise = null;
+          this.setSessionStatus("ready");
+          this.callbacks.onThreadChange?.(serverThreadId);
+        }
+      }
+
       // Check for completion
       if (isStreamDone(chunk)) {
         this.debug("streamDone", {
@@ -1401,11 +1569,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         });
 
         // Adopt threadId from server storage adapter (if present)
-        if (
-          chunk.type === "done" &&
-          (chunk as { threadId?: string }).threadId
-        ) {
-          const serverThreadId = (chunk as { threadId?: string }).threadId!;
+        if (chunk.type === "done" && chunk.threadId) {
+          const serverThreadId = chunk.threadId;
           if (
             !this.config.threadId ||
             this.config.threadId !== serverThreadId
@@ -1428,10 +1593,37 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             ),
           });
 
-          const currentStreamToolCallIds = new Set(
-            this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
-          );
+          // In single-turn mode all server-tool IDs land in streamState.toolResults
+          // (via action:start/args/end chunks). Include them so done.messages doesn't
+          // re-insert those tools as duplicates.
+          const currentStreamToolCallIds = new Set([
+            ...(this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ??
+              []),
+            ...(this.config.streamMode === "single-turn" &&
+            this.streamState?.toolResults
+              ? Array.from(this.streamState.toolResults.keys())
+              : []),
+          ]);
           const messagesToInsert: T[] = [];
+
+          // Track parent chain for inserted messages so they don't become
+          // orphan root children in the MessageTree (which would redirect
+          // the active path and blank the UI).
+          // In single-turn mode streamState is never reset between turns, so
+          // parenting from streamState.messageId would attach tool result messages
+          // as children of the current streaming assistant message. Instead parent
+          // from the message immediately before the streaming message.
+          let insertChainParentId: string | undefined;
+          if (this.config.streamMode === "single-turn" && this.streamState) {
+            const allMsgs = this._allMessages();
+            const streamIdx = allMsgs.findIndex(
+              (m) => m.id === this.streamState!.messageId,
+            );
+            insertChainParentId =
+              streamIdx > 0 ? allMsgs[streamIdx - 1].id : undefined;
+          } else {
+            insertChainParentId = this.streamState?.messageId;
+          }
 
           // Build hidden map from stream state's toolResults
           const toolCallsHidden: Record<string, boolean> = {};
@@ -1449,6 +1641,31 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             // assistant messages that carry tool_calls so tool results keep a valid
             // preceding assistant tool_call message in local state.
             if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // single-turn: ALL assistant content (including intermediate tool-calling
+            // messages from earlier server iterations) is already accumulated into the
+            // one streaming message via message:delta. Inserting them from done.messages
+            // creates duplicate bubbles after streaming ends. Skip ALL assistant messages
+            // in single-turn mode — tool execution display is driven by streamState.toolResults.
+            if (
+              this.config.streamMode === "single-turn" &&
+              msg.role === "assistant"
+            ) {
+              continue;
+            }
+
+            // single-turn: done.messages contains the FULL conversation history —
+            // every tool-result message from every previous turn is included.
+            // All server-tool results are already represented in streamState.toolResults
+            // (streamed via action:start/args/end). Inserting raw tool messages from
+            // done.messages creates duplicate cards attached to the wrong message.
+            // Skip ALL tool messages in single-turn mode.
+            if (
+              this.config.streamMode === "single-turn" &&
+              msg.role === "tool"
+            ) {
               continue;
             }
 
@@ -1485,13 +1702,19 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               toolCallId: msg.tool_call_id,
               createdAt: new Date(),
               metadata,
+              ...(insertChainParentId ? { parentId: insertChainParentId } : {}),
             } as T;
+            insertChainParentId = message.id;
 
             messagesToInsert.push(message);
           }
 
           if (messagesToInsert.length > 0) {
-            const currentMessages = this.state.messages;
+            // Use _allMessages() to preserve inactive branch messages.
+            // this.state.messages only returns the visible path; calling
+            // setMessages() with just that would destroy all other branches
+            // when tree.reset() rebuilds.
+            const currentMessages = this._allMessages();
             const currentStreamIndex = this.streamState
               ? currentMessages.findIndex(
                   (message) => message.id === this.streamState!.messageId,

@@ -57,6 +57,12 @@ export interface ChatWithToolsConfig {
   yourgptConfig?: YourGPTConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Controls how multi-turn agent responses appear in the UI.
+   * - `'multi-step'` (default) — one bubble per server agent iteration.
+   * - `'single-turn'` — all iterations collapsed into one bubble per user turn.
+   */
+  streamMode?: "multi-step" | "single-turn";
   /** Initial messages */
   initialMessages?: UIMessage[];
   /** Initial tools to register */
@@ -152,6 +158,7 @@ export class ChatWithTools {
       onCreateSession: config.onCreateSession,
       yourgptConfig: config.yourgptConfig,
       debug: config.debug,
+      streamMode: config.streamMode,
       initialMessages: config.initialMessages,
       state: config.state,
       transport: config.transport,
@@ -193,12 +200,16 @@ export class ChatWithTools {
             }
             return;
           }
-          // Skip if this tool is registered client-side (will be tracked via executeToolCalls)
+          // Check if this tool is registered client-side
           const isClientTool = this.agentLoop.tools.some(
             (t) => t.name === info.name && t.location === "client",
           );
           if (isClientTool) {
-            this.debug("Skipping server tracking for client tool:", info.name);
+            // Still track the execution so the render function fires during
+            // streaming (progressive rendering). The execution will be reused
+            // when executeToolCalls runs later.
+            this.debug("Tracking client tool for streaming render:", info.name);
+            this.agentLoop.addServerToolExecution(info);
             return;
           }
           this.debug("Server tool started:", info.name, {
@@ -208,16 +219,14 @@ export class ChatWithTools {
           this.agentLoop.addServerToolExecution(info);
         },
         onServerToolArgs: (info) => {
-          // Skip if this tool is registered client-side
-          const isClientTool = this.agentLoop.tools.some(
-            (t) => t.name === info.name && t.location === "client",
-          );
-          if (isClientTool) return;
+          // Always update args — for client tools this enables progressive
+          // rendering (the render function sees partial args during streaming)
           this.debug("Server tool args:", info.name, info.args);
           this.agentLoop.updateServerToolArgs(info.id, info.args ?? {});
         },
         onServerToolEnd: (info) => {
-          // Skip if this tool is registered client-side
+          // Skip completion for client-side tools — the client handler will
+          // complete the execution via executeToolCalls
           const isClientTool = this.agentLoop.tools.some(
             (t) => t.name === info.name && t.location === "client",
           );
@@ -278,6 +287,12 @@ export class ChatWithTools {
       try {
         const results = await this.agentLoop.executeToolCalls(toolCallInfos);
         this.debug("Tool results:", results);
+
+        // If stop() was called while tools were executing, don't restart the loop
+        if (this.agentLoop.isCancelled) {
+          this.debug("Skipping continueWithToolResults — loop was cancelled");
+          return;
+        }
 
         // Continue chat with tool results
         if (results.length > 0) {

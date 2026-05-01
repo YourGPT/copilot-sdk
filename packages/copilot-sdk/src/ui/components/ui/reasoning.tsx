@@ -185,12 +185,12 @@ export function ReasoningContent({
   const contentRef = React.useRef<HTMLDivElement>(null);
   const [height, setHeight] = React.useState<number | undefined>(0);
 
-  // Measure content height for smooth animation
+  // Measure content height for smooth animation (offsetHeight includes padding)
   React.useEffect(() => {
     if (contentRef.current) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          setHeight(entry.contentRect.height);
+      const resizeObserver = new ResizeObserver(() => {
+        if (contentRef.current) {
+          setHeight(contentRef.current.offsetHeight);
         }
       });
       resizeObserver.observe(contentRef.current);
@@ -210,7 +210,7 @@ export function ReasoningContent({
       <div
         ref={contentRef}
         className={cn(
-          "mt-1 pl-3 border-l-2 border-muted-foreground/20",
+          "mt-1 pl-3 pb-2 border-l-2 border-muted-foreground/20",
           "text-xs text-muted-foreground",
           className,
         )}

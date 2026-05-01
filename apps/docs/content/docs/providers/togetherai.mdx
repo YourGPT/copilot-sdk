@@ -1,0 +1,243 @@
+---
+title: Together AI
+description: Cost-effective open-source model inference — Llama, DeepSeek, Qwen, Gemma and more
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Together AI](https://together.ai) is a high-performance inference platform for open-source models. It offers fast, scalable serving for Llama, DeepSeek, Qwen, Gemma, Mistral and many others through an OpenAI-compatible API.
+
+---
+
+## Setup
+
+### 1. Install packages
+
+```bash
+npm install @yourgpt/copilot-sdk @yourgpt/llm-sdk openai
+```
+
+<Callout type="info">
+Together AI uses an OpenAI-compatible API, so the `openai` package is the only peer dependency needed.
+</Callout>
+
+### 2. Get API key
+
+Sign up and get your API key at [api.together.xyz/settings/api-keys](https://api.together.xyz/settings/api-keys).
+
+### 3. Add environment variable
+
+```bash title=".env.local"
+TOGETHER_API_KEY=your-key-here
+```
+
+### 4. Create runtime API route
+
+```ts title="app/api/chat/route.ts"
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
+
+const together = createTogetherAI({
+  apiKey: process.env.TOGETHER_API_KEY,
+});
+
+const runtime = createRuntime({
+  provider: together,
+  model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+  systemPrompt: 'You are a helpful assistant.',
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+### 5. Connect Copilot UI
+
+```tsx title="app/page.tsx"
+'use client';
+
+import { CopilotProvider } from '@yourgpt/copilot-sdk/react';
+import { CopilotChat } from '@yourgpt/copilot-sdk/ui';
+
+export default function Page() {
+  return (
+    <CopilotProvider runtimeUrl="/api/chat">
+      <CopilotChat />
+    </CopilotProvider>
+  );
+}
+```
+
+---
+
+## Modern Pattern (Direct)
+
+For simpler use cases without the runtime, use `togetherai()` directly with `generateText` or `streamText`:
+
+```ts
+import { generateText } from '@yourgpt/llm-sdk';
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+
+const result = await generateText({
+  model: togetherai('deepseek-ai/DeepSeek-V3'),
+  prompt: 'Explain quantum entanglement simply.',
+});
+
+console.log(result.text);
+```
+
+```ts
+import { streamText } from '@yourgpt/llm-sdk';
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+
+const result = await streamText({
+  model: togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
+  system: 'You are a helpful assistant.',
+  messages,
+});
+
+return result.toTextStreamResponse();
+```
+
+---
+
+## Available Models
+
+```ts
+// DeepSeek
+togetherai('deepseek-ai/DeepSeek-V3')      // 128K ctx, tools
+togetherai('deepseek-ai/DeepSeek-V3.1')     // 128K ctx, tools
+togetherai('deepseek-ai/DeepSeek-R1')       // reasoning model
+
+// Llama
+togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo')  // 131K ctx, fast
+
+// Qwen
+togetherai('Qwen/Qwen3.5-397B-A17B')       // 262K ctx
+togetherai('Qwen/Qwen3.5-9B')
+
+// Gemma
+togetherai('google/gemma-4-31B-it')
+
+// Other
+togetherai('openai/gpt-oss-120b')
+togetherai('moonshotai/Kimi-K2.5')          // 262K ctx
+togetherai('MiniMaxAI/MiniMax-M2.5')
+```
+
+Any model ID listed on [together.ai/models](https://api.together.xyz/models) works.
+
+---
+
+## Configuration
+
+```ts
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
+
+// With explicit API key
+const together = createTogetherAI({
+  apiKey: 'your-key',
+});
+
+// Custom base URL (e.g. self-hosted or proxy)
+const together = createTogetherAI({
+  apiKey: 'your-key',
+  baseUrl: 'https://my-proxy.example.com/v1',
+});
+```
+
+Or with the modern pattern:
+
+```ts
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+
+const model = togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo', {
+  apiKey: 'your-key',
+  baseURL: 'https://my-proxy.example.com/v1',
+});
+```
+
+---
+
+## Fallback Chain
+
+Automatically fail over to backup models when the primary is unavailable or rate-limited:
+
+```ts title="app/api/chat/route.ts"
+import { createRuntime } from '@yourgpt/llm-sdk';
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+import { createTogetherAI } from '@yourgpt/llm-sdk/togetherai';
+
+const together = createTogetherAI({
+  apiKey: process.env.TOGETHER_API_KEY,
+});
+
+const chain = createFallbackChain({
+  models: [
+    together.languageModel('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
+    together.languageModel('deepseek-ai/DeepSeek-V3'),
+    together.languageModel('Qwen/Qwen3.5-9B'),
+    together.languageModel('google/gemma-4-31B-it'),
+  ],
+  strategy: 'priority',
+  retries: 1,
+  retryDelay: 500,
+  retryBackoff: 'exponential',
+  onFallback: ({ attemptedModel, nextModel, error }) => {
+    console.warn(`[fallback] ${attemptedModel} → ${nextModel} | ${error.message}`);
+  },
+});
+
+const runtime = createRuntime({
+  adapter: chain,
+  systemPrompt: 'You are a helpful assistant.',
+});
+
+export async function POST(request: Request) {
+  return runtime.handleRequest(request);
+}
+```
+
+<Callout type="info">
+With `strategy: 'priority'`, the first model handles all traffic until it fails.
+Use `strategy: 'round-robin'` to distribute load evenly across models.
+</Callout>
+
+---
+
+## Tool Calling
+
+Many Together AI models support tool calling:
+
+```ts
+import { generateText, tool } from '@yourgpt/llm-sdk';
+import { togetherai } from '@yourgpt/llm-sdk/togetherai';
+import { z } from 'zod';
+
+const result = await generateText({
+  model: togetherai('meta-llama/Llama-3.3-70B-Instruct-Turbo'),
+  prompt: 'What is the weather in Miami?',
+  tools: {
+    getWeather: tool({
+      description: 'Get weather for a city',
+      parameters: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ temperature: 82, condition: 'sunny' }),
+    }),
+  },
+  maxSteps: 5,
+});
+```
+
+<Callout type="info">
+`deepseek-ai/DeepSeek-R1` is a reasoning model and does not support tool calling. Use `DeepSeek-V3` or a Llama model for tool use.
+</Callout>
+
+---
+
+## Next Steps
+
+- [Fireworks](/docs/providers/fireworks) - Another fast open-source model platform
+- [OpenRouter](/docs/providers/openrouter) - Access 500+ models with one API key
+- [Fallback Chain](/docs/providers/fallback) - Automatic failover between providers
+- [generateText()](/docs/llm-sdk) - Full LLM SDK reference

@@ -1,6 +1,7 @@
 import { memo, ComponentProps } from "react";
 import { Streamdown, LinkSafetyConfig } from "streamdown";
 import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
 
 export type MarkdownProps = {
   children: string;
@@ -45,7 +46,7 @@ function MarkdownComponent({
   return (
     <div className={className}>
       <Streamdown
-        plugins={{ code }}
+        plugins={{ code, math }}
         isAnimating={isStreaming}
         components={headingComponents}
         linkSafety={linkSafety}

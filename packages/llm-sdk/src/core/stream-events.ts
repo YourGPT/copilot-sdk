@@ -22,6 +22,7 @@ export type StreamEventType =
   | "loop:iteration"
   | "loop:complete"
   | "error"
+  | "thread:created"
   | "done";
 
 /**
@@ -85,6 +86,8 @@ export interface ActionStartEvent extends BaseEvent {
   name: string;
   /** Whether this tool should be hidden from UI */
   hidden?: boolean;
+  /** Provider-specific metadata (e.g. Gemini 3 thought_signature) */
+  extra_content?: Record<string, unknown>;
 }
 
 /**
@@ -125,6 +128,8 @@ export interface ToolCallInfo {
   args: Record<string, unknown>;
   /** Whether this tool should be hidden from UI */
   hidden?: boolean;
+  /** Provider-specific metadata (e.g. Gemini 3 thought_signature) */
+  extra_content?: Record<string, unknown>;
 }
 
 /**
@@ -140,6 +145,8 @@ export interface AssistantToolMessage {
       name: string;
       arguments: string;
     };
+    /** Provider-specific metadata (e.g. Gemini 3 thought_signature) */
+    extra_content?: Record<string, unknown>;
   }>;
 }
 
@@ -220,6 +227,8 @@ export interface DoneEventMessage {
       name: string;
       arguments: string;
     };
+    /** Provider-specific metadata (e.g. Gemini 3 thought_signature) */
+    extra_content?: Record<string, unknown>;
   }>;
   tool_call_id?: string;
 }
@@ -231,6 +240,15 @@ export interface TokenUsageRaw {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens?: number;
+}
+
+/**
+ * Thread/session created — emitted early in the stream, before any message events,
+ * so the client can adopt the threadId without waiting for the done chunk.
+ */
+export interface ThreadCreatedEvent extends BaseEvent {
+  type: "thread:created";
+  threadId: string;
 }
 
 /**
@@ -265,6 +283,7 @@ export type StreamEvent =
   | LoopIterationEvent
   | LoopCompleteEvent
   | ErrorEvent
+  | ThreadCreatedEvent
   | DoneEvent;
 
 /**
@@ -285,6 +304,8 @@ export interface ToolCall {
     name: string;
     arguments: string;
   };
+  /** Provider-specific metadata (e.g. Gemini 3 thought_signature in extra_content.google) */
+  extra_content?: Record<string, unknown>;
 }
 
 /**

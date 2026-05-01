@@ -17,13 +17,17 @@
 export { google, createGoogle as createGoogleModel } from "./provider";
 export type { GoogleProviderOptions } from "./provider";
 
-import { createGoogleAdapter } from "../../adapters/google";
+import { createOpenAIAdapter } from "../../adapters/openai";
 import {
   createCallableProvider,
   type AIProvider,
   type ProviderCapabilities,
   type GoogleProviderConfig,
 } from "../types";
+
+// Gemini OpenAI-compatible endpoint
+const GEMINI_BASE_URL =
+  "https://generativelanguage.googleapis.com/v1beta/openai/";
 
 // ============================================
 // Model Definitions
@@ -127,6 +131,26 @@ const GOOGLE_MODELS: Record<string, ModelCapabilities> = {
     outputTokens: 8192,
   },
 
+  // Gemini 3 series (thinking models)
+  "gemini-3.1-flash-lite-preview": {
+    vision: true,
+    tools: true,
+    audio: false,
+    video: false,
+    pdf: true,
+    maxTokens: 1000000,
+    outputTokens: 32768,
+  },
+  "gemini-3.1-flash-preview": {
+    vision: true,
+    tools: true,
+    audio: false,
+    video: false,
+    pdf: true,
+    maxTokens: 1000000,
+    outputTokens: 32768,
+  },
+
   // Gemini 1.0 series (legacy)
   "gemini-1.0-pro": {
     vision: false,
@@ -168,11 +192,10 @@ export function createGoogle(config: GoogleProviderConfig = {}): AIProvider {
 
   // Create the callable function
   const providerFn = (modelId: string) => {
-    return createGoogleAdapter({
+    return createOpenAIAdapter({
       apiKey,
       model: modelId,
-      baseUrl: config.baseUrl,
-      safetySettings: config.safetySettings,
+      baseUrl: config.baseUrl || GEMINI_BASE_URL,
     });
   };
 
