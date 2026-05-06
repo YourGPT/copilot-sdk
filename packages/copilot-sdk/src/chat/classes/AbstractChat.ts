@@ -1087,6 +1087,10 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
     let chunkCount = 0;
     let toolCallsEmitted = false; // Guard to prevent emitting toolCalls twice
+    // Set to true when post-tool text was already streamed live via auto-init
+    // from a message:delta (no message:start). Prevents done handler from
+    // inserting a duplicate when seenToolResult is true.
+    let postToolTextStreamed = false;
     // Holds client tool calls received via a tool_calls chunk AFTER a
     // mid-stream message:end nulled streamState.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1188,10 +1192,30 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
 
       // Update stream state (pure function)
       // Skip most chunks if streamState is null.
-      // EXCEPTION: after a mid-stream message:end the server can still send
+      // EXCEPTION 1: after a mid-stream message:end the server can still send
       // tool_calls + done for client-side tool dispatch. Handle those directly.
+      // EXCEPTION 2: some server-side tools (e.g. websearch) stream the post-tool
+      // response via message:delta WITHOUT a preceding message:start. Auto-init a
+      // new message so the text streams live instead of appearing all-at-once from done.
       if (!this.streamState) {
-        if (chunk.type === "tool_calls") {
+        if (chunk.type === "message:delta") {
+          this.debug(
+            "message:delta with no streamState — auto-init new message",
+          );
+          const currentLeaf = this.state.messages;
+          const currentLeafId =
+            currentLeaf.length > 0
+              ? currentLeaf[currentLeaf.length - 1].id
+              : undefined;
+          const newMessage = createEmptyAssistantMessage(undefined, {
+            parentId: currentLeafId,
+          }) as T;
+          this.state.pushMessage(newMessage);
+          this.streamState = createStreamState(newMessage.id);
+          this.callbacks.onMessageStart?.(newMessage.id);
+          postToolTextStreamed = true;
+          // No continue — fall out of this block into normal processStreamChunk below
+        } else if (chunk.type === "tool_calls") {
           // Store for emission when done arrives. Do NOT update message state
           // here — done.messages carries the assistant message with tool_calls
           // in proper OpenAI format, which we use in the done handler below.
@@ -1202,9 +1226,7 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             ids: pendingClientToolCalls?.map((tc: { id?: string }) => tc.id),
           });
           continue;
-        }
-
-        if (chunk.type === "done") {
+        } else if (chunk.type === "done") {
           this.debug("done (post-message:end)", {
             hasPendingToolCalls: !!pendingClientToolCalls?.length,
             pendingCount: pendingClientToolCalls?.length ?? 0,
@@ -1340,10 +1362,12 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             });
           }
           continue;
+        } else {
+          this.debug("warning", "streamState is null, skipping chunk");
+          continue;
         }
-
-        this.debug("warning", "streamState is null, skipping chunk");
-        continue;
+        // Only message:delta reaches here — streamState was just auto-init'd.
+        // Fall through to processStreamChunk below.
       }
       this.streamState = processStreamChunk(chunk, this.streamState);
 
@@ -1474,13 +1498,25 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             }
           }
 
+          // Track whether a tool-result message has been seen as we iterate done.messages.
+          // Assistant text that appears AFTER a tool result was never streamed live
+          // (server-side builtin tools like websearch/webanswer return the full history
+          // only in the done payload). Assistant text that appears BEFORE any tool result
+          // is the intro turn already represented by streamed message:start/delta/end events.
+          let seenToolResult = false;
           for (const msg of chunk.messages) {
-            // Skip plain assistant text messages because they are already represented
-            // by streamed message:start/message:delta/message:end events. Preserve
-            // assistant messages that carry tool_calls so tool results keep a valid
-            // preceding assistant tool_call message in local state.
+            if (msg.role === "tool") seenToolResult = true;
+
+            // Skip plain assistant text messages that precede any tool result — those
+            // are already represented by streamed message:start/message:delta/message:end
+            // events. Assistant messages that appear AFTER a tool result are post-tool
+            // responses that were never streamed live and must be inserted — UNLESS
+            // postToolTextStreamed is true, meaning message:delta already delivered them
+            // live via the auto-init path (skipping avoids a duplicate message).
             if (msg.role === "assistant" && !msg.tool_calls?.length) {
-              continue;
+              if (!seenToolResult) continue;
+              if (postToolTextStreamed) continue;
+              // Post-tool text: fall through to insert.
             }
 
             // The current streamed turn already becomes an assistant message from
