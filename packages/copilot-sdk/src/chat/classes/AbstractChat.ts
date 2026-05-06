@@ -168,6 +168,11 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     return this.transport.isStreaming();
   }
 
+  /** The thread id currently associated with this chat, if any. */
+  get threadId(): string | undefined {
+    return this.config.threadId;
+  }
+
   // ============================================
   // Public Actions
   // ============================================

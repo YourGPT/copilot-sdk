@@ -73,6 +73,14 @@ export interface ChatWithToolsConfig {
   transport?: ChatTransport;
   /** Custom error message extractor for non-2xx API responses */
   parseError?: (status: number, body: unknown) => string | null | undefined;
+  /**
+   * Override the thread id exposed to tool handlers (`context.threadId`).
+   * Called once per tool invocation. Defaults to `chat.threadId` (the backend
+   * session id). Useful for framework adapters that maintain a stable
+   * UI-level thread id separate from the backend session id — e.g. when a
+   * local id is assigned client-side before the server issues its own.
+   */
+  getThreadId?: () => string | undefined;
 }
 
 /**
@@ -128,6 +136,14 @@ export class ChatWithTools {
       {
         maxIterations: config.maxIterations ?? 20,
         tools: config.tools,
+        // Expose this chat's current threadId to tool handlers via
+        // ToolContext.threadId. Read lazily per invocation so it reflects
+        // the id assigned by the server mid-stream (thread:created).
+        // If the caller provided a getThreadId override (e.g. the React
+        // provider exposing its stable registry key), prefer that.
+        getThreadId: config.getThreadId
+          ? () => config.getThreadId!()
+          : () => this.chat?.threadId,
       },
       {
         onExecutionsChange: (executions) => {

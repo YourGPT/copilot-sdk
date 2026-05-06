@@ -574,6 +574,12 @@ export type ChatProps = {
   onSwitchThread?: (threadId: string) => void;
   /** Whether a thread operation is in progress (disables controls) */
   isThreadBusy?: boolean;
+  /**
+   * Set of thread IDs with an in-flight request. Populated only when
+   * `concurrentThreads` is enabled on the CopilotProvider. Use in a custom
+   * thread picker to show a per-thread streaming indicator.
+   */
+  busyThreadIds?: ReadonlySet<string>;
 
   // === Branching (conversation variants) ===
   /**
