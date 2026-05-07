@@ -19,6 +19,7 @@ import {
   formatMessagesForOpenAI,
   formatTools,
   logProviderPayload,
+  toOpenAIResponseFormat,
 } from "./base";
 
 // ============================================
@@ -188,6 +189,7 @@ export class AzureAdapter implements LLMAdapter {
         tools,
         temperature: request.config?.temperature ?? this.config.temperature,
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+        response_format: toOpenAIResponseFormat(request.config?.responseFormat),
         stream: true,
       };
       logProviderPayload("azure", "request payload", payload, request.debug);
@@ -316,6 +318,7 @@ export class AzureAdapter implements LLMAdapter {
       tools,
       temperature: request.config?.temperature ?? this.config.temperature,
       max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+      response_format: toOpenAIResponseFormat(request.config?.responseFormat),
     };
     logProviderPayload("azure", "request payload", payload, request.debug);
     const response = await client.chat.completions.create(payload);

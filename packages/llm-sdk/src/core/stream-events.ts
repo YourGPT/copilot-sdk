@@ -287,11 +287,30 @@ export type StreamEvent =
   | DoneEvent;
 
 /**
+ * Structured-output / JSON-mode request format.
+ *
+ * Uses OpenAI's `response_format` shape as the unified surface; each adapter
+ * translates to its provider's native field (Anthropic `output_config`,
+ * Gemini `responseJsonSchema`, Ollama `format`, etc.).
+ */
+export type ResponseFormat =
+  | { type: "json_object" }
+  | {
+      type: "json_schema";
+      json_schema: {
+        name: string;
+        schema: Record<string, unknown>;
+        strict?: boolean;
+      };
+    };
+
+/**
  * LLM configuration
  */
 export interface LLMConfig {
   temperature?: number;
   maxTokens?: number;
+  responseFormat?: ResponseFormat;
 }
 
 /**

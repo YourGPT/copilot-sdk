@@ -25,6 +25,7 @@ import type {
   FinishReason,
   CoreMessage,
 } from "../../core/types";
+import { toOpenAIResponseFormat } from "../../adapters/base";
 
 // ============================================
 // Model Configuration
@@ -170,6 +171,11 @@ export function openrouter(
         requestBody.provider = options.providerPreferences;
       }
 
+      const responseFormat = toOpenAIResponseFormat(params.responseFormat);
+      if (responseFormat) {
+        requestBody.response_format = responseFormat;
+      }
+
       const response = await client.chat.completions.create(requestBody);
 
       const choice = response.choices[0];
@@ -219,6 +225,11 @@ export function openrouter(
       // Add provider preferences if configured
       if (options.providerPreferences) {
         requestBody.provider = options.providerPreferences;
+      }
+
+      const responseFormat = toOpenAIResponseFormat(params.responseFormat);
+      if (responseFormat) {
+        requestBody.response_format = responseFormat;
       }
 
       const stream = await client.chat.completions.create(requestBody);

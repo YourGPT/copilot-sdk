@@ -15,6 +15,7 @@ import {
   formatMessagesForAnthropic,
   messageToAnthropicContent,
   logProviderPayload,
+  toAnthropicOutputConfig,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -377,8 +378,14 @@ export class AnthropicAdapter implements LLMAdapter {
     options: Record<string, unknown>;
     messages: Array<Record<string, unknown>>;
   } {
-    // Extract system message
-    const systemMessage = request.systemPrompt || "";
+    // Extract system message; Anthropic has no schema-less JSON mode, so for
+    // `responseFormat.type === "json_object"` we coerce via a system suffix.
+    const responseFormat = request.config?.responseFormat;
+    const jsonObjectSuffix =
+      responseFormat?.type === "json_object"
+        ? "\n\nRespond with a single JSON object and no other text."
+        : "";
+    const systemMessage = (request.systemPrompt || "") + jsonObjectSuffix;
 
     // Use raw messages if provided (for agent loop with tool calls)
     let messages: Array<Record<string, unknown>>;
@@ -503,6 +510,14 @@ export class AnthropicAdapter implements LLMAdapter {
     // Add server tool configuration for web search
     if (serverToolConfiguration) {
       options.server_tool_configuration = serverToolConfiguration;
+    }
+
+    // Anthropic structured output (`output_config.format`) — GA on Claude API
+    // and Bedrock as of late 2025. Vertex AI does not support it; users on
+    // Vertex should use a forced-tool pattern via `actions` + `toolChoice`.
+    const outputConfig = toAnthropicOutputConfig(responseFormat);
+    if (outputConfig) {
+      options.output_config = outputConfig;
     }
 
     // Add thinking configuration if enabled

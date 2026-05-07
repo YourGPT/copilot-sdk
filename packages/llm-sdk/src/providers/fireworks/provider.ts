@@ -25,6 +25,7 @@ import type {
   FinishReason,
   CoreMessage,
 } from "../../core/types";
+import { toOpenAIResponseFormat } from "../../adapters/base";
 
 // ============================================
 // Provider Options
@@ -107,6 +108,11 @@ export function fireworks(
         requestBody.tools = params.tools;
       }
 
+      const responseFormat = toOpenAIResponseFormat(params.responseFormat);
+      if (responseFormat) {
+        requestBody.response_format = responseFormat;
+      }
+
       const response = await client.chat.completions.create(requestBody);
       const choice = response.choices[0];
       const message = choice.message;
@@ -146,6 +152,11 @@ export function fireworks(
 
       if (params.tools) {
         requestBody.tools = params.tools;
+      }
+
+      const responseFormat = toOpenAIResponseFormat(params.responseFormat);
+      if (responseFormat) {
+        requestBody.response_format = responseFormat;
       }
 
       const stream = await client.chat.completions.create(requestBody);

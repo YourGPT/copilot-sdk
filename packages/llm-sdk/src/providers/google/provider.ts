@@ -25,6 +25,7 @@ import type {
   FinishReason,
   CoreMessage,
 } from "../../core/types";
+import { toOpenAIResponseFormat } from "../../adapters/base";
 
 // ============================================
 // Model Definitions
@@ -211,6 +212,7 @@ export function google(
         tools: params.tools as any,
         temperature: params.temperature,
         max_tokens: params.maxTokens,
+        response_format: toOpenAIResponseFormat(params.responseFormat),
       });
 
       const choice = response.choices[0];
@@ -249,6 +251,7 @@ export function google(
         tools: params.tools as any,
         temperature: params.temperature,
         max_tokens: params.maxTokens,
+        response_format: toOpenAIResponseFormat(params.responseFormat),
         stream: true,
       });
 

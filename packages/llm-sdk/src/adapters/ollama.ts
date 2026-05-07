@@ -5,7 +5,12 @@ import type {
 } from "../core/stream-events";
 import { generateMessageId, generateToolCallId } from "../core/utils";
 import type { LLMAdapter, ChatCompletionRequest } from "./base";
-import { formatMessages, formatTools, logProviderPayload } from "./base";
+import {
+  formatMessages,
+  formatTools,
+  logProviderPayload,
+  toOllamaFormat,
+} from "./base";
 import type { OllamaModelOptions } from "../providers/types";
 
 /**
@@ -288,12 +293,14 @@ export class OllamaAdapter implements LLMAdapter {
         Object.assign(ollamaOptions, this.config.options);
       }
 
+      const ollamaFormat = toOllamaFormat(request.config?.responseFormat);
       const payload = {
         model: request.config?.model || this.model,
         messages,
         tools,
         stream: true,
         options: ollamaOptions,
+        ...(ollamaFormat !== undefined ? { format: ollamaFormat } : {}),
       };
       logProviderPayload("ollama", "request payload", payload, request.debug);
       const response = await fetch(`${this.baseUrl}/api/chat`, {

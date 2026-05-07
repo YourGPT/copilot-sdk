@@ -12,10 +12,13 @@ import type {
   CompletionResult,
 } from "./base";
 import {
+  buildOpenAITokenParams,
   formatMessagesForOpenAI,
   formatTools,
   logProviderPayload,
   normalizeObjectJsonSchema,
+  toOpenAIResponseFormat,
+  toOpenAIResponsesTextFormat,
 } from "./base";
 
 /**
@@ -225,6 +228,9 @@ export class OpenAIAdapter implements LLMAdapter {
   ): Promise<CompletionResult> {
     const client = await this.getClient();
     const openaiToolOptions = request.providerToolOptions?.openai;
+    const responsesTextFormat = toOpenAIResponsesTextFormat(
+      request.config?.responseFormat,
+    );
     const payload = {
       model: request.config?.model || this.model,
       instructions: request.systemPrompt,
@@ -239,6 +245,7 @@ export class OpenAIAdapter implements LLMAdapter {
       parallel_tool_calls: openaiToolOptions?.parallelToolCalls,
       temperature: request.config?.temperature ?? this.config.temperature,
       max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+      ...(responsesTextFormat ? { text: { format: responsesTextFormat } } : {}),
       stream: false,
     };
 
@@ -427,15 +434,20 @@ export class OpenAIAdapter implements LLMAdapter {
               },
             }
           : openaiToolOptions?.toolChoice;
+      const modelIdForPayload = request.config?.model || this.model;
       const payload = {
-        model: request.config?.model || this.model,
+        model: modelIdForPayload,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         tool_choice: tools.length > 0 ? toolChoice : undefined,
         parallel_tool_calls:
           tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
-        temperature: request.config?.temperature ?? this.config.temperature,
-        max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+        ...buildOpenAITokenParams(
+          modelIdForPayload,
+          request.config?.maxTokens ?? this.config.maxTokens,
+          request.config?.temperature ?? this.config.temperature,
+        ),
+        response_format: toOpenAIResponseFormat(request.config?.responseFormat),
         stream: true,
         stream_options: { include_usage: true },
       };
@@ -654,15 +666,20 @@ export class OpenAIAdapter implements LLMAdapter {
           }
         : openaiToolOptions?.toolChoice;
 
+    const modelIdForCompletePayload = request.config?.model || this.model;
     const payload = {
-      model: request.config?.model || this.model,
+      model: modelIdForCompletePayload,
       messages,
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? toolChoice : undefined,
       parallel_tool_calls:
         tools.length > 0 ? openaiToolOptions?.parallelToolCalls : undefined,
-      temperature: request.config?.temperature ?? this.config.temperature,
-      max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
+      ...buildOpenAITokenParams(
+        modelIdForCompletePayload,
+        request.config?.maxTokens ?? this.config.maxTokens,
+        request.config?.temperature ?? this.config.temperature,
+      ),
+      response_format: toOpenAIResponseFormat(request.config?.responseFormat),
       stream: false,
     };
 

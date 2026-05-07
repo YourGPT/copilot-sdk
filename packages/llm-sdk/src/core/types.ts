@@ -207,6 +207,8 @@ export interface DoGenerateParams {
   temperature?: number;
   /** Maximum tokens to generate */
   maxTokens?: number;
+  /** Structured-output / JSON-mode request format (provider-translated) */
+  responseFormat?: import("./stream-events").ResponseFormat;
   /** Abort signal */
   signal?: AbortSignal;
 }
@@ -312,6 +314,8 @@ export interface GenerateTextParams {
   temperature?: number;
   /** Maximum tokens to generate */
   maxTokens?: number;
+  /** Structured-output / JSON-mode request format */
+  responseFormat?: import("./stream-events").ResponseFormat;
   /** Abort signal */
   signal?: AbortSignal;
 }

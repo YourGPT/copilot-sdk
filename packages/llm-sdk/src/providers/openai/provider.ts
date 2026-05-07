@@ -26,6 +26,10 @@ import type {
   FinishReason,
   CoreMessage,
 } from "../../core/types";
+import {
+  buildOpenAITokenParams,
+  toOpenAIResponseFormat,
+} from "../../adapters/base";
 
 // ============================================
 // Model Definitions
@@ -194,8 +198,12 @@ export function openai(
         model: modelId,
         messages,
         tools: params.tools as any,
-        temperature: params.temperature,
-        max_tokens: params.maxTokens,
+        ...buildOpenAITokenParams(
+          modelId,
+          params.maxTokens,
+          params.temperature,
+        ),
+        response_format: toOpenAIResponseFormat(params.responseFormat),
       });
 
       const choice = response.choices[0];
@@ -232,8 +240,12 @@ export function openai(
         model: modelId,
         messages,
         tools: params.tools as any,
-        temperature: params.temperature,
-        max_tokens: params.maxTokens,
+        ...buildOpenAITokenParams(
+          modelId,
+          params.maxTokens,
+          params.temperature,
+        ),
+        response_format: toOpenAIResponseFormat(params.responseFormat),
         stream: true,
       });
 
