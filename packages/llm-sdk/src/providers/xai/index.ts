@@ -180,7 +180,8 @@ export function createXAI(config: XAIProviderConfig = {}): AIProvider {
       supportedImageTypes: model.vision
         ? ["image/png", "image/jpeg", "image/gif", "image/webp"]
         : [],
-      supportsJsonMode: false,
+      // xAI accepts OpenAI-compatible `response_format` on grok-2-1212+.
+      supportsJsonMode: true,
       supportsSystemMessages: true,
     };
   };

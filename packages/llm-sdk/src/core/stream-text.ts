@@ -50,6 +50,12 @@ export async function streamText(
 ): Promise<StreamTextResult> {
   const { model, tools, maxSteps = 1, signal } = params;
 
+  if (params.responseFormat && model.capabilities.supportsJsonMode === false) {
+    console.warn(
+      `[llm-sdk] ${model.provider}/${model.modelId} does not support structured output (responseFormat); the request will be sent but the provider may ignore it.`,
+    );
+  }
+
   // State for collecting results
   let fullText = "";
   let finalUsage: TokenUsage = {
@@ -90,6 +96,7 @@ export async function streamText(
           tools: formattedTools,
           temperature: params.temperature,
           maxTokens: params.maxTokens,
+          responseFormat: params.responseFormat,
           signal,
         })) {
           switch (chunk.type) {

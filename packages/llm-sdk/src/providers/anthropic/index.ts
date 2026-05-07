@@ -157,7 +157,8 @@ export function createAnthropic(
         "image/gif",
         "image/webp",
       ],
-      supportsJsonMode: false,
+      // Native `output_config.format` — GA on Claude 3.5 and newer.
+      supportsJsonMode: true,
       supportsSystemMessages: true,
     };
   };

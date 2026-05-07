@@ -18,7 +18,7 @@ import type {
   ChatCompletionRequest,
   CompletionResult,
 } from "./base";
-import { formatTools, logProviderPayload } from "./base";
+import { formatTools, logProviderPayload, toGeminiSchema } from "./base";
 
 // ============================================
 // Types
@@ -372,6 +372,15 @@ export class GoogleAdapter implements LLMAdapter {
     // Emit message start
     yield { type: "message:start", id: messageId };
 
+    const responseFormat = request.config?.responseFormat;
+    const geminiSchema = toGeminiSchema(responseFormat);
+    const responseFormatGenConfig: Record<string, unknown> = responseFormat
+      ? {
+          responseMimeType: "application/json",
+          ...(geminiSchema ? { responseJsonSchema: geminiSchema } : {}),
+        }
+      : {};
+
     try {
       logProviderPayload(
         "google",
@@ -386,6 +395,7 @@ export class GoogleAdapter implements LLMAdapter {
           generationConfig: {
             temperature: request.config?.temperature ?? this.config.temperature,
             maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+            ...responseFormatGenConfig,
           },
           messageParts: mergedContents[mergedContents.length - 1]?.parts,
         },
@@ -401,6 +411,7 @@ export class GoogleAdapter implements LLMAdapter {
         generationConfig: {
           temperature: request.config?.temperature ?? this.config.temperature,
           maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+          ...responseFormatGenConfig,
         },
       });
 
@@ -647,6 +658,15 @@ export class GoogleAdapter implements LLMAdapter {
 
     const tools = formatToolsForGemini(request.actions);
 
+    const responseFormat = request.config?.responseFormat;
+    const geminiSchema = toGeminiSchema(responseFormat);
+    const responseFormatGenConfig: Record<string, unknown> = responseFormat
+      ? {
+          responseMimeType: "application/json",
+          ...(geminiSchema ? { responseJsonSchema: geminiSchema } : {}),
+        }
+      : {};
+
     const payload = {
       model: modelId,
       history: mergedContents.slice(0, -1),
@@ -657,6 +677,7 @@ export class GoogleAdapter implements LLMAdapter {
       generationConfig: {
         temperature: request.config?.temperature ?? this.config.temperature,
         maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+        ...responseFormatGenConfig,
       },
       messageParts: mergedContents[mergedContents.length - 1]?.parts,
     };
@@ -670,6 +691,7 @@ export class GoogleAdapter implements LLMAdapter {
       generationConfig: {
         temperature: request.config?.temperature ?? this.config.temperature,
         maxOutputTokens: request.config?.maxTokens ?? this.config.maxTokens,
+        ...responseFormatGenConfig,
       },
     });
 

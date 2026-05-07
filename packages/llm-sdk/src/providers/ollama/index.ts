@@ -204,7 +204,8 @@ export function createOllama(config: OllamaProviderConfig = {}): AIProvider {
       supportedImageTypes: model.vision
         ? ["image/png", "image/jpeg", "image/gif"]
         : [],
-      supportsJsonMode: false,
+      // Ollama 0.5+ supports `format: "json"` and JSON-schema constrained output.
+      supportsJsonMode: true,
       supportsSystemMessages: true,
     };
   };

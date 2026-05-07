@@ -345,6 +345,76 @@ app.post("/chat/retry-test", async (req, res) => {
   }
 });
 
+// ─── Route 9: Structured output (responseFormat) ─────────────────────────────
+//
+// Exercises the unified `responseFormat` field across an OpenAI → Anthropic →
+// Google fallback chain. Each adapter translates the OpenAI-shape JSON schema
+// to its provider's native structured-output API (`response_format`,
+// `output_config.format`, `responseJsonSchema`).
+//
+// Test:
+//   curl -s -X POST http://localhost:3000/chat/structured \
+//     -H "Content-Type: application/json" \
+//     -d '{"messages":[{"role":"user","content":"List the top 3 fastest land animals with their top speed in km/h."}]}'
+
+const google = createOpenAI({
+  apiKey: process.env.GOOGLE_API_KEY,
+  baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+});
+
+const ANIMALS_SCHEMA = {
+  type: "object",
+  properties: {
+    animals: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          top_speed_kmh: { type: "number" },
+        },
+        required: ["name", "top_speed_kmh"],
+      },
+    },
+  },
+  required: ["animals"],
+} as const;
+
+const structuredRuntime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      openai.languageModel("gpt-4o"),
+      anthropic.languageModel("claude-3-5-sonnet-latest"),
+      google.languageModel("gemini-2.0-flash"),
+    ],
+    strategy: "priority",
+    onFallback: onFallbackLog("structured"),
+  }),
+  systemPrompt: "You return data as JSON matching the requested schema.",
+});
+
+app.post("/chat/structured", async (req, res) => {
+  try {
+    const result = await structuredRuntime.chat({
+      ...req.body,
+      config: {
+        ...req.body.config,
+        responseFormat: {
+          type: "json_schema",
+          json_schema: {
+            name: "animals_response",
+            schema: ANIMALS_SCHEMA,
+            strict: true,
+          },
+        },
+      },
+    });
+    res.json(result);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
 // ─── Route 7: Tools + FORCED FALLBACK (dead primary) ─────────────────────────
 //
 // Same tools, but primary is a dead URL.
@@ -415,5 +485,8 @@ app.listen(PORT, () => {
   );
   console.log(
     "  POST /chat/retry-test          — Retries dead model 2x before falling back to Claude",
+  );
+  console.log(
+    "  POST /chat/structured          — JSON-schema response across OpenAI → Claude → Gemini",
   );
 });

@@ -4,6 +4,7 @@ import type {
   ActionDefinition,
   StreamEvent,
   LLMConfig,
+  ResponseFormat,
   ToolDefinition,
   WebSearchConfig,
   ProviderToolRuntimeOptions,
@@ -17,6 +18,7 @@ export interface RequestLLMConfig {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  responseFormat?: ResponseFormat;
 }
 
 /**
@@ -283,6 +285,163 @@ export function normalizeObjectJsonSchema(
   }
 
   return normalized;
+}
+
+/**
+ * Newer OpenAI model families (o1/o3/o4 reasoning, gpt-5.x) require
+ * `max_completion_tokens` instead of `max_tokens` and reject `temperature`
+ * on the Chat Completions endpoint.
+ */
+export function isOpenAIReasoningModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return /^(o1|o3|o4|gpt-5)/i.test(modelId);
+}
+
+/**
+ * Build the token-limit + temperature fields for a Chat Completions payload,
+ * accounting for the o-series / gpt-5 parameter rename.
+ */
+export function buildOpenAITokenParams(
+  modelId: string | undefined,
+  maxTokens: number | undefined,
+  temperature: number | undefined,
+): Record<string, number | undefined> {
+  if (isOpenAIReasoningModel(modelId)) {
+    return { max_completion_tokens: maxTokens };
+  }
+  return { max_tokens: maxTokens, temperature };
+}
+
+/**
+ * Recursively walk a JSON Schema and drop keys the provider rejects.
+ */
+function stripSchemaKeys(
+  schema: unknown,
+  keysToDrop: ReadonlySet<string>,
+  options: { forceAdditionalPropertiesFalse?: boolean } = {},
+): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => stripSchemaKeys(item, keysToDrop, options));
+  }
+  if (!schema || typeof schema !== "object") return schema;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(
+    schema as Record<string, unknown>,
+  )) {
+    if (keysToDrop.has(key)) continue;
+    out[key] = stripSchemaKeys(value, keysToDrop, options);
+  }
+
+  if (options.forceAdditionalPropertiesFalse && out.type === "object") {
+    out.additionalProperties = false;
+  }
+  return out;
+}
+
+/** OpenAI Chat Completions `response_format` payload. */
+export function toOpenAIResponseFormat(
+  rf: ResponseFormat | undefined,
+): Record<string, unknown> | undefined {
+  if (!rf) return undefined;
+  if (rf.type === "json_object") return { type: "json_object" };
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: rf.json_schema.name,
+      schema: normalizeObjectJsonSchema(rf.json_schema.schema),
+      strict: rf.json_schema.strict ?? true,
+    },
+  };
+}
+
+/** OpenAI Responses API `text.format` payload (different shape than Chat Completions). */
+export function toOpenAIResponsesTextFormat(
+  rf: ResponseFormat | undefined,
+): Record<string, unknown> | undefined {
+  if (!rf || rf.type !== "json_schema") return undefined;
+  return {
+    type: "json_schema",
+    name: rf.json_schema.name,
+    schema: normalizeObjectJsonSchema(rf.json_schema.schema),
+    strict: rf.json_schema.strict ?? true,
+  };
+}
+
+/**
+ * Anthropic `output_config.format` payload.
+ *
+ * Anthropic's structured-output schema subset is narrower than OpenAI's:
+ * no numeric (minimum/maximum/multipleOf) or length (minLength/maxLength)
+ * constraints, and `additionalProperties: false` is required on every object.
+ */
+const ANTHROPIC_UNSUPPORTED_KEYS: ReadonlySet<string> = new Set([
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minProperties",
+  "maxProperties",
+  "pattern",
+  "$schema",
+]);
+
+export function toAnthropicOutputConfig(
+  rf: ResponseFormat | undefined,
+): Record<string, unknown> | undefined {
+  if (!rf || rf.type !== "json_schema") return undefined;
+  const schema = stripSchemaKeys(
+    rf.json_schema.schema,
+    ANTHROPIC_UNSUPPORTED_KEYS,
+    { forceAdditionalPropertiesFalse: true },
+  ) as Record<string, unknown>;
+  return {
+    format: {
+      type: "json_schema",
+      schema,
+    },
+  };
+}
+
+/**
+ * Gemini `responseJsonSchema` payload.
+ *
+ * Gemini accepts an OpenAPI 3.0 subset and silently ignores unknown keywords;
+ * `oneOf`, `anyOf`, `$ref`, and `pattern` are not supported.
+ */
+const GEMINI_UNSUPPORTED_KEYS: ReadonlySet<string> = new Set([
+  "oneOf",
+  "anyOf",
+  "$ref",
+  "$defs",
+  "definitions",
+  "pattern",
+  "$schema",
+  "additionalProperties",
+]);
+
+export function toGeminiSchema(
+  rf: ResponseFormat | undefined,
+): Record<string, unknown> | undefined {
+  if (!rf || rf.type !== "json_schema") return undefined;
+  return stripSchemaKeys(
+    rf.json_schema.schema,
+    GEMINI_UNSUPPORTED_KEYS,
+  ) as Record<string, unknown>;
+}
+
+/** Ollama `format` field — `"json"` for free-form, schema object for constrained. */
+export function toOllamaFormat(
+  rf: ResponseFormat | undefined,
+): string | Record<string, unknown> | undefined {
+  if (!rf) return undefined;
+  if (rf.type === "json_object") return "json";
+  return rf.json_schema.schema;
 }
 
 /**

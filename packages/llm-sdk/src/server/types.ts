@@ -1,6 +1,7 @@
 import type {
   ActionDefinition,
   KnowledgeBaseConfig,
+  ResponseFormat,
   ToolDefinition,
   ToolProfile,
   WebSearchConfig,
@@ -222,7 +223,11 @@ export interface ChatRequest {
   /** Bot ID (for cloud) */
   botId?: string;
   /** LLM config overrides */
-  config?: { temperature?: number; maxTokens?: number };
+  config?: {
+    temperature?: number;
+    maxTokens?: number;
+    responseFormat?: ResponseFormat;
+  };
   /** System prompt override */
   systemPrompt?: string;
   /** Actions from client (legacy) */
