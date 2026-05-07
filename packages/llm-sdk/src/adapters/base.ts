@@ -318,7 +318,10 @@ export function buildOpenAITokenParams(
 function stripSchemaKeys(
   schema: unknown,
   keysToDrop: ReadonlySet<string>,
-  options: { forceAdditionalPropertiesFalse?: boolean } = {},
+  options: {
+    forceAdditionalPropertiesFalse?: boolean;
+    renameKeys?: Record<string, string>;
+  } = {},
 ): unknown {
   if (Array.isArray(schema)) {
     return schema.map((item) => stripSchemaKeys(item, keysToDrop, options));
@@ -330,7 +333,8 @@ function stripSchemaKeys(
     schema as Record<string, unknown>,
   )) {
     if (keysToDrop.has(key)) continue;
-    out[key] = stripSchemaKeys(value, keysToDrop, options);
+    const renamed = options.renameKeys?.[key] ?? key;
+    out[renamed] = stripSchemaKeys(value, keysToDrop, options);
   }
 
   if (options.forceAdditionalPropertiesFalse && out.type === "object") {
@@ -395,10 +399,15 @@ export function toAnthropicOutputConfig(
   rf: ResponseFormat | undefined,
 ): Record<string, unknown> | undefined {
   if (!rf || rf.type !== "json_schema") return undefined;
+  // Anthropic accepts `anyOf` but rejects `oneOf` — convert rather than strip,
+  // otherwise discriminated-union schemas silently lose their union semantics.
   const schema = stripSchemaKeys(
     rf.json_schema.schema,
     ANTHROPIC_UNSUPPORTED_KEYS,
-    { forceAdditionalPropertiesFalse: true },
+    {
+      forceAdditionalPropertiesFalse: true,
+      renameKeys: { oneOf: "anyOf" },
+    },
   ) as Record<string, unknown>;
   return {
     format: {
