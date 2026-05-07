@@ -42,8 +42,22 @@ const result = await generateText({
   temperature: 0.7,
   maxTokens: 4096,
   signal: abortController.signal,
+
+  // Optional: Structured JSON output (provider-translated)
+  responseFormat: {
+    type: 'json_schema',
+    json_schema: {
+      name: 'response',
+      schema: { type: 'object', properties: { ... }, required: [...] },
+      strict: true,
+    },
+  },
 });
 ```
+
+<Callout>
+  `responseFormat` works across OpenAI, Anthropic, Google, Azure, xAI, Together, Fireworks, OpenRouter, and Ollama — each adapter translates to the provider's native field. See [Structured Output](/docs/llm-sdk/structured-output) for per-provider details and gotchas.
+</Callout>
 
 ---
 

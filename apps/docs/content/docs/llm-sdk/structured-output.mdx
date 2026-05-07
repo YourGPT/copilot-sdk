@@ -1,0 +1,219 @@
+---
+title: Structured Output
+description: Get JSON-schema-validated responses from any provider
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Pass `responseFormat` to `generateText()` or `streamText()` to get
+JSON-schema-validated responses. The SDK translates the unified shape to
+each provider's native API — works the same whether you're on OpenAI,
+Anthropic, Google, Azure, xAI, Together, Fireworks, OpenRouter, or Ollama.
+
+```ts
+import { generateText } from '@yourgpt/llm-sdk';
+import { openai } from '@yourgpt/llm-sdk/openai';
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  prompt: 'List the top 3 fastest land animals.',
+  responseFormat: {
+    type: 'json_schema',
+    json_schema: {
+      name: 'animals_response',
+      schema: {
+        type: 'object',
+        properties: {
+          animals: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                top_speed_kmh: { type: 'number' },
+              },
+              required: ['name', 'top_speed_kmh'],
+            },
+          },
+        },
+        required: ['animals'],
+      },
+      strict: true,
+    },
+  },
+});
+
+const data = JSON.parse(result.text);
+// → { animals: [{ name: 'Cheetah', top_speed_kmh: 120 }, ...] }
+```
+
+---
+
+## ResponseFormat shape
+
+The unified type uses OpenAI's `response_format` shape — callers who already
+write `response_format` for OpenAI can pass it through unchanged.
+
+```ts
+type ResponseFormat =
+  | { type: 'json_object' }
+  | {
+      type: 'json_schema';
+      json_schema: {
+        name: string;
+        schema: Record<string, unknown>; // JSON Schema
+        strict?: boolean;                // default: true
+      };
+    };
+```
+
+- `type: 'json_object'` — free-form JSON, no schema enforcement. Adapters
+  that don't have a native "JSON mode without schema" (Anthropic) inject a
+  system-prompt suffix asking for JSON instead.
+- `type: 'json_schema'` — schema-validated output. Recommended.
+
+---
+
+## Per-provider translation
+
+Each adapter translates `responseFormat` to its provider's native field:
+
+| Provider | Native field |
+|---|---|
+| OpenAI Chat / Azure / xAI / Together / Fireworks / OpenRouter | `response_format` |
+| OpenAI Responses API | `text.format` (different shape) |
+| Anthropic Claude 3.5+ | `output_config.format` |
+| Google Gemini | `responseJsonSchema` |
+| Ollama 0.5+ | `format` |
+
+You don't need to think about this — the SDK handles it. The notes below
+matter only if you hit edge cases.
+
+---
+
+## Provider gotchas
+
+### Anthropic — schema sanitization
+
+Anthropic's structured-output schema subset is narrower than OpenAI's. The
+adapter automatically strips keys Anthropic rejects so your call doesn't 400:
+
+- **Stripped:** `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+  `multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`,
+  `minProperties`, `maxProperties`, `pattern`, `$schema`
+- **Converted:** `oneOf` → `anyOf` (Anthropic accepts the latter, not the former)
+- **Forced:** `additionalProperties: false` on every object
+
+If you rely on numeric or length constraints for validation, do that
+client-side after `JSON.parse()` rather than encoding it in the schema.
+
+<Callout type="warn">
+  Anthropic's `output_config.format` is GA on Claude API and AWS Bedrock for
+  Claude 3.5 / 3.7 / 4 series. It is NOT available on Google Vertex AI. Older
+  Claude 3 base models (`claude-3-opus-20240229` etc.) are not supported either.
+  Tracking: [issue #96](https://github.com/YourGPT/copilot-sdk/issues/96).
+</Callout>
+
+### Google Gemini — OpenAPI subset
+
+Gemini's `responseJsonSchema` accepts an OpenAPI 3.0 subset. The adapter
+strips keys Gemini doesn't recognize:
+
+- **Stripped:** `oneOf`, `anyOf`, `$ref`, `$defs`, `definitions`, `pattern`,
+  `$schema`, `additionalProperties`
+
+Schemas with discriminated unions or shared definitions need to be inlined
+before passing to Gemini.
+
+### xAI — `additionalProperties` default
+
+xAI inverts OpenAI's default: `additionalProperties` defaults to `false` and
+must be explicitly set `true` if you want extra properties allowed. The
+adapter passes your schema through unchanged, so be explicit.
+
+### Ollama — local only
+
+Ollama's `format` field requires Ollama v0.5+ for schema-constrained output
+(string `"json"` works on older versions for free-form JSON). Ollama Cloud
+does not support structured outputs at the time of writing.
+
+---
+
+## Capability gate
+
+Each model in the registry carries a `supportsJsonMode` capability flag.
+When you pass `responseFormat` to a model that doesn't support it, the SDK
+logs a warning:
+
+```
+[llm-sdk] anthropic/claude-3-haiku-20240307 does not support structured
+output (responseFormat); the request will be sent but the provider may
+ignore it.
+```
+
+This is a warning, not an error — the request still goes through. Switch
+to a supported model (e.g. `claude-3-5-sonnet-latest`) or open an issue if
+you need fallback behavior.
+
+---
+
+## Reasoning models — token semantics
+
+For OpenAI reasoning models (`o1`, `o3`, `o4`, `gpt-5.x`):
+
+- `maxTokens` is internally translated to `max_completion_tokens`
+- `temperature` is silently dropped (these models reject it)
+- `max_completion_tokens` includes BOTH reasoning tokens AND visible output
+  tokens — set generously (`maxTokens: 4000+`) or you may see truncated
+  responses
+
+```ts
+const result = await generateText({
+  model: openai('o3-mini'),
+  prompt: 'Solve: ...',
+  maxTokens: 4000,           // → max_completion_tokens internally
+  temperature: 0.7,          // → silently dropped
+  responseFormat: { ... },
+});
+```
+
+---
+
+## Fallback chains
+
+`responseFormat` works through fallback chains transparently. Each provider
+in the chain receives the schema in its native format:
+
+```ts
+import { createFallbackChain } from '@yourgpt/llm-sdk/fallback';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+
+const chain = createFallbackChain({
+  models: [
+    openai.languageModel('gpt-4o'),
+    anthropic.languageModel('claude-3-5-sonnet-latest'),
+  ],
+  strategy: 'priority',
+});
+
+// Same responseFormat works on either hop
+const result = await chain.chat({
+  messages: [...],
+  config: {
+    responseFormat: { type: 'json_schema', json_schema: { ... } },
+  },
+});
+```
+
+A working end-to-end demo lives in `examples/fallback-demo` — see the
+`/chat/structured` route.
+
+---
+
+## Next Steps
+
+- [generateText()](/docs/llm-sdk/generate-text) — full text generation API
+- [streamText()](/docs/llm-sdk/stream-text) — streaming variant
+- [Tools](/docs/llm-sdk/tools) — function calling (orthogonal to structured output)
