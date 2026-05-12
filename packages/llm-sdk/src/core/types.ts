@@ -111,7 +111,7 @@ export interface ToolMessage {
 /**
  * Content parts for multimodal user messages
  */
-export type UserContentPart = TextPart | ImagePart | FilePart;
+export type UserContentPart = TextPart | ImagePart | FilePart | AudioPart;
 
 export interface TextPart {
   type: "text";
@@ -132,6 +132,16 @@ export interface FilePart {
   data: string;
   /** MIME type (e.g., 'application/pdf') */
   mimeType: string;
+}
+
+export interface AudioPart {
+  type: "input_audio";
+  input_audio: {
+    /** Base64-encoded audio data */
+    data: string;
+    /** Audio format (e.g., 'mp3', 'wav', 'ogg', 'webm') */
+    format: string;
+  };
 }
 
 // ============================================

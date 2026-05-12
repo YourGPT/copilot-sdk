@@ -51,6 +51,9 @@ export type {
   ImagePart,
   FilePart,
 
+  // Content Parts
+  AudioPart,
+
   // Tools
   Tool,
   ToolContext,

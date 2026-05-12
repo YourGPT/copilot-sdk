@@ -805,9 +805,21 @@ export function messageToOpenAIContent(
   const attachments = message.metadata?.attachments;
   const content = message.content ?? "";
 
-  // If no image attachments, return simple string
-  if (!hasImageAttachments(message)) {
+  // Check for audio parts in content array
+  const hasAudio =
+    Array.isArray(message.content) &&
+    (message.content as Array<{ type: string }>).some(
+      (p) => p.type === "input_audio",
+    );
+
+  // If no image attachments and no audio parts, return simple string
+  if (!hasImageAttachments(message) && !hasAudio) {
     return content;
+  }
+
+  // If content is already an array of parts (e.g. audio + text), pass through directly
+  if (Array.isArray(message.content)) {
+    return message.content as unknown as OpenAIContentBlock[];
   }
 
   // Build content blocks array
