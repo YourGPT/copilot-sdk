@@ -159,6 +159,9 @@ export type {
   LLMAdapter,
   ChatCompletionRequest,
   AdapterFactory,
+  ResponseRequest,
+  ResponseResult,
+  McpServerConfig,
 } from "./adapters/base";
 
 // Provider types (no implementations - use subpath imports)

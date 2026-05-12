@@ -10,6 +10,8 @@ import type {
   LLMAdapter,
   ChatCompletionRequest,
   CompletionResult,
+  ResponseRequest,
+  ResponseResult,
 } from "./base";
 import {
   formatMessagesForAnthropic,
@@ -802,6 +804,86 @@ export class AnthropicAdapter implements LLMAdapter {
         code: "ANTHROPIC_ERROR",
       };
     }
+  }
+
+  /**
+   * Responses API — MCP tools + reasoning + structured output via Anthropic Messages API
+   * Uses beta headers: mcp-client-2025-11-20, interleaved-thinking-2025-05-14
+   */
+  async respond(request: ResponseRequest): Promise<ResponseResult> {
+    const client = await this.getClient();
+
+    const mcpServers = (request.mcpServers ?? []).map((mcp) => ({
+      type: "url",
+      url: mcp.server_url,
+      name: mcp.server_label,
+      ...(mcp.headers
+        ? { authorization_token: mcp.headers["Authorization"] }
+        : {}),
+      ...(mcp.allowed_tools ? { allowed_tools: mcp.allowed_tools } : {}),
+    }));
+
+    const thinkingBudget =
+      request.reasoningEffort === "high"
+        ? 16000
+        : request.reasoningEffort === "medium"
+          ? 8000
+          : 4000;
+
+    const betas: string[] = [];
+    if (mcpServers.length) betas.push("mcp-client-2025-11-20");
+    if (request.reasoningEffort) betas.push("interleaved-thinking-2025-05-14");
+
+    const payload: Record<string, unknown> = {
+      model: this.model,
+      max_tokens: request.maxTokens ?? 8192,
+      messages: [{ role: "user", content: request.prompt }],
+      ...(mcpServers.length ? { mcp_servers: mcpServers } : {}),
+      ...(request.reasoningEffort
+        ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } }
+        : {}),
+      ...(request.outputSchema
+        ? {
+            output_config: {
+              format: {
+                type: "json_schema",
+                json_schema: {
+                  name: request.outputSchema.name,
+                  schema: request.outputSchema.schema,
+                },
+              },
+            },
+          }
+        : {}),
+    };
+
+    const response = await client.beta.messages.create(payload as any, {
+      headers: betas.length ? { "anthropic-beta": betas.join(",") } : {},
+    });
+
+    let text = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for (const block of response.content ?? []) {
+      if ((block as any).type === "text") {
+        text += (block as any).text;
+      }
+    }
+
+    if (response.usage) {
+      inputTokens = (response.usage as any).input_tokens ?? 0;
+      outputTokens = (response.usage as any).output_tokens ?? 0;
+    }
+
+    return {
+      text,
+      usage: {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+      },
+    };
   }
 }
 

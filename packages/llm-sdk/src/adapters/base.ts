@@ -77,6 +77,51 @@ export interface CompletionResult {
 }
 
 /**
+ * MCP server configuration for the Responses API
+ */
+export interface McpServerConfig {
+  type: "mcp";
+  server_label: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  allowed_tools?: string[];
+  require_approval?: "never" | "always";
+}
+
+/**
+ * Request for the Responses API (OpenAI Responses / Anthropic Messages with MCP)
+ */
+export interface ResponseRequest {
+  /** Prompt text */
+  prompt: string;
+  /** MCP server(s) to attach */
+  mcpServers?: McpServerConfig[];
+  /** Reasoning effort: low | medium | high */
+  reasoningEffort?: "low" | "medium" | "high";
+  /** Zod/JSON schema for structured output */
+  outputSchema?: {
+    name: string;
+    schema: Record<string, unknown>;
+  };
+  /** Max tokens for the response */
+  maxTokens?: number;
+}
+
+/**
+ * Normalized result from the Responses API
+ */
+export interface ResponseResult {
+  /** Generated text */
+  text: string;
+  /** Token usage */
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+/**
  * Base LLM adapter interface
  */
 export interface LLMAdapter {
@@ -95,6 +140,12 @@ export interface LLMAdapter {
    * Non-streaming chat completion (for debugging/comparison)
    */
   complete?(request: ChatCompletionRequest): Promise<CompletionResult>;
+
+  /**
+   * Responses API — MCP tools + reasoning + structured output.
+   * OpenAI: uses /v1/responses. Anthropic: uses /v1/messages with beta headers.
+   */
+  respond?(request: ResponseRequest): Promise<ResponseResult>;
 }
 
 /**

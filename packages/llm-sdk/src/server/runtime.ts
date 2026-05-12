@@ -15,7 +15,12 @@ import type {
 } from "../core/stream-events";
 import type { AIProvider } from "../providers/types";
 import { createMessage } from "../core/stream-events";
-import type { LLMAdapter, ChatCompletionRequest } from "../adapters/base";
+import type {
+  LLMAdapter,
+  ChatCompletionRequest,
+  ResponseRequest,
+  ResponseResult,
+} from "../adapters/base";
 import type {
   RuntimeConfig,
   ChatRequest,
@@ -2035,6 +2040,44 @@ export class Runtime {
     return this.stream(request, { signal: options?.signal }).collect({
       includeUsage: true,
     });
+  }
+
+  /**
+   * Responses API — MCP tools + reasoning + structured output.
+   * Uses OpenAI /v1/responses for OpenAI models, Anthropic Messages API with
+   * beta headers for Anthropic models. Falls back through the chain automatically.
+   *
+   * @example
+   * ```typescript
+   * const result = await runtime.response({
+   *   prompt: "Generate FAQs from the knowledge base",
+   *   mcpServers: [{ type: "mcp", server_label: "kb", server_url: "https://..." }],
+   *   reasoningEffort: "high",
+   *   outputSchema: { name: "faqs", schema: { ... } },
+   * });
+   * console.log(result.text);
+   * ```
+   */
+  async response(request: ResponseRequest): Promise<ResponseResult> {
+    // Resolve the underlying adapter from either config shape
+    let resolvedAdapter: LLMAdapter | undefined;
+
+    if ("adapter" in this.config) {
+      resolvedAdapter = this.config.adapter;
+    } else if ("provider" in this.config) {
+      resolvedAdapter = (this.config.provider as any).languageModel?.(
+        this.config.model,
+      );
+    }
+
+    if (!resolvedAdapter || typeof resolvedAdapter.respond !== "function") {
+      throw new Error(
+        `[llm-sdk] runtime.response() is not supported by the current adapter (${resolvedAdapter?.provider ?? "unknown"}). ` +
+          "Only OpenAI and Anthropic adapters implement respond().",
+      );
+    }
+
+    return resolvedAdapter.respond(request);
   }
 
   /**
