@@ -832,7 +832,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const betas: string[] = [];
     if (mcpServers.length) betas.push("mcp-client-2025-11-20");
-    if (request.reasoningEffort) betas.push("interleaved-thinking-2025-05-14");
+    // interleaved-thinking-2025-05-14 is deprecated on Claude 4.x — adaptive thinking handles it automatically
 
     const payload: Record<string, unknown> = {
       model: this.model,
