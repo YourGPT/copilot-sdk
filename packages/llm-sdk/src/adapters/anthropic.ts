@@ -820,7 +820,9 @@ export class AnthropicAdapter implements LLMAdapter {
       ...(mcp.headers
         ? { authorization_token: mcp.headers["Authorization"] }
         : {}),
-      ...(mcp.allowed_tools ? { allowed_tools: mcp.allowed_tools } : {}),
+      ...(mcp.allowed_tools
+        ? { tool_configuration: { allowed_tools: mcp.allowed_tools } }
+        : {}),
     }));
 
     const thinkingBudget =
