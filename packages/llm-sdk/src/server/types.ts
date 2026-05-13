@@ -5,6 +5,8 @@ import type {
   ToolDefinition,
   ToolProfile,
   WebSearchConfig,
+  McpServerConfig,
+  ReasoningEffort,
 } from "../core/stream-events";
 import type { LLMAdapter } from "../adapters";
 import type { AIProvider } from "../providers/types";
@@ -227,6 +229,8 @@ export interface ChatRequest {
     temperature?: number;
     maxTokens?: number;
     responseFormat?: ResponseFormat;
+    mcpServers?: McpServerConfig[];
+    reasoningEffort?: ReasoningEffort;
   };
   /** System prompt override */
   systemPrompt?: string;

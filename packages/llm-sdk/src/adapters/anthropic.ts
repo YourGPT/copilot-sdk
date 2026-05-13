@@ -16,6 +16,8 @@ import {
   messageToAnthropicContent,
   logProviderPayload,
   toAnthropicOutputConfig,
+  toAnthropicMcp,
+  toAnthropicThinking,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -377,6 +379,7 @@ export class AnthropicAdapter implements LLMAdapter {
   private buildRequestOptions(request: ChatCompletionRequest): {
     options: Record<string, unknown>;
     messages: Array<Record<string, unknown>>;
+    betas: string[];
   } {
     // Extract system message; Anthropic has no schema-less JSON mode, so for
     // `responseFormat.type === "json_object"` we coerce via a system suffix.
@@ -520,15 +523,40 @@ export class AnthropicAdapter implements LLMAdapter {
       options.output_config = outputConfig;
     }
 
-    // Add thinking configuration if enabled
-    if (this.config.thinking?.type === "enabled") {
+    // Per-request reasoning effort wins over adapter-level `thinking` config.
+    // For Claude 4.6/4.7 we emit the adaptive shape; older models fall back to
+    // explicit `budget_tokens`.
+    const modelForThinking = (request.config?.model || this.model) as string;
+    const requestThinking = toAnthropicThinking(
+      request.config?.reasoningEffort,
+      modelForThinking,
+    );
+    if (requestThinking) {
+      options.thinking = requestThinking;
+    } else if (this.config.thinking?.type === "enabled") {
       options.thinking = {
         type: "enabled",
         budget_tokens: this.config.thinking.budgetTokens || 10000,
       };
     }
 
-    return { options, messages };
+    // MCP server passthrough — `mcp-client-2025-11-20` shape: `mcp_servers`
+    // holds the connection entries, and tool filtering is expressed as
+    // `tools[type=mcp_toolset]` entries spliced alongside the function tools.
+    const mcp = toAnthropicMcp(request.config?.mcpServers);
+    const betas: string[] = [];
+    if (mcp.mcpServers.length > 0) {
+      options.mcp_servers = mcp.mcpServers;
+      betas.push(...mcp.betas);
+      if (mcp.tools.length > 0) {
+        const existingTools = Array.isArray(options.tools)
+          ? (options.tools as Array<Record<string, unknown>>)
+          : [];
+        options.tools = [...existingTools, ...mcp.tools];
+      }
+    }
+
+    return { options, messages, betas };
   }
 
   /**
@@ -536,7 +564,7 @@ export class AnthropicAdapter implements LLMAdapter {
    */
   async complete(request: ChatCompletionRequest): Promise<CompletionResult> {
     const client = await this.getClient();
-    const { options } = this.buildRequestOptions(request);
+    const { options, betas } = this.buildRequestOptions(request);
 
     // Ensure non-streaming mode
     const nonStreamingOptions = {
@@ -548,10 +576,18 @@ export class AnthropicAdapter implements LLMAdapter {
       logProviderPayload(
         "anthropic",
         "request payload",
-        nonStreamingOptions,
+        { ...nonStreamingOptions, _betas: betas },
         request.debug,
       );
-      const response = await client.messages.create(nonStreamingOptions);
+      // When MCP (or any other beta) is in use, route through the `beta.*`
+      // namespace so the SDK attaches the `anthropic-beta` header for us.
+      const messagesApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
+      const createOptions = betas.length > 0 ? { betas } : undefined;
+      const response = await messagesApi.create(
+        nonStreamingOptions,
+        createOptions as never,
+      );
       logProviderPayload(
         "anthropic",
         "response payload",
@@ -595,7 +631,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async *stream(request: ChatCompletionRequest): AsyncGenerator<StreamEvent> {
     const client = await this.getClient();
-    const { options } = this.buildRequestOptions(request);
+    const { options, betas } = this.buildRequestOptions(request);
 
     const messageId = generateMessageId();
 
@@ -606,10 +642,13 @@ export class AnthropicAdapter implements LLMAdapter {
       logProviderPayload(
         "anthropic",
         "request payload",
-        options,
+        { ...options, _betas: betas },
         request.debug,
       );
-      const stream = await client.messages.stream(options);
+      const streamApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
+      const streamOptions = betas.length > 0 ? { betas } : undefined;
+      const stream = await streamApi.stream(options, streamOptions as never);
 
       let currentToolUse: {
         id: string;

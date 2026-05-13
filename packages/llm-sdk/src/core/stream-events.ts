@@ -305,12 +305,54 @@ export type ResponseFormat =
     };
 
 /**
+ * MCP (Model Context Protocol) server reference for a request.
+ *
+ * Vendor-neutral shape — each adapter translates to its provider's native
+ * field: OpenAI Responses `tools[type=mcp]`, Anthropic `mcp_servers` +
+ * `tools[type=mcp_toolset]` (beta `mcp-client-2025-11-20`), or local
+ * execution for adapters without native MCP.
+ */
+export interface McpServerConfig {
+  /** Human-readable label sent to the provider (also used as MCP server name). */
+  label: string;
+  /** MCP server endpoint (HTTP/SSE URL). */
+  url: string;
+  /** Additional HTTP headers; the `Authorization` value is also extracted for providers that take a separate token field. */
+  headers?: Record<string, string>;
+  /** Restrict the model to a subset of the MCP server's exposed tools. */
+  allowedTools?: string[];
+  /** Approval policy for tool invocation. Defaults to "never" (no human-in-the-loop). */
+  requireApproval?: "never" | "always";
+}
+
+/**
+ * Reasoning effort knob — normalized across providers.
+ *
+ * Maps to OpenAI Responses `reasoning.effort`, Anthropic `thinking`
+ * (adaptive+effort on Claude 4.6/4.7, budget_tokens on older models),
+ * Gemini `thinkingBudget`, xAI `reasoning_effort`. Adapters silently
+ * no-op when the underlying model doesn't support reasoning.
+ *
+ * Use the enum for the common case, or `{ budgetTokens }` / `{ raw }`
+ * for provider-specific escape hatches when full fidelity is required.
+ */
+export type ReasoningEffort =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | { budgetTokens: number }
+  | { raw: Record<string, unknown> };
+
+/**
  * LLM configuration
  */
 export interface LLMConfig {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: ResponseFormat;
+  mcpServers?: McpServerConfig[];
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**

@@ -8,6 +8,8 @@ import type {
   ToolDefinition,
   WebSearchConfig,
   ProviderToolRuntimeOptions,
+  McpServerConfig,
+  ReasoningEffort,
 } from "../core/stream-events";
 import type { TokenUsage } from "../core/types";
 
@@ -19,6 +21,10 @@ export interface RequestLLMConfig {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: ResponseFormat;
+  /** MCP servers exposed to the model for this request (provider-translated). */
+  mcpServers?: McpServerConfig[];
+  /** Reasoning/thinking effort knob (provider-translated). */
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -451,6 +457,200 @@ export function toOllamaFormat(
   if (!rf) return undefined;
   if (rf.type === "json_object") return "json";
   return rf.json_schema.schema;
+}
+
+// ============================================
+// MCP server translators
+// ============================================
+
+/**
+ * OpenAI Responses-API `tools[type=mcp]` entries. The Responses endpoint
+ * accepts MCP server references inline alongside function tools.
+ */
+export function toOpenAIResponsesMcpTools(
+  mcpServers: McpServerConfig[] | undefined,
+): Array<Record<string, unknown>> {
+  if (!mcpServers || mcpServers.length === 0) return [];
+  return mcpServers.map((mcp) => ({
+    type: "mcp",
+    server_label: mcp.label,
+    server_url: mcp.url,
+    ...(mcp.headers ? { headers: mcp.headers } : {}),
+    ...(mcp.allowedTools ? { allowed_tools: mcp.allowedTools } : {}),
+    require_approval: mcp.requireApproval ?? "never",
+  }));
+}
+
+/**
+ * Anthropic `mcp-client-2025-11-20` payload split.
+ *
+ * The 2025-11-20 beta moved tool filtering out of the `mcp_servers` entry
+ * into a separate `tools[type=mcp_toolset]` entry. We emit both pieces from a
+ * single `McpServerConfig` so adapters can splice them into the request.
+ *
+ * The `Authorization` header is hoisted to the top-level `authorization_token`
+ * field with the `Bearer ` prefix stripped (Anthropic expects the bare token).
+ */
+export function toAnthropicMcp(mcpServers: McpServerConfig[] | undefined): {
+  mcpServers: Array<Record<string, unknown>>;
+  tools: Array<Record<string, unknown>>;
+  betas: string[];
+} {
+  if (!mcpServers || mcpServers.length === 0) {
+    return { mcpServers: [], tools: [], betas: [] };
+  }
+
+  const serverEntries: Array<Record<string, unknown>> = [];
+  const toolEntries: Array<Record<string, unknown>> = [];
+
+  for (const mcp of mcpServers) {
+    const authHeader = mcp.headers?.Authorization ?? mcp.headers?.authorization;
+    const token = authHeader?.replace(/^Bearer\s+/i, "");
+
+    serverEntries.push({
+      type: "url",
+      url: mcp.url,
+      name: mcp.label,
+      ...(token ? { authorization_token: token } : {}),
+    });
+
+    if (mcp.allowedTools && mcp.allowedTools.length > 0) {
+      toolEntries.push({
+        type: "mcp_toolset",
+        mcp_server_name: mcp.label,
+        configs: Object.fromEntries(
+          mcp.allowedTools.map((toolName) => [toolName, {}]),
+        ),
+      });
+    }
+  }
+
+  return {
+    mcpServers: serverEntries,
+    tools: toolEntries,
+    betas: ["mcp-client-2025-11-20"],
+  };
+}
+
+// ============================================
+// Reasoning-effort translators
+// ============================================
+
+function isStringEffort(
+  effort: ReasoningEffort | undefined,
+): effort is "minimal" | "low" | "medium" | "high" {
+  return (
+    typeof effort === "string" &&
+    (effort === "minimal" ||
+      effort === "low" ||
+      effort === "medium" ||
+      effort === "high")
+  );
+}
+
+/**
+ * OpenAI Responses-API `reasoning` block.
+ *
+ * Returns undefined when no effort is configured; otherwise emits the
+ * provider-native `{ effort, summary: "auto" }` shape. Raw escape hatches
+ * pass through unchanged.
+ */
+export function toOpenAIReasoning(
+  effort: ReasoningEffort | undefined,
+): Record<string, unknown> | undefined {
+  if (!effort) return undefined;
+  if (typeof effort === "object" && "raw" in effort) return effort.raw;
+  if (typeof effort === "object" && "budgetTokens" in effort) {
+    // OpenAI doesn't take an explicit budget — fold it down to a coarse effort.
+    const budget = effort.budgetTokens;
+    const mapped = budget >= 16000 ? "high" : budget >= 8000 ? "medium" : "low";
+    return { effort: mapped, summary: "auto" };
+  }
+  if (isStringEffort(effort)) {
+    return { effort, summary: "auto" };
+  }
+  return undefined;
+}
+
+/**
+ * Anthropic `thinking` block.
+ *
+ * Claude 4.6 / 4.7 prefer adaptive thinking with an `effort` knob — older
+ * Claude (3.7 / 4.x baseline) still accept `budget_tokens`. Models that don't
+ * support extended thinking return undefined.
+ */
+export function toAnthropicThinking(
+  effort: ReasoningEffort | undefined,
+  modelId: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!effort) return undefined;
+  if (typeof effort === "object" && "raw" in effort) return effort.raw;
+
+  const isAdaptive =
+    !!modelId &&
+    /(claude-opus-4-7|claude-sonnet-4-6|claude-opus-4-6)/i.test(modelId);
+
+  if (typeof effort === "object" && "budgetTokens" in effort) {
+    return { type: "enabled", budget_tokens: effort.budgetTokens };
+  }
+
+  if (!isStringEffort(effort)) return undefined;
+
+  if (isAdaptive) {
+    return { type: "adaptive", effort };
+  }
+
+  const budget =
+    effort === "high"
+      ? 16000
+      : effort === "medium"
+        ? 8000
+        : effort === "low"
+          ? 4000
+          : 2048;
+  return { type: "enabled", budget_tokens: budget };
+}
+
+/**
+ * Gemini `thinkingConfig.thinkingBudget` value. Gemini accepts a raw token
+ * count (or -1 for "dynamic"); we map the normalized enum to budgets that
+ * match Google's published recommendations for the 2.5/3.x thinking models.
+ */
+export function toGeminiThinkingBudget(
+  effort: ReasoningEffort | undefined,
+): number | undefined {
+  if (!effort) return undefined;
+  if (typeof effort === "object" && "raw" in effort) {
+    return typeof effort.raw.thinkingBudget === "number"
+      ? (effort.raw.thinkingBudget as number)
+      : undefined;
+  }
+  if (typeof effort === "object" && "budgetTokens" in effort) {
+    return effort.budgetTokens;
+  }
+  switch (effort) {
+    case "minimal":
+      return 1024;
+    case "low":
+      return 4096;
+    case "medium":
+      return 8192;
+    case "high":
+      return 24576;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * xAI Grok `reasoning_effort` value (Chat Completions extension).
+ * Grok accepts `low | high` only — `minimal/medium` are bucketed.
+ */
+export function toXAIReasoningEffort(
+  effort: ReasoningEffort | undefined,
+): string | undefined {
+  if (!effort || typeof effort !== "string") return undefined;
+  return effort === "high" || effort === "medium" ? "high" : "low";
 }
 
 /**

@@ -32,6 +32,7 @@ export type {
   TextPart,
   ImagePart,
   FilePart,
+  AudioPart,
 
   // Tools
   Tool,

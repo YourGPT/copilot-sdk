@@ -97,6 +97,8 @@ export async function streamText(
           temperature: params.temperature,
           maxTokens: params.maxTokens,
           responseFormat: params.responseFormat,
+          mcpServers: params.mcpServers,
+          reasoningEffort: params.reasoningEffort,
           signal,
         })) {
           switch (chunk.type) {

@@ -12,6 +12,9 @@ import type {
   AIContent,
   ToolContext,
   WebSearchConfig,
+  ResponseFormat,
+  McpServerConfig,
+  ReasoningEffort,
 } from "../core/stream-events";
 import type { AIProvider } from "../providers/types";
 import { createMessage } from "../core/stream-events";
@@ -2151,6 +2154,61 @@ export class Runtime {
       requiresAction,
       error,
     });
+  }
+
+  /**
+   * One-shot non-streaming call bundling MCP servers, reasoning effort, and
+   * structured output. Thin ergonomic wrapper around `generate()` — uses the
+   * same adapter chain and the same translators, just expressed as a single
+   * prompt-in / text-out call.
+   *
+   * @example
+   * ```ts
+   * const result = await runtime.response({
+   *   prompt: "Extract FAQs from this conversation.",
+   *   mcpServers: [{ label: "kb", url: "https://kb.example.com/sse", headers: { Authorization: token } }],
+   *   reasoningEffort: "high",
+   *   responseFormat: { type: "json_schema", json_schema: { name: "faqs", schema } },
+   * });
+   * const data = JSON.parse(result.text);
+   * ```
+   */
+  async response(request: {
+    prompt: string;
+    systemPrompt?: string;
+    mcpServers?: McpServerConfig[];
+    reasoningEffort?: ReasoningEffort;
+    responseFormat?: ResponseFormat;
+    maxTokens?: number;
+    temperature?: number;
+  }): Promise<{
+    text: string;
+    toolCalls: Array<{
+      id: string;
+      name: string;
+      args: Record<string, unknown>;
+    }>;
+  }> {
+    const result = await this.generate({
+      messages: [{ role: "user", content: request.prompt }],
+      systemPrompt: request.systemPrompt,
+      config: {
+        temperature: request.temperature,
+        maxTokens: request.maxTokens,
+        responseFormat: request.responseFormat,
+        mcpServers: request.mcpServers,
+        reasoningEffort: request.reasoningEffort,
+      },
+    });
+
+    if (result.error) {
+      throw new Error(`[llm-sdk] response() failed: ${result.error.message}`);
+    }
+
+    return {
+      text: result.text,
+      toolCalls: result.toolCalls,
+    };
   }
 
   /**

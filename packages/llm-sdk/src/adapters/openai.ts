@@ -19,6 +19,8 @@ import {
   normalizeObjectJsonSchema,
   toOpenAIResponseFormat,
   toOpenAIResponsesTextFormat,
+  toOpenAIResponsesMcpTools,
+  toOpenAIReasoning,
 } from "./base";
 
 /**
@@ -76,6 +78,23 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   private shouldUseResponsesApi(request: ChatCompletionRequest): boolean {
+    // Responses API is required for MCP server passthrough and reasoning effort
+    // control — Chat Completions doesn't accept either field.
+    if (
+      (request.config?.mcpServers && request.config.mcpServers.length > 0) ||
+      request.config?.reasoningEffort !== undefined
+    ) {
+      // Other providers (Google, xAI, OpenRouter) share this adapter via the
+      // OpenAI-compatible endpoint but do not expose /v1/responses. Fail fast
+      // so a fallback chain can route to a provider that does support it.
+      if (this.provider !== "openai" && this.provider !== "azure") {
+        throw new Error(
+          `[llm-sdk] Provider "${this.provider}" does not support MCP servers or per-request reasoning effort. ` +
+            "Use OpenAI or Anthropic for these features.",
+        );
+      }
+      return true;
+    }
     return (
       request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true &&
       request.providerToolOptions.openai.nativeToolSearch.useResponsesApi !==
@@ -184,7 +203,12 @@ export class OpenAIAdapter implements LLMAdapter {
         defer_loading: tool.deferLoading === true,
       }));
 
-    return [{ type: "tool_search" }, ...nativeTools];
+    // Only inject the `tool_search` meta-tool when the caller actually wired
+    // deferred tools — otherwise (MCP-only / reasoning-only flows) we omit it
+    // to keep the request shape minimal.
+    return nativeTools.length > 0
+      ? [{ type: "tool_search" }, ...nativeTools]
+      : [];
   }
 
   private parseResponsesResult(response: any): CompletionResult {
@@ -231,11 +255,18 @@ export class OpenAIAdapter implements LLMAdapter {
     const responsesTextFormat = toOpenAIResponsesTextFormat(
       request.config?.responseFormat,
     );
+    const mcpTools = toOpenAIResponsesMcpTools(request.config?.mcpServers);
+    const reasoning = toOpenAIReasoning(request.config?.reasoningEffort);
+    const functionTools = this.buildResponsesTools(
+      request.toolDefinitions ?? [],
+    );
+    const tools = [...functionTools, ...mcpTools];
+
     const payload = {
       model: request.config?.model || this.model,
       instructions: request.systemPrompt,
       input: this.buildResponsesInput(request),
-      tools: this.buildResponsesTools(request.toolDefinitions ?? []),
+      tools: tools.length > 0 ? tools : undefined,
       tool_choice:
         openaiToolOptions?.toolChoice === "required"
           ? "required"
@@ -246,6 +277,8 @@ export class OpenAIAdapter implements LLMAdapter {
       temperature: request.config?.temperature ?? this.config.temperature,
       max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
       ...(responsesTextFormat ? { text: { format: responsesTextFormat } } : {}),
+      ...(reasoning ? { reasoning } : {}),
+      store: false,
       stream: false,
     };
 

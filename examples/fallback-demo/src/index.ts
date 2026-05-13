@@ -415,6 +415,100 @@ app.post("/chat/structured", async (req, res) => {
   }
 });
 
+// ─── Route: Responses API bundle (MCP + reasoning + schema) ──────────────────
+//
+// Single-call response() that bundles MCP server passthrough, reasoning effort
+// control, and JSON-schema structured output. Mirrors the self-learning use
+// case in production: extract FAQ pairs from a transcript while letting the
+// model consult a knowledge-base MCP server first.
+//
+// OpenAI routes through /v1/responses; Anthropic falls back to /v1/messages
+// with the `mcp-client-2025-11-20` beta header. Providers without native MCP
+// (Google/xAI/OpenRouter) throw a clear error so the fallback chain skips them.
+//
+// Test:
+//   curl -s -X POST http://localhost:3000/response \
+//     -H "Content-Type: application/json" \
+//     -d '{"prompt":"Operator told a user the refund window is 30 days. Extract FAQs.","mcpUrl":"https://kb.example.com/sse","mcpToken":"…"}'
+
+const FAQ_SCHEMA = {
+  type: "object",
+  properties: {
+    response: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          answer: { type: "string" },
+          intent: { type: "string" },
+        },
+        required: ["question", "answer", "intent"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["response"],
+  additionalProperties: false,
+} as const;
+
+const responsesRuntime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      openai.languageModel("gpt-4o"),
+      anthropic.languageModel("claude-opus-4-7"),
+    ],
+    strategy: "priority",
+    onFallback: onFallbackLog("response"),
+  }),
+});
+
+app.post("/response", async (req, res) => {
+  try {
+    const { prompt, mcpUrl, mcpToken } = req.body as {
+      prompt: string;
+      mcpUrl?: string;
+      mcpToken?: string;
+    };
+
+    const result = await responsesRuntime.response({
+      prompt,
+      systemPrompt:
+        "You are an FAQ extractor. Consult the knowledge-base MCP server before creating new entries.",
+      mcpServers: mcpUrl
+        ? [
+            {
+              label: "knowledge_base",
+              url: mcpUrl,
+              headers: mcpToken
+                ? { Authorization: `Bearer ${mcpToken}` }
+                : undefined,
+              allowedTools: ["internal_knowledgebase"],
+              requireApproval: "never",
+            },
+          ]
+        : undefined,
+      reasoningEffort: "high",
+      responseFormat: {
+        type: "json_schema",
+        json_schema: { name: "faqs", schema: FAQ_SCHEMA, strict: true },
+      },
+    });
+
+    const parsed = (() => {
+      try {
+        return JSON.parse(result.text);
+      } catch {
+        return null;
+      }
+    })();
+
+    res.json({ raw: result.text, parsed });
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
 // ─── Route 7: Tools + FORCED FALLBACK (dead primary) ─────────────────────────
 //
 // Same tools, but primary is a dead URL.
@@ -488,5 +582,8 @@ app.listen(PORT, () => {
   );
   console.log(
     "  POST /chat/structured          — JSON-schema response across OpenAI → Claude → Gemini",
+  );
+  console.log(
+    "  POST /response                 — runtime.response() with MCP + reasoning + schema (OpenAI → Claude)",
   );
 });
