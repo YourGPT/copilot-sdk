@@ -245,8 +245,8 @@ const result = await runtime.response({
 });
 ```
 
-- **Claude 4.6 / 4.7** (Opus 4.7, Sonnet 4.6, Opus 4.6): adaptive thinking — `thinking: { type: 'adaptive', effort: 'high' }`. The model chooses budget dynamically based on effort.
-- **Claude 3.7 / 4.0 / 4.5 series**: explicit budget — `thinking: { type: 'enabled', budget_tokens: 16000 }`. Buckets: `low=4k`, `medium=8k`, `high=16k`. Pass `{ budgetTokens: N }` for an exact number.
+- **Claude 4.6 / 4.7** (Opus 4.7, Sonnet 4.6, Opus 4.6): adaptive thinking. The SDK emits `thinking: { type: 'adaptive' }` (no effort inside) and merges the effort into `output_config.effort` alongside `format`. This is the shape the API requires — sending the legacy `{ type: 'enabled', budget_tokens }` to these models returns `400 "thinking.type.enabled" is not supported for this model`.
+- **Claude 3.7 / 4.0 / 4.5 series**: explicit budget — `thinking: { type: 'enabled', budget_tokens: 16000 }`. Buckets: `low=4k`, `medium=8k`, `high=16k`. Pass `{ budgetTokens: N }` for an exact number. These models reject `adaptive`.
 
 <Callout type="warn">
   `budget_tokens` is deprecated on Claude 4.6 and Sonnet 4.6. Use the

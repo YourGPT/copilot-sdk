@@ -275,8 +275,9 @@ provider accepts them.
 
 Pass `reasoningEffort` for one normalized knob across providers that
 support extended thinking / reasoning. The SDK maps to each provider's
-native shape — `effort` on OpenAI Responses, `thinking.adaptive` on
-Claude 4.6/4.7, `thinking.budget_tokens` on older Claude.
+native shape — `reasoning.effort` on OpenAI Responses (reasoning models
+only), `thinking.adaptive` + `output_config.effort` on Claude 4.6/4.7,
+`thinking.budget_tokens` on older Claude.
 
 ```ts
 const result = await runtime.response({
@@ -298,8 +299,8 @@ type ReasoningEffort =
 
 | Provider | Native field | Notes |
 |---|---|---|
-| OpenAI Responses | `reasoning: { effort, summary: 'auto' }` | `minimal`/`low`/`medium`/`high` (plus `xhigh`/`none` if passed via `{ raw }`) |
-| Anthropic Claude 4.6 / 4.7 | `thinking: { type: 'adaptive', effort }` | Preferred for new models |
+| OpenAI Responses (o-series / gpt-5.x only) | `reasoning: { effort, summary: 'auto' }` | `minimal`/`low`/`medium`/`high` (plus `xhigh`/`none` if passed via `{ raw }`). Ignored on non-reasoning models like `gpt-4o` with a warning |
+| Anthropic Claude 4.6 / 4.7 | `thinking: { type: 'adaptive' }` + `output_config: { effort }` | Effort lives on `output_config`, not inside `thinking` |
 | Anthropic Claude 3.7 / 4.0–4.5 | `thinking: { type: 'enabled', budget_tokens }` | Buckets: low=4k, medium=8k, high=16k |
 | Google Gemini 2.5/3.x thinking models | `thinkingConfig.thinkingBudget` | Buckets: 1k / 4k / 8k / 24k |
 | xAI Grok | `reasoning_effort` | Coerced to `low`/`high` only |

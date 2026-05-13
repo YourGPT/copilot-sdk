@@ -653,4 +653,7 @@ app.listen(PORT, () => {
   console.log(
     "  POST /response                 — runtime.response() with MCP + reasoning + schema (OpenAI → Claude)",
   );
+  console.log(
+    "  POST /response/claude          — same as above, dead OpenAI primary → forces Anthropic",
+  );
 });
