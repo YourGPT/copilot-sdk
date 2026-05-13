@@ -573,21 +573,23 @@ export class AnthropicAdapter implements LLMAdapter {
     } as Record<string, unknown> & { stream: false };
 
     try {
+      // When MCP (or any other beta) is in use, route through the `beta.*`
+      // namespace so the SDK attaches the `anthropic-beta` header for us.
+      // The Anthropic SDK expects `betas` *inside the params object* on
+      // BetaMessageCreateParams, not as a separate RequestOptions argument.
+      const finalOptions =
+        betas.length > 0
+          ? { ...nonStreamingOptions, betas }
+          : nonStreamingOptions;
+      const messagesApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
       logProviderPayload(
         "anthropic",
         "request payload",
-        { ...nonStreamingOptions, _betas: betas },
+        finalOptions,
         request.debug,
       );
-      // When MCP (or any other beta) is in use, route through the `beta.*`
-      // namespace so the SDK attaches the `anthropic-beta` header for us.
-      const messagesApi =
-        betas.length > 0 ? client.beta.messages : client.messages;
-      const createOptions = betas.length > 0 ? { betas } : undefined;
-      const response = await messagesApi.create(
-        nonStreamingOptions,
-        createOptions as never,
-      );
+      const response = await messagesApi.create(finalOptions);
       logProviderPayload(
         "anthropic",
         "response payload",
@@ -639,16 +641,18 @@ export class AnthropicAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
+      // `betas` must live inside the params object on BetaMessageCreateParams
+      // (not the second RequestOptions argument).
+      const finalOptions = betas.length > 0 ? { ...options, betas } : options;
+      const streamApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
       logProviderPayload(
         "anthropic",
         "request payload",
-        { ...options, _betas: betas },
+        finalOptions,
         request.debug,
       );
-      const streamApi =
-        betas.length > 0 ? client.beta.messages : client.messages;
-      const streamOptions = betas.length > 0 ? { betas } : undefined;
-      const stream = await streamApi.stream(options, streamOptions as never);
+      const stream = await streamApi.stream(finalOptions);
 
       let currentToolUse: {
         id: string;
