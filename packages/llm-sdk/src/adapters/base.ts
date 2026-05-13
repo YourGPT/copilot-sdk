@@ -573,31 +573,56 @@ export function toOpenAIReasoning(
 }
 
 /**
- * Anthropic `thinking` block.
+ * Anthropic thinking + effort translation.
  *
- * Claude 4.6 / 4.7 prefer adaptive thinking with an `effort` knob — older
- * Claude (3.7 / 4.x baseline) still accept `budget_tokens`. Models that don't
- * support extended thinking return undefined.
+ * Verified live against the API (May 2026):
+ *   - Claude Opus 4.7 REJECTS `{ type: "enabled", budget_tokens }`:
+ *     > `"thinking.type.enabled" is not supported for this model. Use
+ *     > "thinking.type.adaptive" and "output_config.effort" to control
+ *     > thinking behavior.`
+ *     The adaptive mode takes NO effort knob inside `thinking` — effort
+ *     moves to `output_config.effort` as a sibling of `output_config.format`.
+ *   - Older Claude (3.7 / 4.0 / 4.5) accept the legacy
+ *     `{ type: "enabled", budget_tokens }` shape and reject `adaptive`.
+ *
+ * Returns a struct so the adapter can splice each piece into the right
+ * place — thinking block goes top-level, outputConfigEffort merges into
+ * `output_config` alongside `format`.
  */
+export interface AnthropicThinkingTranslation {
+  thinking?: Record<string, unknown>;
+  outputConfigEffort?: "low" | "medium" | "high";
+}
+
+const ANTHROPIC_ADAPTIVE_MODELS =
+  /(claude-opus-4-7|claude-opus-4-6|claude-sonnet-4-6)/i;
+
 export function toAnthropicThinking(
   effort: ReasoningEffort | undefined,
   modelId: string | undefined,
-): Record<string, unknown> | undefined {
-  if (!effort) return undefined;
-  if (typeof effort === "object" && "raw" in effort) return effort.raw;
-
-  const isAdaptive =
-    !!modelId &&
-    /(claude-opus-4-7|claude-sonnet-4-6|claude-opus-4-6)/i.test(modelId);
-
-  if (typeof effort === "object" && "budgetTokens" in effort) {
-    return { type: "enabled", budget_tokens: effort.budgetTokens };
+): AnthropicThinkingTranslation {
+  if (!effort) return {};
+  if (typeof effort === "object" && "raw" in effort) {
+    return { thinking: effort.raw };
   }
 
-  if (!isStringEffort(effort)) return undefined;
+  const isAdaptive = !!modelId && ANTHROPIC_ADAPTIVE_MODELS.test(modelId);
+
+  if (typeof effort === "object" && "budgetTokens" in effort) {
+    return {
+      thinking: { type: "enabled", budget_tokens: effort.budgetTokens },
+    };
+  }
+
+  if (!isStringEffort(effort)) return {};
 
   if (isAdaptive) {
-    return { type: "adaptive", effort };
+    // `minimal` isn't a documented adaptive effort value — bucket to "low".
+    const mapped = effort === "minimal" ? "low" : effort;
+    return {
+      thinking: { type: "adaptive" },
+      outputConfigEffort: mapped,
+    };
   }
 
   const budget =
@@ -608,7 +633,7 @@ export function toAnthropicThinking(
         : effort === "low"
           ? 4000
           : 2048;
-  return { type: "enabled", budget_tokens: budget };
+  return { thinking: { type: "enabled", budget_tokens: budget } };
 }
 
 /**

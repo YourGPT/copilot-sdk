@@ -15,6 +15,7 @@ import {
   buildOpenAITokenParams,
   formatMessagesForOpenAI,
   formatTools,
+  isOpenAIReasoningModel,
   logProviderPayload,
   normalizeObjectJsonSchema,
   toOpenAIResponseFormat,
@@ -256,7 +257,22 @@ export class OpenAIAdapter implements LLMAdapter {
       request.config?.responseFormat,
     );
     const mcpTools = toOpenAIResponsesMcpTools(request.config?.mcpServers);
-    const reasoning = toOpenAIReasoning(request.config?.reasoningEffort);
+    // OpenAI's Responses API only accepts `reasoning` on reasoning-class
+    // models (o-series, gpt-5.x). Sending it to gpt-4o etc. returns
+    // `400 Unsupported parameter: 'reasoning.effort'`. Drop the field when
+    // the active model can't accept it — the request still goes through,
+    // the model just doesn't reason. Surface a warning so callers notice
+    // they may want to switch models.
+    const modelId = request.config?.model || this.model;
+    const reasoning = isOpenAIReasoningModel(modelId)
+      ? toOpenAIReasoning(request.config?.reasoningEffort)
+      : undefined;
+    if (request.config?.reasoningEffort && !isOpenAIReasoningModel(modelId)) {
+      console.warn(
+        `[llm-sdk] openai/${modelId} is not a reasoning model; ` +
+          "`reasoningEffort` is ignored. Use o1/o3/o4/gpt-5.x for reasoning.",
+      );
+    }
     const functionTools = this.buildResponsesTools(
       request.toolDefinitions ?? [],
     );

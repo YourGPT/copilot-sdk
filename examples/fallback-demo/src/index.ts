@@ -452,14 +452,34 @@ const FAQ_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+// Uses a reasoning-capable model (gpt-5.2) so `reasoningEffort` actually
+// engages the Responses API reasoning field. gpt-4o would have it silently
+// dropped because OpenAI only accepts `reasoning.effort` on o-series / gpt-5.x.
+// Uses a reasoning-capable model (gpt-5.2) so `reasoningEffort` actually
+// engages the Responses API reasoning field. gpt-4o would have it silently
+// dropped because OpenAI only accepts `reasoning.effort` on o-series / gpt-5.x.
 const responsesRuntime = createRuntime({
   adapter: createFallbackChain({
     models: [
-      openai.languageModel("gpt-4o"),
+      openai.languageModel("gpt-5.2"),
       anthropic.languageModel("claude-opus-4-7"),
     ],
     strategy: "priority",
     onFallback: onFallbackLog("response"),
+  }),
+});
+
+// Smoke-test route: dead OpenAI primary → forces Anthropic fallback for the
+// Responses bundle. Exercises the `mcp-client-2025-11-20` beta header path
+// (when mcpServers is set) and adaptive thinking on Claude 4.7.
+const responsesAnthropicRuntime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      deadOpenAI.languageModel("gpt-5.2"),
+      anthropic.languageModel("claude-opus-4-7"),
+    ],
+    strategy: "priority",
+    onFallback: onFallbackLog("response-claude-forced"),
   }),
 });
 
@@ -503,7 +523,54 @@ app.post("/response", async (req, res) => {
       }
     })();
 
-    res.json({ raw: result.text, parsed });
+    res.json({ raw: result.text, parsed, usage: result.usage });
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+// Force the Anthropic hop on the Responses bundle (dead OpenAI primary).
+app.post("/response/claude", async (req, res) => {
+  try {
+    const { prompt, mcpUrl, mcpToken } = req.body as {
+      prompt: string;
+      mcpUrl?: string;
+      mcpToken?: string;
+    };
+
+    const result = await responsesAnthropicRuntime.response({
+      prompt,
+      systemPrompt:
+        "You are an FAQ extractor. Consult the knowledge-base MCP server before creating new entries.",
+      mcpServers: mcpUrl
+        ? [
+            {
+              label: "knowledge_base",
+              url: mcpUrl,
+              headers: mcpToken
+                ? { Authorization: `Bearer ${mcpToken}` }
+                : undefined,
+              allowedTools: ["internal_knowledgebase"],
+              requireApproval: "never",
+            },
+          ]
+        : undefined,
+      reasoningEffort: "high",
+      responseFormat: {
+        type: "json_schema",
+        json_schema: { name: "faqs", schema: FAQ_SCHEMA, strict: true },
+      },
+    });
+
+    const parsed = (() => {
+      try {
+        return JSON.parse(result.text);
+      } catch {
+        return null;
+      }
+    })();
+
+    res.json({ raw: result.text, parsed, usage: result.usage });
   } catch (err) {
     handleError(err, res);
   }

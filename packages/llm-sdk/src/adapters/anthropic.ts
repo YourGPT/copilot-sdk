@@ -515,24 +515,33 @@ export class AnthropicAdapter implements LLMAdapter {
       options.server_tool_configuration = serverToolConfiguration;
     }
 
-    // Anthropic structured output (`output_config.format`) — GA on Claude API
-    // and Bedrock as of late 2025. Vertex AI does not support it; users on
-    // Vertex should use a forced-tool pattern via `actions` + `toolChoice`.
-    const outputConfig = toAnthropicOutputConfig(responseFormat);
-    if (outputConfig) {
-      options.output_config = outputConfig;
-    }
-
-    // Per-request reasoning effort wins over adapter-level `thinking` config.
-    // For Claude 4.6/4.7 we emit the adaptive shape; older models fall back to
-    // explicit `budget_tokens`.
+    // Anthropic structured output + reasoning effort.
+    //
+    // Claude 4.6/4.7 require `thinking: { type: "adaptive" }` with the
+    // effort knob living on `output_config.effort` (not inside `thinking`).
+    // Older Claude models accept `thinking: { type: "enabled", budget_tokens }`
+    // and have no `output_config.effort` concept. Both are coordinated below.
     const modelForThinking = (request.config?.model || this.model) as string;
-    const requestThinking = toAnthropicThinking(
+    const thinkingTranslation = toAnthropicThinking(
       request.config?.reasoningEffort,
       modelForThinking,
     );
-    if (requestThinking) {
-      options.thinking = requestThinking;
+
+    const outputConfig = toAnthropicOutputConfig(responseFormat) as
+      | Record<string, unknown>
+      | undefined;
+    if (outputConfig || thinkingTranslation.outputConfigEffort) {
+      options.output_config = {
+        ...(outputConfig ?? {}),
+        ...(thinkingTranslation.outputConfigEffort
+          ? { effort: thinkingTranslation.outputConfigEffort }
+          : {}),
+      };
+    }
+
+    // Per-request reasoning wins over adapter-level `thinking` config.
+    if (thinkingTranslation.thinking) {
+      options.thinking = thinkingTranslation.thinking;
     } else if (this.config.thinking?.type === "enabled") {
       options.thinking = {
         type: "enabled",
