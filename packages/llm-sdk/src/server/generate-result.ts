@@ -19,6 +19,12 @@
 
 import type { DoneEventMessage } from "../core/stream-events";
 
+export interface GenerateUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface GenerateResultData {
   text: string;
   messages: DoneEventMessage[];
@@ -32,6 +38,7 @@ export interface GenerateResultData {
     result: unknown;
   }>;
   requiresAction: boolean;
+  usage?: GenerateUsage;
   error?: {
     message: string;
     code?: string;
@@ -104,6 +111,15 @@ export class GenerateResult {
    */
   get requiresAction(): boolean {
     return this.data.requiresAction;
+  }
+
+  /**
+   * Token usage for the call — present when the underlying provider emitted
+   * a usage payload on the `done` event. May be undefined for streaming
+   * responses that don't yield usage (e.g. mid-stream errors).
+   */
+  get usage(): GenerateUsage | undefined {
+    return this.data.usage;
   }
 
   /**

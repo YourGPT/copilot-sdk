@@ -2087,6 +2087,9 @@ export class Runtime {
     const toolResults: Array<{ id: string; result: unknown }> = [];
     let messages: DoneEventMessage[] = [];
     let requiresAction = false;
+    let usage:
+      | { promptTokens: number; completionTokens: number; totalTokens: number }
+      | undefined;
     let error: { message: string; code?: string } | undefined;
 
     try {
@@ -2118,6 +2121,15 @@ export class Runtime {
           case "done":
             messages = event.messages || [];
             requiresAction = event.requiresAction || false;
+            if (event.usage) {
+              usage = {
+                promptTokens: event.usage.prompt_tokens,
+                completionTokens: event.usage.completion_tokens,
+                totalTokens:
+                  event.usage.total_tokens ??
+                  event.usage.prompt_tokens + event.usage.completion_tokens,
+              };
+            }
             break;
           case "error":
             error = { message: event.message, code: event.code };
@@ -2152,6 +2164,7 @@ export class Runtime {
       toolCalls,
       toolResults,
       requiresAction,
+      usage,
       error,
     });
   }
@@ -2188,6 +2201,11 @@ export class Runtime {
       name: string;
       args: Record<string, unknown>;
     }>;
+    usage?: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
   }> {
     const result = await this.generate({
       messages: [{ role: "user", content: request.prompt }],
@@ -2208,6 +2226,7 @@ export class Runtime {
     return {
       text: result.text,
       toolCalls: result.toolCalls,
+      usage: result.usage,
     };
   }
 

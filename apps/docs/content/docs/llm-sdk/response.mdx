@@ -89,6 +89,11 @@ const data = JSON.parse(result.text);
     name: string;
     args: Record<string, unknown>;
   }>;
+  usage?: {            // present when the provider emitted usage on `done`
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 }
 ```
 
