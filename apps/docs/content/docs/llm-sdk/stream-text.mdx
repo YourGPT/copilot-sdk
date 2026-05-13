@@ -64,11 +64,17 @@ const result = await streamText({
       strict: true,
     },
   },
+
+  // Optional: Remote MCP servers (OpenAI Responses + Anthropic native)
+  mcpServers: [{ label: 'kb', url: 'https://kb.example.com/sse' }],
+
+  // Optional: Reasoning / thinking effort (provider-translated)
+  reasoningEffort: 'medium',
 });
 ```
 
 <Callout>
-  `responseFormat` works across all supported providers — each adapter translates to the provider's native field. See [Structured Output](/docs/llm-sdk/structured-output) for per-provider details and gotchas.
+  `responseFormat`, `mcpServers`, and `reasoningEffort` work across providers via per-adapter translation. See [Structured Output](/docs/llm-sdk/structured-output) for the per-provider mapping tables and gotchas.
 </Callout>
 
 ---

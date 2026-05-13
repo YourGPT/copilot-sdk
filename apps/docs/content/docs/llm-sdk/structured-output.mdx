@@ -212,8 +212,132 @@ A working end-to-end demo lives in `examples/fallback-demo` — see the
 
 ---
 
+## MCP servers
+
+Pass `mcpServers` alongside `responseFormat` to let the model call remote
+Model Context Protocol servers as part of the same call. The SDK forwards
+your servers to providers that support MCP natively (OpenAI Responses API,
+Anthropic Messages with `mcp-client-2025-11-20` beta) — no local execution
+or tool wiring required.
+
+```ts
+const result = await runtime.response({
+  prompt: 'Extract FAQs from this conversation. Consult the KB first.',
+  mcpServers: [{
+    label: 'knowledge_base',
+    url: 'https://kb.example.com/sse',
+    headers: { Authorization: `Bearer ${token}` },
+    allowedTools: ['search_kb'],
+    requireApproval: 'never',
+  }],
+  responseFormat: {
+    type: 'json_schema',
+    json_schema: { name: 'faqs', schema: FAQ_SCHEMA, strict: true },
+  },
+});
+```
+
+### McpServerConfig shape
+
+```ts
+interface McpServerConfig {
+  label: string;                          // human-readable, also the MCP server name
+  url: string;                            // HTTP/SSE endpoint
+  headers?: Record<string, string>;       // forwarded as request headers
+  allowedTools?: string[];                // restrict the model to a subset
+  requireApproval?: 'never' | 'always';   // default 'never'
+}
+```
+
+### Per-provider translation
+
+| Provider | Native field | Beta header |
+|---|---|---|
+| OpenAI Responses | `tools[type=mcp]` | — |
+| Anthropic Claude | `mcp_servers` + `tools[type=mcp_toolset]` for `allowedTools` | `mcp-client-2025-11-20` |
+| Google / xAI / Fireworks / OpenRouter / Ollama | _not supported_ | — |
+
+The `Authorization` header is hoisted to Anthropic's top-level
+`authorization_token` with the `Bearer ` prefix stripped — Anthropic
+expects the bare token. Other headers are forwarded verbatim where the
+provider accepts them.
+
+<Callout type="warn">
+  Providers without native MCP throw a clear error today. Use them inside a
+  fallback chain (`retryableErrors: () => true`) and the chain will skip
+  past them to the next provider. Local-execution MCP fallback for
+  Google/xAI/Fireworks/OpenRouter is planned as a follow-up.
+</Callout>
+
+---
+
+## Reasoning effort
+
+Pass `reasoningEffort` for one normalized knob across providers that
+support extended thinking / reasoning. The SDK maps to each provider's
+native shape — `reasoning.effort` on OpenAI Responses (reasoning models
+only), `thinking.adaptive` + `output_config.effort` on Claude 4.6/4.7,
+`thinking.budget_tokens` on older Claude.
+
+```ts
+const result = await runtime.response({
+  prompt: 'Plan the data migration step by step.',
+  reasoningEffort: 'high',
+});
+```
+
+### Type
+
+```ts
+type ReasoningEffort =
+  | 'minimal' | 'low' | 'medium' | 'high'  // normalized enum
+  | { budgetTokens: number }                // explicit Anthropic / Gemini budget
+  | { raw: Record<string, unknown> };       // provider passthrough escape hatch
+```
+
+### Per-provider translation
+
+| Provider | Native field | Notes |
+|---|---|---|
+| OpenAI Responses (o-series / gpt-5.x only) | `reasoning: { effort, summary: 'auto' }` | `minimal`/`low`/`medium`/`high` (plus `xhigh`/`none` if passed via `{ raw }`). Ignored on non-reasoning models like `gpt-4o` with a warning |
+| Anthropic Claude 4.6 / 4.7 | `thinking: { type: 'adaptive' }` + `output_config: { effort }` | Effort lives on `output_config`, not inside `thinking` |
+| Anthropic Claude 3.7 / 4.0–4.5 | `thinking: { type: 'enabled', budget_tokens }` | Buckets: low=4k, medium=8k, high=16k |
+| Google Gemini 2.5/3.x thinking models | `thinkingConfig.thinkingBudget` | Buckets: 1k / 4k / 8k / 24k |
+| xAI Grok | `reasoning_effort` | Coerced to `low`/`high` only |
+| Others | _silently ignored_ | The model still runs, just without extended reasoning |
+
+### When to use `budgetTokens` vs the enum
+
+The enum is the right default. Use `{ budgetTokens: N }` only when you
+need an exact token count — typically for cost control on Anthropic
+older models or Gemini. The escape hatch `{ raw: {...} }` forwards your
+object literally to the provider with no translation.
+
+---
+
+## runtime.response() — one-shot bundle
+
+For the common "prompt in, JSON out" case use the convenience method:
+
+```ts
+const result = await runtime.response({
+  prompt,
+  mcpServers: [...],
+  reasoningEffort: 'high',
+  responseFormat: { type: 'json_schema', json_schema: {...} },
+});
+const data = JSON.parse(result.text);
+```
+
+It's a thin wrapper over `runtime.generate()` that builds the single
+user-message and forwards the request config. See
+[runtime.response()](/docs/llm-sdk/response) for the full reference.
+
+---
+
 ## Next Steps
 
 - [generateText()](/docs/llm-sdk/generate-text) — full text generation API
 - [streamText()](/docs/llm-sdk/stream-text) — streaming variant
+- [runtime.response()](/docs/llm-sdk/response) — one-shot MCP + reasoning + schema
 - [Tools](/docs/llm-sdk/tools) — function calling (orthogonal to structured output)

@@ -16,6 +16,8 @@ import {
   messageToAnthropicContent,
   logProviderPayload,
   toAnthropicOutputConfig,
+  toAnthropicMcp,
+  toAnthropicThinking,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -377,6 +379,7 @@ export class AnthropicAdapter implements LLMAdapter {
   private buildRequestOptions(request: ChatCompletionRequest): {
     options: Record<string, unknown>;
     messages: Array<Record<string, unknown>>;
+    betas: string[];
   } {
     // Extract system message; Anthropic has no schema-less JSON mode, so for
     // `responseFormat.type === "json_object"` we coerce via a system suffix.
@@ -512,23 +515,57 @@ export class AnthropicAdapter implements LLMAdapter {
       options.server_tool_configuration = serverToolConfiguration;
     }
 
-    // Anthropic structured output (`output_config.format`) — GA on Claude API
-    // and Bedrock as of late 2025. Vertex AI does not support it; users on
-    // Vertex should use a forced-tool pattern via `actions` + `toolChoice`.
-    const outputConfig = toAnthropicOutputConfig(responseFormat);
-    if (outputConfig) {
-      options.output_config = outputConfig;
+    // Anthropic structured output + reasoning effort.
+    //
+    // Claude 4.6/4.7 require `thinking: { type: "adaptive" }` with the
+    // effort knob living on `output_config.effort` (not inside `thinking`).
+    // Older Claude models accept `thinking: { type: "enabled", budget_tokens }`
+    // and have no `output_config.effort` concept. Both are coordinated below.
+    const modelForThinking = (request.config?.model || this.model) as string;
+    const thinkingTranslation = toAnthropicThinking(
+      request.config?.reasoningEffort,
+      modelForThinking,
+    );
+
+    const outputConfig = toAnthropicOutputConfig(responseFormat) as
+      | Record<string, unknown>
+      | undefined;
+    if (outputConfig || thinkingTranslation.outputConfigEffort) {
+      options.output_config = {
+        ...(outputConfig ?? {}),
+        ...(thinkingTranslation.outputConfigEffort
+          ? { effort: thinkingTranslation.outputConfigEffort }
+          : {}),
+      };
     }
 
-    // Add thinking configuration if enabled
-    if (this.config.thinking?.type === "enabled") {
+    // Per-request reasoning wins over adapter-level `thinking` config.
+    if (thinkingTranslation.thinking) {
+      options.thinking = thinkingTranslation.thinking;
+    } else if (this.config.thinking?.type === "enabled") {
       options.thinking = {
         type: "enabled",
         budget_tokens: this.config.thinking.budgetTokens || 10000,
       };
     }
 
-    return { options, messages };
+    // MCP server passthrough — `mcp-client-2025-11-20` shape: `mcp_servers`
+    // holds the connection entries, and tool filtering is expressed as
+    // `tools[type=mcp_toolset]` entries spliced alongside the function tools.
+    const mcp = toAnthropicMcp(request.config?.mcpServers);
+    const betas: string[] = [];
+    if (mcp.mcpServers.length > 0) {
+      options.mcp_servers = mcp.mcpServers;
+      betas.push(...mcp.betas);
+      if (mcp.tools.length > 0) {
+        const existingTools = Array.isArray(options.tools)
+          ? (options.tools as Array<Record<string, unknown>>)
+          : [];
+        options.tools = [...existingTools, ...mcp.tools];
+      }
+    }
+
+    return { options, messages, betas };
   }
 
   /**
@@ -536,7 +573,7 @@ export class AnthropicAdapter implements LLMAdapter {
    */
   async complete(request: ChatCompletionRequest): Promise<CompletionResult> {
     const client = await this.getClient();
-    const { options } = this.buildRequestOptions(request);
+    const { options, betas } = this.buildRequestOptions(request);
 
     // Ensure non-streaming mode
     const nonStreamingOptions = {
@@ -545,13 +582,23 @@ export class AnthropicAdapter implements LLMAdapter {
     } as Record<string, unknown> & { stream: false };
 
     try {
+      // When MCP (or any other beta) is in use, route through the `beta.*`
+      // namespace so the SDK attaches the `anthropic-beta` header for us.
+      // The Anthropic SDK expects `betas` *inside the params object* on
+      // BetaMessageCreateParams, not as a separate RequestOptions argument.
+      const finalOptions =
+        betas.length > 0
+          ? { ...nonStreamingOptions, betas }
+          : nonStreamingOptions;
+      const messagesApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
       logProviderPayload(
         "anthropic",
         "request payload",
-        nonStreamingOptions,
+        finalOptions,
         request.debug,
       );
-      const response = await client.messages.create(nonStreamingOptions);
+      const response = await messagesApi.create(finalOptions);
       logProviderPayload(
         "anthropic",
         "response payload",
@@ -595,7 +642,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async *stream(request: ChatCompletionRequest): AsyncGenerator<StreamEvent> {
     const client = await this.getClient();
-    const { options } = this.buildRequestOptions(request);
+    const { options, betas } = this.buildRequestOptions(request);
 
     const messageId = generateMessageId();
 
@@ -603,13 +650,18 @@ export class AnthropicAdapter implements LLMAdapter {
     yield { type: "message:start", id: messageId };
 
     try {
+      // `betas` must live inside the params object on BetaMessageCreateParams
+      // (not the second RequestOptions argument).
+      const finalOptions = betas.length > 0 ? { ...options, betas } : options;
+      const streamApi =
+        betas.length > 0 ? client.beta.messages : client.messages;
       logProviderPayload(
         "anthropic",
         "request payload",
-        options,
+        finalOptions,
         request.debug,
       );
-      const stream = await client.messages.stream(options);
+      const stream = await streamApi.stream(finalOptions);
 
       let currentToolUse: {
         id: string;

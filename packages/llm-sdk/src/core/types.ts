@@ -111,7 +111,7 @@ export interface ToolMessage {
 /**
  * Content parts for multimodal user messages
  */
-export type UserContentPart = TextPart | ImagePart | FilePart;
+export type UserContentPart = TextPart | ImagePart | FilePart | AudioPart;
 
 export interface TextPart {
   type: "text";
@@ -132,6 +132,16 @@ export interface FilePart {
   data: string;
   /** MIME type (e.g., 'application/pdf') */
   mimeType: string;
+}
+
+export interface AudioPart {
+  type: "input_audio";
+  input_audio: {
+    /** Base64-encoded audio data */
+    data: string;
+    /** Audio format (e.g., 'mp3', 'wav', 'ogg', 'webm', 'm4a', 'flac') */
+    format: string;
+  };
 }
 
 // ============================================
@@ -209,6 +219,10 @@ export interface DoGenerateParams {
   maxTokens?: number;
   /** Structured-output / JSON-mode request format (provider-translated) */
   responseFormat?: import("./stream-events").ResponseFormat;
+  /** MCP servers exposed to the model (provider-translated). */
+  mcpServers?: import("./stream-events").McpServerConfig[];
+  /** Reasoning/thinking effort knob (provider-translated). */
+  reasoningEffort?: import("./stream-events").ReasoningEffort;
   /** Abort signal */
   signal?: AbortSignal;
 }
@@ -316,6 +330,10 @@ export interface GenerateTextParams {
   maxTokens?: number;
   /** Structured-output / JSON-mode request format */
   responseFormat?: import("./stream-events").ResponseFormat;
+  /** MCP servers exposed to the model (provider-translated). */
+  mcpServers?: import("./stream-events").McpServerConfig[];
+  /** Reasoning/thinking effort knob (provider-translated). */
+  reasoningEffort?: import("./stream-events").ReasoningEffort;
   /** Abort signal */
   signal?: AbortSignal;
 }

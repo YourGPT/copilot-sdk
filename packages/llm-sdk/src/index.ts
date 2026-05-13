@@ -210,6 +210,10 @@ export type {
   // Web search types
   WebSearchConfig,
   Citation,
+  // Structured-output / MCP / reasoning request types
+  ResponseFormat,
+  McpServerConfig,
+  ReasoningEffort,
 } from "./core/stream-events";
 
 // Re-export utility functions

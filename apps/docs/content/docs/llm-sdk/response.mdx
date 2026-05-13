@@ -1,0 +1,200 @@
+---
+title: runtime.response()
+description: One-shot prompt-in / JSON-out call with MCP servers, reasoning effort, and structured output
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`runtime.response()` is an ergonomic wrapper for the common "give me one
+answer back" case — a single prompt, optional MCP servers, optional
+reasoning effort, optional JSON schema, one response. No streaming, no
+multi-step agent loop.
+
+It's a thin convenience over `runtime.generate()`: same adapter chain,
+same per-provider translation, same fallback behavior. Use it when you
+don't need streaming or tool-call introspection.
+
+```ts
+import { createRuntime, createFallbackChain } from '@yourgpt/llm-sdk';
+import { createOpenAI } from '@yourgpt/llm-sdk/openai';
+import { createAnthropic } from '@yourgpt/llm-sdk/anthropic';
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const runtime = createRuntime({
+  adapter: createFallbackChain({
+    models: [
+      openai.languageModel('gpt-4o'),
+      anthropic.languageModel('claude-opus-4-7'),
+    ],
+    strategy: 'priority',
+  }),
+});
+
+const result = await runtime.response({
+  prompt: 'Extract the top 3 fastest land animals as JSON.',
+  reasoningEffort: 'medium',
+  responseFormat: {
+    type: 'json_schema',
+    json_schema: {
+      name: 'animals',
+      schema: {
+        type: 'object',
+        properties: {
+          animals: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                top_speed_kmh: { type: 'number' },
+              },
+              required: ['name', 'top_speed_kmh'],
+            },
+          },
+        },
+        required: ['animals'],
+      },
+      strict: true,
+    },
+  },
+});
+
+const data = JSON.parse(result.text);
+// → { animals: [{ name: 'Cheetah', top_speed_kmh: 120 }, ...] }
+```
+
+---
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `prompt` | `string` | The user message. Sent as a single `role: 'user'` turn. |
+| `systemPrompt` | `string?` | Optional system prompt (overrides any default on the runtime). |
+| `mcpServers` | `McpServerConfig[]?` | Remote MCP servers the model can call. See [Structured Output → MCP servers](/docs/llm-sdk/structured-output#mcp-servers). |
+| `reasoningEffort` | `ReasoningEffort?` | `'minimal'`/`'low'`/`'medium'`/`'high'` or `{ budgetTokens }` or `{ raw }`. See [Structured Output → Reasoning effort](/docs/llm-sdk/structured-output#reasoning-effort). |
+| `responseFormat` | `ResponseFormat?` | JSON-schema constraint. See [Structured Output](/docs/llm-sdk/structured-output). |
+| `maxTokens` | `number?` | Maximum tokens for the completion. |
+| `temperature` | `number?` | Sampling temperature (0–2). Silently dropped on OpenAI reasoning models. |
+
+## Result
+
+```ts
+{
+  text: string;        // model output (parse yourself if responseFormat used)
+  toolCalls: Array<{   // function-tool calls; MCP tool calls are resolved provider-side
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+  }>;
+  usage?: {            // present when the provider emitted usage on `done`
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+```
+
+The method **throws** if the underlying call errors out. Catch at the
+call site or rely on the fallback chain to route past failures.
+
+---
+
+## When to use `response()` vs `generate()` / `chat()`
+
+| Use case | Method |
+|---|---|
+| One-shot prompt, want JSON back | `runtime.response()` |
+| Multi-turn conversation, full message history | `runtime.generate()` |
+| Streaming output to the client | `runtime.stream()` / `streamText()` |
+| Custom tool definitions with handlers, agent loop | `runtime.chat()` with `tools` |
+
+If your call only needs `prompt + responseFormat + maxTokens`,
+`response()` reads cleaner. The other methods give you more knobs for
+free.
+
+---
+
+## Provider routing under the hood
+
+`response()` forwards through the standard adapter pipeline:
+
+- **OpenAI** — when `mcpServers` or `reasoningEffort` is set, routes
+  through `/v1/responses` (Chat Completions doesn't accept these
+  fields). `responseFormat` becomes `text.format`.
+- **Anthropic** — uses `client.beta.messages.*` with the
+  `mcp-client-2025-11-20` beta header when MCP servers are present.
+  `reasoningEffort` maps to adaptive thinking on Claude 4.6/4.7 and
+  `budget_tokens` on older models.
+- **Google / xAI / OpenRouter** — these share the OpenAI adapter via an
+  OpenAI-compatible endpoint. They throw a clear error when `mcpServers`
+  or `reasoningEffort` is set, so fallback chains skip past them.
+
+<Callout type="info">
+  The `store: false` flag is always sent on `/v1/responses` calls —
+  `response()` is one-shot semantics by design, no conversation
+  persistence on OpenAI's side. If you need persistence, use
+  `runtime.chat()` instead.
+</Callout>
+
+---
+
+## Self-learning example
+
+The canonical use case: extract FAQs from a chat transcript, consulting
+a knowledge-base MCP server first to avoid duplicates.
+
+```ts
+const FAQ_SCHEMA = {
+  type: 'object',
+  properties: {
+    response: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          answer: { type: 'string' },
+          intent: { type: 'string' },
+        },
+        required: ['question', 'answer', 'intent'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['response'],
+  additionalProperties: false,
+} as const;
+
+const result = await runtime.response({
+  prompt,
+  systemPrompt: 'Extract FAQs. Consult the KB before creating entries.',
+  mcpServers: [{
+    label: 'knowledge_base',
+    url: 'https://kb.example.com/sse',
+    headers: { Authorization: `Bearer ${env.KB_TOKEN}` },
+    allowedTools: ['search_kb'],
+    requireApproval: 'never',
+  }],
+  reasoningEffort: 'high',
+  responseFormat: {
+    type: 'json_schema',
+    json_schema: { name: 'faqs', schema: FAQ_SCHEMA, strict: true },
+  },
+});
+
+const parsed = JSON.parse(result.text).response;
+```
+
+A working version lives in `examples/fallback-demo` — see the
+`POST /response` route.
+
+---
+
+## Next Steps
+
+- [Structured Output](/docs/llm-sdk/structured-output) — full reference for `responseFormat`, `mcpServers`, `reasoningEffort`
+- [generateText()](/docs/llm-sdk/generate-text) — multi-turn / tool-loop API
+- [Tools](/docs/llm-sdk/tools) — function-calling primitives
