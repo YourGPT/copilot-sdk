@@ -52,11 +52,24 @@ const result = await generateText({
       strict: true,
     },
   },
+
+  // Optional: Remote MCP servers (OpenAI Responses + Anthropic native)
+  mcpServers: [
+    {
+      label: 'github',
+      url: 'https://mcp.github.com/sse',
+      headers: { Authorization: `Bearer ${token}` },
+      allowedTools: ['create_issue'],
+    },
+  ],
+
+  // Optional: Reasoning / thinking effort (provider-translated)
+  reasoningEffort: 'medium',  // 'minimal' | 'low' | 'medium' | 'high' | { budgetTokens } | { raw }
 });
 ```
 
 <Callout>
-  `responseFormat` works across OpenAI, Anthropic, Google, Azure, xAI, Together, Fireworks, OpenRouter, and Ollama — each adapter translates to the provider's native field. See [Structured Output](/docs/llm-sdk/structured-output) for per-provider details and gotchas.
+  `responseFormat`, `mcpServers`, and `reasoningEffort` work across providers via per-adapter translation — see [Structured Output](/docs/llm-sdk/structured-output) for the per-provider mapping tables and gotchas, and [runtime.response()](/docs/llm-sdk/response) for a one-shot convenience wrapper.
 </Callout>
 
 ---

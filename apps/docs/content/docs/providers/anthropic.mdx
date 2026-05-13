@@ -203,6 +203,70 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 ---
 
+## MCP servers
+
+Anthropic supports remote Model Context Protocol servers natively via the
+Messages API. Pass `mcpServers` on the request config and the SDK routes
+through `client.beta.messages.*` with the required beta header.
+
+```ts
+const result = await runtime.response({
+  prompt: 'Create a GitHub issue summarizing the deploy failures.',
+  mcpServers: [{
+    label: 'github',
+    url: 'https://mcp.github.com/sse',
+    headers: { Authorization: `Bearer ${process.env.GH_TOKEN}` },
+    allowedTools: ['create_issue', 'search_issues'],
+  }],
+});
+```
+
+Beta header attached automatically: `anthropic-beta: mcp-client-2025-11-20`.
+
+The shape sent to Anthropic uses the 2025-11-20 two-array form:
+- `mcp_servers: [{ type: "url", url, name, authorization_token }]` — connection entries (the SDK strips `Bearer ` from the `Authorization` header value, since Anthropic expects the bare token).
+- `tools: [{ type: "mcp_toolset", mcp_server_name, configs: {...} }]` — tool filtering (only emitted when `allowedTools` is set).
+
+See [Structured Output → MCP servers](/docs/llm-sdk/structured-output#mcp-servers) for the cross-provider reference.
+
+---
+
+## Extended thinking
+
+Two ways to enable Claude's extended thinking:
+
+**Per-request** (recommended) — pass `reasoningEffort` on the call. The
+SDK picks the right shape for the model:
+
+```ts
+const result = await runtime.response({
+  prompt: 'Plan a multi-step refactor of the auth flow.',
+  reasoningEffort: 'high',
+});
+```
+
+- **Claude 4.6 / 4.7** (Opus 4.7, Sonnet 4.6, Opus 4.6): adaptive thinking — `thinking: { type: 'adaptive', effort: 'high' }`. The model chooses budget dynamically based on effort.
+- **Claude 3.7 / 4.0 / 4.5 series**: explicit budget — `thinking: { type: 'enabled', budget_tokens: 16000 }`. Buckets: `low=4k`, `medium=8k`, `high=16k`. Pass `{ budgetTokens: N }` for an exact number.
+
+<Callout type="warn">
+  `budget_tokens` is deprecated on Claude 4.6 and Sonnet 4.6. Use the
+  `reasoningEffort` enum and the SDK picks adaptive mode automatically
+  on those models.
+</Callout>
+
+**Per-adapter** (legacy) — set `thinking` on `createAnthropic()` config.
+Per-request `reasoningEffort` overrides the adapter default when both
+are set.
+
+```ts
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  thinking: { type: 'enabled', budgetTokens: 8000 },
+});
+```
+
+---
+
 ## Pricing
 
 | Model | Input | Output |

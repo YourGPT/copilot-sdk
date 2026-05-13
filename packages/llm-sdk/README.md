@@ -114,6 +114,24 @@ const runtime = createRuntime({
 
 When `search.enabled` is on, deferred tools can be discovered through a hidden `search_tools` server tool. Matching tools are loaded into the next loop iteration instead of sending every deferred tool definition up front.
 
+## Structured output, MCP, and reasoning effort
+
+Pass `responseFormat`, `mcpServers`, and `reasoningEffort` on any `generateText()` / `streamText()` / `runtime.chat()` / `runtime.response()` call:
+
+```ts
+const result = await runtime.response({
+  prompt: "Extract FAQs from this conversation.",
+  mcpServers: [{ label: "kb", url: "https://kb.example.com/sse" }],
+  reasoningEffort: "high",
+  responseFormat: {
+    type: "json_schema",
+    json_schema: { name, schema, strict: true },
+  },
+});
+```
+
+OpenAI routes through `/v1/responses` automatically when MCP or reasoning is set; Anthropic uses the `mcp-client-2025-11-20` beta and adaptive thinking on Claude 4.6/4.7. See the [Structured Output guide](https://copilot-sdk.yourgpt.ai/docs/llm-sdk/structured-output) for the full per-provider mapping.
+
 ## Documentation
 
 Visit **[copilot-sdk.yourgpt.ai](https://copilot-sdk.yourgpt.ai)** for full documentation:
@@ -121,7 +139,7 @@ Visit **[copilot-sdk.yourgpt.ai](https://copilot-sdk.yourgpt.ai)** for full docu
 - [All Providers](https://copilot-sdk.yourgpt.ai/docs/providers) - OpenAI, Anthropic, Google, xAI
 - [Server Setup](https://copilot-sdk.yourgpt.ai/docs/server) - Runtime, streaming, tools
 - [Tools](https://copilot-sdk.yourgpt.ai/docs/tools) - Server-side and client-side tools
-- [LLM SDK Reference](https://copilot-sdk.yourgpt.ai/docs/llm-sdk) - streamText, generateText
+- [LLM SDK Reference](https://copilot-sdk.yourgpt.ai/docs/llm-sdk) - streamText, generateText, runtime.response()
 
 ## License
 

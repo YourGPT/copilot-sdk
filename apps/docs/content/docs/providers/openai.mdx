@@ -177,6 +177,42 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 ---
 
+## MCP servers + Reasoning effort (Responses API)
+
+Setting `mcpServers` or `reasoningEffort` on a request routes the call
+through OpenAI's `/v1/responses` endpoint instead of Chat Completions
+(those fields aren't accepted on Chat Completions).
+
+```ts
+const result = await runtime.response({
+  prompt: 'Create a GitHub issue with the latest deploy errors.',
+  mcpServers: [{
+    label: 'github',
+    url: 'https://mcp.github.com/sse',
+    headers: { Authorization: `Bearer ${process.env.GH_TOKEN}` },
+    allowedTools: ['create_issue'],
+    requireApproval: 'never',
+  }],
+  reasoningEffort: 'high',
+});
+```
+
+Maps to:
+- `tools: [{ type: 'mcp', server_label, server_url, headers, allowed_tools, require_approval }]`
+- `reasoning: { effort: 'high', summary: 'auto' }`
+- `store: false` (one-shot semantics — no persistence on OpenAI's side)
+- `text.format` when `responseFormat` is also set
+
+<Callout type="info">
+  `reasoningEffort` accepts `minimal`/`low`/`medium`/`high` directly.
+  Use `{ raw: { effort: 'xhigh' } }` to pass the wider native range
+  (`none`/`xhigh`) for o-series and gpt-5 reasoning models.
+</Callout>
+
+See [Structured Output → MCP servers](/docs/llm-sdk/structured-output#mcp-servers) and [→ Reasoning effort](/docs/llm-sdk/structured-output#reasoning-effort) for the cross-provider reference.
+
+---
+
 ## Pricing
 
 | Model | Input | Output |
