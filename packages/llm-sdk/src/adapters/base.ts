@@ -349,6 +349,10 @@ export function toOpenAIResponseFormat(
 ): Record<string, unknown> | undefined {
   if (!rf) return undefined;
   if (rf.type === "json_object") return { type: "json_object" };
+  // Defensive: only proceed with json_schema if the field is actually present.
+  // JS callers can pass arbitrary `type` values (e.g. "text") that TS would reject —
+  // dereferencing rf.json_schema.name would otherwise throw "Cannot read properties of undefined (reading 'name')".
+  if (rf.type !== "json_schema" || !rf.json_schema) return undefined;
   return {
     type: "json_schema",
     json_schema: {
@@ -450,6 +454,7 @@ export function toOllamaFormat(
 ): string | Record<string, unknown> | undefined {
   if (!rf) return undefined;
   if (rf.type === "json_object") return "json";
+  if (rf.type !== "json_schema" || !rf.json_schema) return undefined;
   return rf.json_schema.schema;
 }
 
