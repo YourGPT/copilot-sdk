@@ -60,6 +60,7 @@ export class OpenAIAdapter implements LLMAdapter {
     if (baseUrl.includes("generativelanguage.googleapis.com")) return "google";
     if (baseUrl.includes("x.ai")) return "xai";
     if (baseUrl.includes("azure")) return "azure";
+    if (baseUrl.includes("fireworks.ai")) return "fireworks";
     return "openai";
   }
 
