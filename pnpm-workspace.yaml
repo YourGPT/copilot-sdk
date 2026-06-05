@@ -3,3 +3,35 @@ packages:
   - "apps/*"
   - "examples/*"
   - "examples/ollama-demo/*"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Supply-chain hardening
+# ─────────────────────────────────────────────────────────────────────────────
+# Cooldown: refuse to install ANY dependency version (including transitive)
+# published less than 7 days ago. Malicious package versions are almost always
+# detected and unpublished within hours–days, so this absorbs the blast radius
+# of a compromised release without holding back legit security patches for long.
+# Value is in MINUTES. 7 days = 7 × 24 × 60 = 10080. Requires pnpm >= 10.16.
+minimumReleaseAge: 10080
+
+# Packages exempt from the cooldown (e.g. our own first-party releases, which
+# we trust and may need to consume immediately). Supports names, globs, versions.
+minimumReleaseAgeExclude:
+  - "@yourgpt/*"
+
+# Dependency lifecycle (install/postinstall) scripts are blocked by default in
+# pnpm >= 10. These are the trusted native/build packages that legitimately need
+# to run a build step; everything else stays blocked. Review additions carefully.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - "@parcel/watcher"
+  - workerd
+  - unrs-resolver
+  - msw
+
+# Migrated from package.json "pnpm.overrides" — pnpm >= 10 no longer reads the
+# "pnpm" field in package.json; overrides now live here.
+overrides:
+  "@types/react": "^18.2.0"
+  "@types/react-dom": "^18.2.0"
