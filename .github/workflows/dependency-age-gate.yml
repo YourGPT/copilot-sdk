@@ -1,0 +1,39 @@
+name: Dependency Age Gate
+
+# Supply-chain cooldown backstop: fails any PR that introduces a dependency
+# version published more recently than the cooldown window. Complements the
+# `minimumReleaseAge` setting in pnpm-workspace.yaml (which enforces the same
+# rule at install/resolution time on developer machines).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cooldown:
+    name: Supply-chain cooldown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base branch to diff the lockfile
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enforce dependency cooldown
+        env:
+          COOLDOWN_DAYS: "7" # keep in sync with minimumReleaseAge (days × 1440 = minutes)
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node scripts/check-dependency-age.mjs
