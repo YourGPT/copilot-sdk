@@ -956,7 +956,8 @@ export class Runtime {
     // Enforce the tool-call iteration cap. The streaming loop recurses (rather than using
     // a while-loop counter like processChatWithLoopNonStreaming), so the depth is threaded
     // through the `_iteration` arg and incremented on each recursive call below. Stop here
-    // if the caller aborted or the cap is reached.
+    // if the caller aborted or the cap is reached, emitting a terminal `done` so collect()
+    // can finalize messages/usage (matching the non-streaming loop's max-iterations exit).
     if (signal?.aborted || _iteration >= maxIterations) {
       if (debug) {
         console.log(
@@ -967,6 +968,10 @@ export class Runtime {
           }`,
         );
       }
+      yield {
+        type: "done",
+        messages: newMessages.length > 0 ? newMessages : undefined,
+      } as StreamEvent;
       return;
     }
 
