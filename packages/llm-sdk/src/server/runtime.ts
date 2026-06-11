@@ -922,6 +922,10 @@ export class Runtime {
     // HTTP request for extracting headers (auth context)
     _httpRequest?: Request,
     _toolSearchState?: ToolSearchState,
+    // Internal: current tool-call loop depth, threaded through the recursive self-calls
+    // so the cap is enforced across rounds (the streaming loop recurses instead of using
+    // a while-loop counter like processChatWithLoopNonStreaming).
+    _iteration = 0,
   ): AsyncGenerator<StreamEvent> {
     const debug = this.config.debug;
 
@@ -948,6 +952,23 @@ export class Runtime {
     // Track new messages created during this request
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const maxIterations = this.config.maxIterations ?? 20;
+
+    // Enforce the tool-call iteration cap. The streaming loop recurses (rather than using
+    // a while-loop counter like processChatWithLoopNonStreaming), so the depth is threaded
+    // through the `_iteration` arg and incremented on each recursive call below. Stop here
+    // if the caller aborted or the cap is reached.
+    if (signal?.aborted || _iteration >= maxIterations) {
+      if (debug) {
+        console.log(
+          `[Copilot SDK] Streaming loop stopped: ${
+            signal?.aborted
+              ? "aborted"
+              : `max iterations (${maxIterations}) reached`
+          }`,
+        );
+      }
+      return;
+    }
 
     const allTools = this.collectToolsForRequest(request);
     const nativeToolSearch = this.resolveNativeToolSearchForRequest(request);
@@ -1298,7 +1319,8 @@ export class Runtime {
           })),
         );
 
-        // Continue the agent loop - pass accumulated messages and HTTP request
+        // Continue the agent loop - pass accumulated messages, HTTP request, and the
+        // incremented loop depth so the cap is enforced across recursive rounds.
         for await (const event of this.processChatWithLoop(
           nextRequest,
           signal,
@@ -1306,6 +1328,7 @@ export class Runtime {
           true, // Mark as recursive
           _httpRequest,
           nextToolSearchState,
+          _iteration + 1,
         )) {
           yield event;
         }
@@ -1448,6 +1471,7 @@ export class Runtime {
           _isRecursive,
           _httpRequest,
           toolSearchState,
+          iteration, // carry the non-streaming loop's depth into the streaming sub-call
         )) {
           yield event;
         }
