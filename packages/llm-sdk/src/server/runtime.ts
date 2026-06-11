@@ -953,20 +953,24 @@ export class Runtime {
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const maxIterations = this.config.maxIterations ?? 20;
 
+    // Check for abort
+    if (signal?.aborted) {
+      yield {
+        type: "error",
+        message: "Aborted",
+        code: "ABORTED",
+      } as StreamEvent;
+      return;
+    }
+
     // Enforce the tool-call iteration cap. The streaming loop recurses (rather than using
     // a while-loop counter like processChatWithLoopNonStreaming), so the depth is threaded
-    // through the `_iteration` arg and incremented on each recursive call below. Stop here
-    // if the caller aborted or the cap is reached, emitting a terminal `done` so collect()
-    // can finalize messages/usage (matching the non-streaming loop's max-iterations exit).
-    if (signal?.aborted || _iteration >= maxIterations) {
+    // through the `_iteration` arg and incremented on each recursive call below. Emit a
+    // terminal `done` so collect() can finalize messages (matching the non-streaming
+    // loop's max-iterations exit).
+    if (_iteration >= maxIterations) {
       if (debug) {
-        console.log(
-          `[Copilot SDK] Streaming loop stopped: ${
-            signal?.aborted
-              ? "aborted"
-              : `max iterations (${maxIterations}) reached`
-          }`,
-        );
+        console.log(`[Copilot SDK] Max iterations (${maxIterations}) reached`);
       }
       yield {
         type: "done",
