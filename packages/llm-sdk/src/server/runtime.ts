@@ -922,6 +922,10 @@ export class Runtime {
     // HTTP request for extracting headers (auth context)
     _httpRequest?: Request,
     _toolSearchState?: ToolSearchState,
+    // Internal: current tool-call loop depth, threaded through the recursive self-calls
+    // so the cap is enforced across rounds (the streaming loop recurses instead of using
+    // a while-loop counter like processChatWithLoopNonStreaming).
+    _iteration = 0,
   ): AsyncGenerator<StreamEvent> {
     const debug = this.config.debug;
 
@@ -948,6 +952,32 @@ export class Runtime {
     // Track new messages created during this request
     const newMessages: DoneEventMessage[] = _accumulatedMessages || [];
     const maxIterations = this.config.maxIterations ?? 20;
+
+    // Check for abort
+    if (signal?.aborted) {
+      yield {
+        type: "error",
+        message: "Aborted",
+        code: "ABORTED",
+      } as StreamEvent;
+      return;
+    }
+
+    // Enforce the tool-call iteration cap. The streaming loop recurses (rather than using
+    // a while-loop counter like processChatWithLoopNonStreaming), so the depth is threaded
+    // through the `_iteration` arg and incremented on each recursive call below. Emit a
+    // terminal `done` so collect() can finalize messages (matching the non-streaming
+    // loop's max-iterations exit).
+    if (_iteration >= maxIterations) {
+      if (debug) {
+        console.log(`[Copilot SDK] Max iterations (${maxIterations}) reached`);
+      }
+      yield {
+        type: "done",
+        messages: newMessages.length > 0 ? newMessages : undefined,
+      } as StreamEvent;
+      return;
+    }
 
     const allTools = this.collectToolsForRequest(request);
     const nativeToolSearch = this.resolveNativeToolSearchForRequest(request);
@@ -1298,7 +1328,8 @@ export class Runtime {
           })),
         );
 
-        // Continue the agent loop - pass accumulated messages and HTTP request
+        // Continue the agent loop - pass accumulated messages, HTTP request, and the
+        // incremented loop depth so the cap is enforced across recursive rounds.
         for await (const event of this.processChatWithLoop(
           nextRequest,
           signal,
@@ -1306,6 +1337,7 @@ export class Runtime {
           true, // Mark as recursive
           _httpRequest,
           nextToolSearchState,
+          _iteration + 1,
         )) {
           yield event;
         }
@@ -1448,6 +1480,7 @@ export class Runtime {
           _isRecursive,
           _httpRequest,
           toolSearchState,
+          iteration, // carry the non-streaming loop's depth into the streaming sub-call
         )) {
           yield event;
         }
