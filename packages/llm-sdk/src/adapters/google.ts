@@ -720,9 +720,25 @@ export class GoogleAdapter implements LLMAdapter {
       }
     }
 
+    // Map Google's usageMetadata to the SDK's camelCase shape, matching the
+    // streaming path above and the other adapters' complete(). Without this,
+    // complete() returned no usage, so the non-streaming agent loop accumulated
+    // zero tokens and credit deduction was skipped entirely for Gemini models.
+    // candidatesTokenCount excludes thinking tokens (Gemini reports those in
+    // thoughtsTokenCount), so completion = candidates + thoughts — otherwise
+    // thinking-model output is undercounted and prompt+completion != total.
     return {
       content: textContent,
       toolCalls,
+      usage: response.usageMetadata
+        ? {
+            promptTokens: response.usageMetadata.promptTokenCount ?? 0,
+            completionTokens:
+              (response.usageMetadata.candidatesTokenCount ?? 0) +
+              (response.usageMetadata.thoughtsTokenCount ?? 0),
+            totalTokens: response.usageMetadata.totalTokenCount ?? 0,
+          }
+        : undefined,
       rawResponse: response as Record<string, unknown>,
     };
   }
