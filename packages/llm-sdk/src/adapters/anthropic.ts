@@ -582,10 +582,23 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
 
+      // Map Anthropic's usage (input_tokens/output_tokens) to the SDK's camelCase shape,
+      // matching the OpenAI adapter's complete(). Without this, complete() returned no usage,
+      // so the non-streaming agent loop accumulated zero tokens and credit deduction was
+      // skipped entirely for Anthropic models. Anthropic has no total_tokens, so sum it.
       return {
         content,
         toolCalls,
         thinking: thinking || undefined,
+        usage: response.usage
+          ? {
+              promptTokens: response.usage.input_tokens ?? 0,
+              completionTokens: response.usage.output_tokens ?? 0,
+              totalTokens:
+                (response.usage.input_tokens ?? 0) +
+                (response.usage.output_tokens ?? 0),
+            }
+          : undefined,
         rawResponse: response as Record<string, unknown>,
       };
     } catch (error) {
