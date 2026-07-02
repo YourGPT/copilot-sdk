@@ -179,7 +179,7 @@ export function formatMessages(
 /**
  * Convert ActionParameter to JSON Schema format recursively
  */
-function parameterToJsonSchema(param: {
+export function parameterToJsonSchema(param: {
   type: string;
   description?: string;
   enum?: string[];
@@ -444,6 +444,25 @@ export function toGeminiSchema(
   if (!rf || rf.type !== "json_schema") return undefined;
   return stripSchemaKeys(
     rf.json_schema.schema,
+    GEMINI_UNSUPPORTED_KEYS,
+  ) as Record<string, unknown>;
+}
+
+/**
+ * Convert an ActionParameter to a Gemini-compatible schema. Recurses into
+ * array `items` / object `properties` (via parameterToJsonSchema) so nested
+ * shapes are preserved, then strips keys Gemini's function-declaration schema
+ * rejects (e.g. `additionalProperties`).
+ */
+export function parameterToGeminiSchema(param: {
+  type: string;
+  description?: string;
+  enum?: string[];
+  items?: unknown;
+  properties?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return stripSchemaKeys(
+    parameterToJsonSchema(param),
     GEMINI_UNSUPPORTED_KEYS,
   ) as Record<string, unknown>;
 }

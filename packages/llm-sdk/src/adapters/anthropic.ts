@@ -16,6 +16,7 @@ import {
   messageToAnthropicContent,
   logProviderPayload,
   toAnthropicOutputConfig,
+  parameterToJsonSchema,
   type AnthropicContentBlock,
 } from "./base";
 
@@ -415,11 +416,7 @@ export class AnthropicAdapter implements LLMAdapter {
               ? Object.fromEntries(
                   Object.entries(action.parameters).map(([key, param]) => [
                     key,
-                    {
-                      type: param.type,
-                      description: param.description,
-                      enum: param.enum,
-                    },
+                    parameterToJsonSchema(param),
                   ]),
                 )
               : {},
