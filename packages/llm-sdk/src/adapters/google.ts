@@ -18,7 +18,12 @@ import type {
   ChatCompletionRequest,
   CompletionResult,
 } from "./base";
-import { formatTools, logProviderPayload, toGeminiSchema } from "./base";
+import {
+  formatTools,
+  logProviderPayload,
+  toGeminiSchema,
+  parameterToGeminiSchema,
+} from "./base";
 
 // ============================================
 // Types
@@ -234,11 +239,7 @@ function formatToolsForGemini(
             properties: Object.fromEntries(
               Object.entries(action.parameters).map(([key, param]) => [
                 key,
-                {
-                  type: param.type,
-                  description: param.description,
-                  enum: param.enum,
-                },
+                parameterToGeminiSchema(param),
               ]),
             ),
             required: Object.entries(action.parameters)
