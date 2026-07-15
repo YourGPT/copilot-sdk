@@ -1554,6 +1554,9 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
           // Instead: merge the extra SERVER ids onto the streamed message and insert ONLY the
           // server tool_results after it, so every tool_use id has one matching tool_result.
           const mixedServerIds = new Set<string>();
+          let mixedSupersetMsg:
+            | { role: string; tool_calls?: unknown[] }
+            | undefined;
           for (const msg of chunk.messages) {
             if (
               msg.role === "assistant" &&
@@ -1570,32 +1573,49 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                 (id) => id && !currentStreamToolCallIds.has(id),
               );
               if (hasStreamed && hasExtra) {
+                mixedSupersetMsg = msg;
                 for (const id of ids)
                   if (id && !currentStreamToolCallIds.has(id))
                     mixedServerIds.add(id);
               }
             }
           }
-          // Merge the extra server ids onto the streamed message's toolCalls so it declares ALL
-          // tool_use ids (client + server) — a single, self-consistent assistant message.
-          if (mixedServerIds.size > 0 && this.streamState) {
-            const supersetToolCalls = chunk.messages.find(
-              (m) =>
-                m.role === "assistant" &&
-                (m.tool_calls as Array<{ id?: string }> | undefined)?.some(
-                  (tc) => mixedServerIds.has(tc?.id ?? ""),
-                ),
-            )?.tool_calls as unknown[] | undefined;
-            if (supersetToolCalls) {
-              this.state.updateMessageById(
-                this.streamState.messageId,
-                (m) =>
-                  ({
-                    ...m,
-                    toolCalls: supersetToolCalls as T["toolCalls"],
-                  }) as T,
-              );
+          // Merge the extra server ids into the live streamState.toolCalls so the streamed
+          // message declares ALL tool_use ids (client + server). We mutate streamState (not just
+          // the message in state) because this handler runs while streamState is still alive —
+          // the post-loop finalization re-derives the message from streamState and would
+          // otherwise clobber a message-only edit back to the client-only ids.
+          if (mixedServerIds.size > 0 && this.streamState && mixedSupersetMsg) {
+            const existingIds = new Set(
+              this.streamState.toolCalls.map((tc) => tc.id),
+            );
+            for (const raw of (mixedSupersetMsg.tool_calls ?? []) as Array<{
+              id?: string;
+              function?: { name?: string; arguments?: string };
+              name?: string;
+            }>) {
+              if (!raw.id || existingIds.has(raw.id)) continue;
+              if (!mixedServerIds.has(raw.id)) continue;
+              let args: Record<string, unknown> = {};
+              try {
+                args = raw.function?.arguments
+                  ? JSON.parse(raw.function.arguments)
+                  : {};
+              } catch {
+                args = {};
+              }
+              this.streamState.toolCalls.push({
+                id: raw.id,
+                name: raw.function?.name ?? raw.name ?? "",
+                args,
+              });
             }
+            // Reflect immediately in state too (finalization will reinforce this).
+            const merged = streamStateToMessage(this.streamState) as T;
+            this.state.updateMessageById(
+              this.streamState.messageId,
+              (m) => ({ ...m, toolCalls: merged.toolCalls }) as T,
+            );
           }
 
           // Build hidden map from stream state's toolResults
