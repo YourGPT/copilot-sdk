@@ -2249,10 +2249,32 @@ export class Runtime {
               result: event.result || event.error,
             });
             break;
-          case "done":
+          case "done": {
             messages = event.messages || [];
             requiresAction = event.requiresAction || false;
+            if (requiresAction) {
+              // MIXED TURN: server tools executed inline still emit an `action:start`, so their
+              // ids were pushed into toolCalls above. On a suspend (requiresAction), any tool
+              // whose result is already present as a { role: "tool" } message in this done
+              // payload ran server-side and must NOT remain in toolCalls — otherwise the
+              // consumer treats it as a pending client tool, dispatches it to the browser, and
+              // blocks forever waiting for a response that will never come. Drop those ids.
+              // (Same rule as StreamResult.collectEvent for the streaming path.)
+              const resolvedToolIds = new Set(
+                messages
+                  .filter((m) => m.role === "tool" && m.tool_call_id)
+                  .map((m) => m.tool_call_id as string),
+              );
+              if (resolvedToolIds.size > 0) {
+                for (let i = toolCalls.length - 1; i >= 0; i--) {
+                  if (resolvedToolIds.has(toolCalls[i].id)) {
+                    toolCalls.splice(i, 1);
+                  }
+                }
+              }
+            }
             break;
+          }
           case "error":
             error = { message: event.message, code: event.code };
             break;
