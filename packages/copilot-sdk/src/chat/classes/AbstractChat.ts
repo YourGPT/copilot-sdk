@@ -2001,14 +2001,30 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.callbacks.onMessagesChange?.(this._allMessages());
 
     // Check for tool calls BEFORE setting status to ready
-    // If tool calls exist, the async handler will manage status
-    const hasToolCalls =
-      response.requiresAction &&
-      this.state.messages.length > 0 &&
-      this.state.messages[this.state.messages.length - 1]?.toolCalls?.length;
+    // If tool calls exist, the async handler will manage status.
+    // Dispatch from response.toolCalls: the server filters it to the CLIENT-pending
+    // ids only. Inspecting messages instead breaks on mixed turns — the payload ends
+    // with the server role:"tool" results (last message has no toolCalls → stall),
+    // and the last assistant message would wrongly include already-resolved SERVER
+    // ids. Fall back to the last message only for older servers whose response
+    // carries no toolCalls (their payloads always end with the assistant message).
+    const lastMessage =
+      this.state.messages.length > 0
+        ? this.state.messages[this.state.messages.length - 1]
+        : undefined;
 
-    if (hasToolCalls) {
-      const lastMessage = this.state.messages[this.state.messages.length - 1];
+    if (response.requiresAction && response.toolCalls?.length) {
+      this.emit("toolCalls", {
+        toolCalls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: {
+            name: tc.name,
+            arguments: JSON.stringify(tc.args ?? {}),
+          },
+        })),
+      });
+    } else if (response.requiresAction && lastMessage?.toolCalls?.length) {
       this.emit("toolCalls", { toolCalls: lastMessage.toolCalls });
     } else {
       // Only set ready if no tool calls
