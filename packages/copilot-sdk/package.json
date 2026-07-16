@@ -1,6 +1,6 @@
 {
   "name": "@yourgpt/copilot-sdk",
-  "version": "2.5.1-beta.1",
+  "version": "2.5.1-beta.2",
   "description": "Copilot SDK for building Production-ready AI Copilots for any product. Connect any LLM, deploy on your infrastructure, own your data.",
   "type": "module",
   "types": "./dist/core/index.d.ts",
