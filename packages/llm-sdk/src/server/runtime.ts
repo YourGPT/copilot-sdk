@@ -1261,7 +1261,75 @@ export class Runtime {
         (tc) => !serverToolIds.has(tc.id),
       );
 
-      // If there are server-side tools executed, continue the loop by making another LLM call
+      // Build the server tool_result messages once (used by both the mixed-turn suspend path
+      // and the server-only recurse path below).
+      const serverToolResultMessages: DoneEventMessage[] =
+        serverToolResults.map((tr) => {
+          const aiContent = buildToolResultForAI(tr.tool, tr.result, tr.args);
+          // Serialize content (handles both string and multimodal)
+          const content =
+            typeof aiContent === "string"
+              ? aiContent
+              : JSON.stringify(serializeToolResultContent(aiContent));
+          return {
+            role: "tool" as const,
+            content,
+            tool_call_id: tr.id,
+          };
+        });
+
+      // MIXED TURN: this assistant message emitted BOTH server tools (already executed inline)
+      // AND client tools (must run in the caller/browser). We cannot recurse on the server
+      // results alone — that would leave the client tool_use with no tool_result and the model
+      // would reject the next request. Instead: emit ONE assistant message carrying ALL tool_use
+      // ids, append the server results now, then SUSPEND (requiresAction) so the client runs the
+      // client tools. The caller collects the client results and resumes with the full set.
+      if (serverToolResults.length > 0 && clientToolCalls.length > 0) {
+        if (debug) {
+          console.log(
+            `[Copilot SDK] Mixed turn: ${serverToolResults.length} server + ${clientToolCalls.length} client tool(s). Suspending for client tools.`,
+          );
+        }
+
+        // Assistant message with ALL tool_calls (server + client), in the model's original order.
+        const assistantMessage: AssistantToolMessage = {
+          role: "assistant",
+          content: accumulatedText || null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            },
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
+          })),
+        };
+
+        // Accumulate the assistant message + the ALREADY-COMPUTED server results, so the parked
+        // conversation carries them forward. On resume the caller appends the client tool_results
+        // for the remaining ids, producing a complete turn.
+        newMessages.push(assistantMessage as DoneEventMessage);
+        newMessages.push(...serverToolResultMessages);
+
+        // Yield tool_calls event for the CLIENT tools only (those the caller must execute).
+        yield {
+          type: "tool_calls",
+          toolCalls: clientToolCalls,
+          assistantMessage,
+        } as StreamEvent;
+
+        yield {
+          type: "done",
+          requiresAction: true,
+          messages: newMessages,
+          usage: adapterUsage,
+        } as StreamEvent;
+        return;
+      }
+
+      // If there are server-side tools executed (and NO client tools), continue the loop by
+      // making another LLM call.
       if (serverToolResults.length > 0) {
         if (debug) {
           console.log(
@@ -1287,22 +1355,7 @@ export class Runtime {
           }),
         };
 
-        // Create tool result messages (using buildToolResultForAI for AI response control)
-        const toolResultMessages: DoneEventMessage[] = serverToolResults.map(
-          (tr) => {
-            const aiContent = buildToolResultForAI(tr.tool, tr.result, tr.args);
-            // Serialize content (handles both string and multimodal)
-            const content =
-              typeof aiContent === "string"
-                ? aiContent
-                : JSON.stringify(serializeToolResultContent(aiContent));
-            return {
-              role: "tool" as const,
-              content,
-              tool_call_id: tr.id,
-            };
-          },
-        );
+        const toolResultMessages = serverToolResultMessages;
 
         // Add to accumulated messages for client
         newMessages.push(assistantWithToolCalls);
@@ -1663,7 +1716,75 @@ export class Runtime {
             }
           }
 
-          // If server tools were executed, continue the loop
+          // Build the server tool_result messages once (shared by the mixed-turn suspend path
+          // and the server-only recurse path below).
+          const serverToolResultMessages: DoneEventMessage[] =
+            serverToolResults.map((tr) => {
+              const aiContent = buildToolResultForAI(
+                tr.tool,
+                tr.result,
+                tr.args,
+              );
+              const content =
+                typeof aiContent === "string"
+                  ? aiContent
+                  : JSON.stringify(serializeToolResultContent(aiContent));
+              return {
+                role: "tool" as const,
+                content,
+                tool_call_id: tr.id,
+              };
+            });
+
+          // MIXED TURN: this assistant message emitted BOTH server tools (already executed
+          // inline) AND client tools (must run in the caller/browser). Recursing on the server
+          // results alone would leave the client tool_use with no tool_result, and the model
+          // would reject the next request → the run hangs. Instead: emit ONE assistant message
+          // carrying ALL tool_use ids, append the already-computed server results, then SUSPEND
+          // (requiresAction) so the caller runs the client tools and resumes with the full set.
+          if (serverToolResults.length > 0 && clientToolCalls.length > 0) {
+            const assistantMessage: AssistantToolMessage = {
+              role: "assistant",
+              content: result.content || null,
+              tool_calls: result.toolCalls.map((tc) => ({
+                id: tc.id,
+                type: "function" as const,
+                function: {
+                  name: tc.name,
+                  arguments: JSON.stringify(tc.args),
+                },
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
+              })),
+            };
+
+            // Accumulate the assistant message + the ALREADY-COMPUTED server results so the
+            // parked conversation carries them forward. On resume the caller appends the client
+            // tool_results for the remaining ids, producing a complete turn.
+            newMessages.push(assistantMessage as DoneEventMessage);
+            newMessages.push(...serverToolResultMessages);
+
+            // Yield tool_calls event for the CLIENT tools only (those the caller must execute).
+            yield {
+              type: "tool_calls",
+              toolCalls: clientToolCalls,
+              assistantMessage,
+            } as StreamEvent;
+
+            yield {
+              type: "done",
+              requiresAction: true,
+              messages: newMessages,
+              usage:
+                accumulatedUsage.total_tokens > 0
+                  ? accumulatedUsage
+                  : undefined,
+            } as StreamEvent;
+            return;
+          }
+
+          // If server tools were executed (and NO client tools), continue the loop
           if (serverToolResults.length > 0) {
             // Build assistant message with tool_calls
             const assistantWithToolCalls: DoneEventMessage = {
@@ -1682,24 +1803,7 @@ export class Runtime {
               })),
             };
 
-            // Build tool result messages (using buildToolResultForAI for AI response control)
-            const toolResultMessages: DoneEventMessage[] =
-              serverToolResults.map((tr) => {
-                const aiContent = buildToolResultForAI(
-                  tr.tool,
-                  tr.result,
-                  tr.args,
-                );
-                const content =
-                  typeof aiContent === "string"
-                    ? aiContent
-                    : JSON.stringify(serializeToolResultContent(aiContent));
-                return {
-                  role: "tool" as const,
-                  content,
-                  tool_call_id: tr.id,
-                };
-              });
+            const toolResultMessages = serverToolResultMessages;
 
             // Add to accumulated messages
             newMessages.push(assistantWithToolCalls);
@@ -2145,10 +2249,32 @@ export class Runtime {
               result: event.result || event.error,
             });
             break;
-          case "done":
+          case "done": {
             messages = event.messages || [];
             requiresAction = event.requiresAction || false;
+            if (requiresAction) {
+              // MIXED TURN: server tools executed inline still emit an `action:start`, so their
+              // ids were pushed into toolCalls above. On a suspend (requiresAction), any tool
+              // whose result is already present as a { role: "tool" } message in this done
+              // payload ran server-side and must NOT remain in toolCalls — otherwise the
+              // consumer treats it as a pending client tool, dispatches it to the browser, and
+              // blocks forever waiting for a response that will never come. Drop those ids.
+              // (Same rule as StreamResult.collectEvent for the streaming path.)
+              const resolvedToolIds = new Set(
+                messages
+                  .filter((m) => m.role === "tool" && m.tool_call_id)
+                  .map((m) => m.tool_call_id as string),
+              );
+              if (resolvedToolIds.size > 0) {
+                for (let i = toolCalls.length - 1; i >= 0; i--) {
+                  if (resolvedToolIds.has(toolCalls[i].id)) {
+                    toolCalls.splice(i, 1);
+                  }
+                }
+              }
+            }
             break;
+          }
           case "error":
             error = { message: event.message, code: event.code };
             break;

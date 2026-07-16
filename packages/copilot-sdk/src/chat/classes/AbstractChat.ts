@@ -1224,21 +1224,49 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             );
             const messagesToInsert: T[] = [];
             let clientAssistantToolCalls: unknown[] | undefined;
+            // MIXED TURN (superset): an assistant message whose tool_calls include the pending
+            // CLIENT ids AND extra SERVER ids (e.g. web_search executed inline, then
+            // ask_user_question parked). Its server tool_results ride along as role:"tool".
+            // We merge ALL ids onto the streamed assistant message (below) and must APPEND the
+            // server tool_results AFTER it — otherwise on resume the server tool_use ids have no
+            // matching tool_result and the provider rejects the request (same hang, relocated).
+            const serverToolResultsToAppend: T[] = [];
+            const serverToolIdsFromMixed = new Set<string>();
+            for (const msg of chunk.messages) {
+              if (
+                msg.role === "assistant" &&
+                msg.tool_calls?.length &&
+                pendingIds.size > 0
+              ) {
+                const ids = (msg.tool_calls as Array<{ id?: string }>).map(
+                  (tc) => tc?.id ?? "",
+                );
+                const hasClient = ids.some((id) => pendingIds.has(id));
+                const hasServer = ids.some((id) => id && !pendingIds.has(id));
+                if (hasClient && hasServer) {
+                  for (const id of ids)
+                    if (id && !pendingIds.has(id))
+                      serverToolIdsFromMixed.add(id);
+                }
+              }
+            }
 
             for (const msg of chunk.messages) {
-              // This is the client-tool assistant message already in state
-              // (finalized by message:end but without toolCalls).
-              // Capture its OpenAI-format tool_calls to merge into state.
+              // Assistant message that carries the pending client tool_calls.
+              // Pure-client turn: every id is a pending client id.
+              // Mixed turn: a SUPERSET of the pending ids (client + server). Either way,
+              // capture its full OpenAI-format tool_calls to merge onto the streamed message
+              // (which was finalized by message:end with text but no tool_calls).
               if (
                 msg.role === "assistant" &&
                 msg.tool_calls?.length &&
                 pendingIds.size > 0 &&
-                (msg.tool_calls as Array<{ id?: string }>).every((tc) =>
+                (msg.tool_calls as Array<{ id?: string }>).some((tc) =>
                   pendingIds.has(tc?.id ?? ""),
                 )
               ) {
                 clientAssistantToolCalls = msg.tool_calls as unknown[];
-                continue; // Already in state — don't insert a duplicate
+                continue; // Merged onto the streamed message — don't insert a duplicate
               }
               // Skip plain assistant text — already streamed
               if (msg.role === "assistant" && !msg.tool_calls?.length) continue;
@@ -1252,12 +1280,27 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                 )
               )
                 continue;
-              // Skip tool result messages — both client-side (already executed) and
-              // server-side (already represented in streamed metadata.toolExecutions).
-              // Server-side tool results are orphaned here because the corresponding
-              // assistant message with tool_calls was skipped above, so inserting
-              // just the tool result causes "role tool must follow tool_calls" errors
-              // and duplicate tool cards in the UI.
+              // Server tool_result belonging to a MIXED assistant message: append it AFTER the
+              // merged assistant message so its server tool_use id has a matching tool_result on
+              // the wire. (Without this the resume request is malformed → provider rejects.)
+              if (
+                msg.role === "tool" &&
+                msg.tool_call_id &&
+                serverToolIdsFromMixed.has(msg.tool_call_id)
+              ) {
+                serverToolResultsToAppend.push({
+                  id: generateMessageId(),
+                  role: "tool" as T["role"],
+                  content: msg.content ?? "",
+                  toolCallId: msg.tool_call_id,
+                  createdAt: new Date(),
+                } as T);
+                continue;
+              }
+              // Skip other tool result messages — client-side (already executed) and
+              // server-side belonging to a SKIPPED (all-server) assistant message (already
+              // represented in streamed metadata.toolExecutions). Inserting an orphan tool
+              // result causes "role tool must follow tool_calls" errors and duplicate cards.
               if (msg.role === "tool" && msg.tool_call_id) continue;
               // Everything else needs inserting
               messagesToInsert.push({
@@ -1270,11 +1313,14 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
               } as T);
             }
 
-            // Merge OpenAI-format tool_calls into the existing last assistant message
+            // Merge OpenAI-format tool_calls into the existing last assistant message.
+            // Track its id so mixed-turn server tool_results can be chained right after it.
+            let mergedAssistantId: string | undefined;
             if (clientAssistantToolCalls) {
               const currentMessages = this.state.messages;
               for (let i = currentMessages.length - 1; i >= 0; i--) {
                 if (currentMessages[i].role === "assistant") {
+                  mergedAssistantId = currentMessages[i].id;
                   this.state.updateMessageById(
                     currentMessages[i].id,
                     (m) =>
@@ -1286,6 +1332,41 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
                   break;
                 }
               }
+            }
+
+            // Append mixed-turn server tool_results immediately AFTER the merged assistant
+            // message (which now carries all tool_use ids), chained in the MessageTree.
+            if (serverToolResultsToAppend.length > 0) {
+              const currentMessages = this.state.messages;
+              let anchorIdx = currentMessages.length - 1;
+              if (mergedAssistantId) {
+                const found = currentMessages.findIndex(
+                  (m) => m.id === mergedAssistantId,
+                );
+                if (found >= 0) anchorIdx = found;
+              }
+              const anchor = currentMessages[anchorIdx];
+              let prevId = anchor?.id;
+              const linked = serverToolResultsToAppend.map((msg) => {
+                const withParent = {
+                  ...msg,
+                  ...(prevId !== undefined ? { parentId: prevId } : {}),
+                } as T;
+                prevId = msg.id;
+                return withParent;
+              });
+              // Re-parent whatever followed the anchor to chain off the last appended result.
+              const lastAppendedId = linked[linked.length - 1].id;
+              const after = currentMessages
+                .slice(anchorIdx + 1)
+                .map((m, idx) =>
+                  idx === 0 ? ({ ...m, parentId: lastAppendedId } as T) : m,
+                );
+              this.state.setMessages([
+                ...currentMessages.slice(0, anchorIdx + 1),
+                ...linked,
+                ...after,
+              ]);
             }
 
             if (messagesToInsert.length > 0) {
@@ -1463,6 +1544,79 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             this.streamState?.toolCalls?.map((toolCall) => toolCall.id) ?? [],
           );
           const messagesToInsert: T[] = [];
+          // Mixed-turn server tool_results, appended after the streamed message (see below).
+          const mixedServerResults: T[] = [];
+
+          // MIXED TURN (no assistant text → streamState survived): the streamed message holds
+          // the CLIENT tool_calls; the done payload's assistant message is a SUPERSET (client +
+          // server ids, e.g. web_search executed inline then ask_user_question parked). Inserting
+          // that superset assistant would duplicate the client tool_use ids across two messages.
+          // Instead: merge the extra SERVER ids onto the streamed message and insert ONLY the
+          // server tool_results after it, so every tool_use id has one matching tool_result.
+          const mixedServerIds = new Set<string>();
+          let mixedSupersetMsg:
+            | { role: string; tool_calls?: unknown[] }
+            | undefined;
+          for (const msg of chunk.messages) {
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              currentStreamToolCallIds.size > 0
+            ) {
+              const ids = (msg.tool_calls as Array<{ id?: string }>).map(
+                (tc) => tc?.id ?? "",
+              );
+              const hasStreamed = ids.some((id) =>
+                currentStreamToolCallIds.has(id),
+              );
+              const hasExtra = ids.some(
+                (id) => id && !currentStreamToolCallIds.has(id),
+              );
+              if (hasStreamed && hasExtra) {
+                mixedSupersetMsg = msg;
+                for (const id of ids)
+                  if (id && !currentStreamToolCallIds.has(id))
+                    mixedServerIds.add(id);
+              }
+            }
+          }
+          // Merge the extra server ids into the live streamState.toolCalls so the streamed
+          // message declares ALL tool_use ids (client + server). We mutate streamState (not just
+          // the message in state) because this handler runs while streamState is still alive —
+          // the post-loop finalization re-derives the message from streamState and would
+          // otherwise clobber a message-only edit back to the client-only ids.
+          if (mixedServerIds.size > 0 && this.streamState && mixedSupersetMsg) {
+            const existingIds = new Set(
+              this.streamState.toolCalls.map((tc) => tc.id),
+            );
+            for (const raw of (mixedSupersetMsg.tool_calls ?? []) as Array<{
+              id?: string;
+              function?: { name?: string; arguments?: string };
+              name?: string;
+            }>) {
+              if (!raw.id || existingIds.has(raw.id)) continue;
+              if (!mixedServerIds.has(raw.id)) continue;
+              let args: Record<string, unknown> = {};
+              try {
+                args = raw.function?.arguments
+                  ? JSON.parse(raw.function.arguments)
+                  : {};
+              } catch {
+                args = {};
+              }
+              this.streamState.toolCalls.push({
+                id: raw.id,
+                name: raw.function?.name ?? raw.name ?? "",
+                args,
+              });
+            }
+            // Reflect immediately in state too (finalization will reinforce this).
+            const merged = streamStateToMessage(this.streamState) as T;
+            this.state.updateMessageById(
+              this.streamState.messageId,
+              (m) => ({ ...m, toolCalls: merged.toolCalls }) as T,
+            );
+          }
 
           // Build hidden map from stream state's toolResults
           const toolCallsHidden: Record<string, boolean> = {};
@@ -1480,6 +1634,40 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             // assistant messages that carry tool_calls so tool results keep a valid
             // preceding assistant tool_call message in local state.
             if (msg.role === "assistant" && !msg.tool_calls?.length) {
+              continue;
+            }
+
+            // MIXED TURN: skip the superset assistant message (its ids were merged onto the
+            // streamed message above) so we don't duplicate the client tool_use ids.
+            if (
+              msg.role === "assistant" &&
+              msg.tool_calls?.length &&
+              mixedServerIds.size > 0 &&
+              (msg.tool_calls as Array<{ id?: string }>).some((tc) =>
+                mixedServerIds.has(tc?.id ?? ""),
+              ) &&
+              (msg.tool_calls as Array<{ id?: string }>).some((tc) =>
+                currentStreamToolCallIds.has(tc?.id ?? ""),
+              )
+            ) {
+              continue;
+            }
+
+            // MIXED TURN: a server tool_result whose id was merged onto the streamed message.
+            // It must be APPENDED after the streamed message (handled below), not inserted
+            // before it — otherwise the tool_result precedes its assistant tool_call.
+            if (
+              msg.role === "tool" &&
+              msg.tool_call_id &&
+              mixedServerIds.has(msg.tool_call_id)
+            ) {
+              mixedServerResults.push({
+                id: generateMessageId(),
+                role: "tool" as T["role"],
+                content: msg.content ?? "",
+                toolCallId: msg.tool_call_id,
+                createdAt: new Date(),
+              } as T);
               continue;
             }
 
@@ -1519,6 +1707,37 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
             } as T;
 
             messagesToInsert.push(message);
+          }
+
+          // Append mixed-turn server tool_results right after the streamed (merged) assistant
+          // message, so its server tool_use ids each have a matching tool_result in order.
+          if (mixedServerResults.length > 0 && this.streamState) {
+            const cur = this.state.messages;
+            const anchorIdx = cur.findIndex(
+              (m) => m.id === this.streamState!.messageId,
+            );
+            if (anchorIdx >= 0) {
+              let prevId: string | undefined = cur[anchorIdx].id;
+              const linked = mixedServerResults.map((m) => {
+                const withParent = {
+                  ...m,
+                  ...(prevId !== undefined ? { parentId: prevId } : {}),
+                } as T;
+                prevId = m.id;
+                return withParent;
+              });
+              const lastId = linked[linked.length - 1].id;
+              const after = cur
+                .slice(anchorIdx + 1)
+                .map((m, idx) =>
+                  idx === 0 ? ({ ...m, parentId: lastId } as T) : m,
+                );
+              this.state.setMessages([
+                ...cur.slice(0, anchorIdx + 1),
+                ...linked,
+                ...after,
+              ]);
+            }
           }
 
           if (messagesToInsert.length > 0) {
@@ -1782,14 +2001,30 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
     this.callbacks.onMessagesChange?.(this._allMessages());
 
     // Check for tool calls BEFORE setting status to ready
-    // If tool calls exist, the async handler will manage status
-    const hasToolCalls =
-      response.requiresAction &&
-      this.state.messages.length > 0 &&
-      this.state.messages[this.state.messages.length - 1]?.toolCalls?.length;
+    // If tool calls exist, the async handler will manage status.
+    // Dispatch from response.toolCalls: the server filters it to the CLIENT-pending
+    // ids only. Inspecting messages instead breaks on mixed turns — the payload ends
+    // with the server role:"tool" results (last message has no toolCalls → stall),
+    // and the last assistant message would wrongly include already-resolved SERVER
+    // ids. Fall back to the last message only for older servers whose response
+    // carries no toolCalls (their payloads always end with the assistant message).
+    const lastMessage =
+      this.state.messages.length > 0
+        ? this.state.messages[this.state.messages.length - 1]
+        : undefined;
 
-    if (hasToolCalls) {
-      const lastMessage = this.state.messages[this.state.messages.length - 1];
+    if (response.requiresAction && response.toolCalls?.length) {
+      this.emit("toolCalls", {
+        toolCalls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: {
+            name: tc.name,
+            arguments: JSON.stringify(tc.args ?? {}),
+          },
+        })),
+      });
+    } else if (response.requiresAction && lastMessage?.toolCalls?.length) {
       this.emit("toolCalls", { toolCalls: lastMessage.toolCalls });
     } else {
       // Only set ready if no tool calls
