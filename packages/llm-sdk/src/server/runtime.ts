@@ -285,11 +285,23 @@ export class Runtime {
     // Stream response from adapter
     const stream = this.adapter.stream(completionRequest);
 
+    // action:args carries only the tool-call id, so remember the name that
+    // arrived with the matching action:start.
+    const actionNamesByCallId = new Map<string, string>();
+
     // Process events and handle tool calls
     for await (const event of stream) {
+      if (event.type === "action:start" && event.name) {
+        actionNamesByCallId.set(event.id, event.name);
+      }
+
       // Handle action execution
       if (event.type === "action:args") {
-        const action = this.actions.get(event.id);
+        // `this.actions` is keyed by tool name (see registerAction), but
+        // `event.id` is the provider-generated tool-call id. Resolve the name
+        // from the action:start we saw for this id.
+        const actionName = actionNamesByCallId.get(event.id);
+        const action = actionName ? this.actions.get(actionName) : undefined;
         if (action) {
           try {
             const args = JSON.parse(event.args);

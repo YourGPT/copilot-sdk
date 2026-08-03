@@ -171,10 +171,18 @@ function parseToolCalls(
 
     // Handle both OpenAI format and simplified format
     if (toolCall.function) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments);
+      } catch {
+        // Malformed or truncated arguments: degrade to empty args rather than
+        // throwing, which would abort the whole stream mid-turn.
+        args = {};
+      }
       return {
         id: toolCall.id,
         name: toolCall.function.name,
-        args: JSON.parse(toolCall.function.arguments),
+        args,
       };
     }
 

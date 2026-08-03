@@ -253,6 +253,22 @@ export function useTools(tools: ToolSet): void {
       const fullTool: ToolDefinition = {
         ...toolDef,
         name, // Use the key as the name
+        // Look the handler up on every call instead of capturing this
+        // render's closure. The effect only re-runs when tool *names*
+        // change, so a captured handler would keep seeing first-render
+        // props and state forever. Mirrors what singular useTool does.
+        // Tools without a handler (server-executed) must stay handler-less.
+        ...(toolDef.handler
+          ? {
+              handler: async (
+                params: Record<string, unknown>,
+                context: Parameters<NonNullable<ToolDefinition["handler"]>>[1],
+              ) => {
+                const latest = toolsRef.current[name] ?? toolDef;
+                return (latest.handler ?? toolDef.handler)!(params, context);
+              },
+            }
+          : {}),
       };
 
       registerTool(fullTool);

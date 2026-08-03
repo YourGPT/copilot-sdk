@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ActionDefinition } from "../../core";
 import { useCopilot } from "../provider/CopilotProvider";
 
@@ -27,19 +27,42 @@ import { useCopilot } from "../provider/CopilotProvider";
 export function useAIActions(actions: ActionDefinition[]): void {
   const { registerAction, unregisterAction } = useCopilot();
 
+  // Callers almost always pass a fresh array literal — `useAIAction` below
+  // does exactly that. Depending on the array identity would re-run this
+  // effect every render, and registerAction bumps provider state, so the
+  // render→effect→setState→render cycle never settles. Key on the action
+  // names instead, which is what actually determines the registration.
+  const actionsKey = actions.map((a) => a.name).join(",");
+
+  // Keep the latest definitions reachable without widening the effect deps,
+  // so handlers never go stale even though the effect does not re-run.
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
   useEffect(() => {
-    // Register all actions
-    for (const action of actions) {
-      registerAction(action);
+    // Register all actions, indirecting through the ref at call time so the
+    // registered handler always sees the current render's closure.
+    const registered = actionsRef.current.map((action) => action.name);
+    for (const action of actionsRef.current) {
+      registerAction({
+        ...action,
+        handler: (...args: Parameters<ActionDefinition["handler"]>) => {
+          const current = actionsRef.current.find(
+            (a) => a.name === action.name,
+          );
+          return (current ?? action).handler(...args);
+        },
+      });
     }
 
     // Cleanup: unregister all actions
     return () => {
-      for (const action of actions) {
-        unregisterAction(action.name);
+      for (const name of registered) {
+        unregisterAction(name);
       }
     };
-  }, [actions, registerAction, unregisterAction]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionsKey, registerAction, unregisterAction]);
 }
 
 /**
