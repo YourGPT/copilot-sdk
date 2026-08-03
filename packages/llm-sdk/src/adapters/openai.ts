@@ -265,9 +265,72 @@ export class OpenAIAdapter implements LLMAdapter {
     return input;
   }
 
+  /**
+   * Build the web_search tool for the Responses API, or undefined when web
+   * search is off.
+   *
+   * The Chat Completions path uses `web_search_preview`; the Responses API
+   * names the same built-in `web_search`. Without this, enabling web search
+   * alongside a gpt-5.4+ function tool silently did nothing, because routing
+   * to /v1/responses skipped the Chat Completions tool assembly entirely.
+   */
+  private buildResponsesWebSearchTool(
+    request: ChatCompletionRequest,
+  ): Record<string, unknown> | undefined {
+    const webSearchConfig = request.webSearch ?? this.config.webSearch;
+    if (!webSearchConfig) return undefined;
+
+    const tool: Record<string, unknown> = { type: "web_search" };
+    const wsConfig = typeof webSearchConfig === "object" ? webSearchConfig : {};
+    if (wsConfig.userLocation) {
+      tool.search_context_size = "medium";
+    }
+    return tool;
+  }
+
+  /**
+   * Extract url_citation annotations from Responses output items.
+   *
+   * Annotations hang off the output_text content parts rather than arriving as
+   * their own stream events, so both the streaming and non-streaming paths read
+   * them from the same place.
+   */
+  private collectResponsesCitations(
+    output: unknown,
+    startIndex = 0,
+  ): Citation[] {
+    if (!Array.isArray(output)) return [];
+    const citations: Citation[] = [];
+    let index = startIndex;
+
+    for (const item of output as any[]) {
+      if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+      for (const part of item.content as any[]) {
+        if (!Array.isArray(part?.annotations)) continue;
+        for (const annotation of part.annotations as any[]) {
+          const url = annotation?.url;
+          if (annotation?.type !== "url_citation" || !url) continue;
+          index++;
+          const domain = extractDomain(url);
+          citations.push({
+            index,
+            url,
+            title: annotation.title || domain,
+            domain,
+            favicon: domain
+              ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+              : undefined,
+          });
+        }
+      }
+    }
+    return citations;
+  }
+
   private buildResponsesTools(
     tools: ToolDefinition[],
     includeToolSearch: boolean,
+    webSearchTool?: Record<string, unknown>,
   ): Array<Record<string, unknown>> {
     const nativeTools = tools
       .filter((tool) => tool.available !== false)
@@ -289,14 +352,39 @@ export class OpenAIAdapter implements LLMAdapter {
     // The built-in tool_search tool belongs ONLY to the native-tool-search feature.
     // Reasoning-model routing reaches this path too, and sending tool_search there
     // would enable a capability the caller never asked for (and bill for it).
-    return includeToolSearch
-      ? [{ type: "tool_search" }, ...nativeTools]
-      : nativeTools;
+    const builtins: Array<Record<string, unknown>> = [];
+    if (includeToolSearch) builtins.push({ type: "tool_search" });
+    if (webSearchTool) builtins.push(webSearchTool);
+
+    return [...builtins, ...nativeTools];
   }
 
   private parseResponsesResult(response: any): CompletionResult {
+    // `output_text` is a convenience getter synthesized by the openai package,
+    // NOT a wire field — a raw HTTP response has no such key. Derive the text
+    // from the documented structure (output[].content[].text) so this keeps
+    // working if the response arrives by any route other than the SDK object,
+    // and fall back to the getter when present.
+    const textFromOutput = Array.isArray(response?.output)
+      ? response.output
+          .filter((item: any) => item?.type === "message")
+          .flatMap((item: any) =>
+            Array.isArray(item.content)
+              ? item.content
+                  .filter(
+                    (part: any) =>
+                      part?.type === "output_text" &&
+                      typeof part.text === "string",
+                  )
+                  .map((part: any) => part.text as string)
+              : [],
+          )
+          .join("")
+      : "";
     const content =
-      typeof response?.output_text === "string" ? response.output_text : "";
+      textFromOutput ||
+      (typeof response?.output_text === "string" ? response.output_text : "");
+
     const toolCalls = Array.isArray(response?.output)
       ? response.output
           .filter((item: any) => item?.type === "function_call")
@@ -346,6 +434,7 @@ export class OpenAIAdapter implements LLMAdapter {
       tools: this.buildResponsesTools(
         request.toolDefinitions ?? [],
         request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true,
+        this.buildResponsesWebSearchTool(request),
       ),
       tool_choice:
         openaiToolOptions?.toolChoice === "required"
@@ -416,6 +505,7 @@ export class OpenAIAdapter implements LLMAdapter {
           total_tokens: number;
         }
       | undefined;
+    const citations: Citation[] = [];
 
     function* flushToolCalls(): Generator<StreamEvent> {
       for (const call of toolCalls.values()) {
@@ -466,6 +556,14 @@ export class OpenAIAdapter implements LLMAdapter {
 
         case "response.completed":
         case "response.incomplete": {
+          // Citations ride on the output_text annotations rather than arriving
+          // as their own events, so harvest them from the terminal payload.
+          const found = this.collectResponsesCitations(
+            event.response?.output,
+            citations.length,
+          );
+          if (found.length > 0) citations.push(...found);
+
           const u = event.response?.usage;
           if (u) {
             usage = {
@@ -492,6 +590,10 @@ export class OpenAIAdapter implements LLMAdapter {
     // Flush after the loop so a stream that ends without a terminal event
     // still emits its tool calls rather than dropping them.
     yield* flushToolCalls();
+
+    if (citations.length > 0) {
+      yield { type: "citation", citations: deduplicateCitations(citations) };
+    }
 
     yield { type: "message:end" };
     yield { type: "done", usage };
