@@ -191,15 +191,53 @@ export class AzureAdapter implements LLMAdapter {
         max_tokens: request.config?.maxTokens ?? this.config.maxTokens,
         response_format: toOpenAIResponseFormat(request.config?.responseFormat),
         stream: true,
+        // Without this Azure omits usage from the stream entirely, so every
+        // streamed turn reported zero tokens. complete() already reports it.
+        stream_options: { include_usage: true },
       };
       logProviderPayload("azure", "request payload", payload, request.debug);
       const stream = await client.chat.completions.create(payload);
 
-      let currentToolCall: {
-        id: string;
-        name: string;
-        arguments: string;
-      } | null = null;
+      // Keyed by the streaming `index` Azure/OpenAI use to demultiplex
+      // concurrent tool calls. A single `currentToolCall` cannot represent
+      // parallel calls: fragments for index 1 would be appended to index 0's
+      // arguments, leaving both unparseable. Map preserves insertion order.
+      const toolCallsByIndex = new Map<
+        number,
+        { id: string; name: string; arguments: string }
+      >();
+
+      // Emit each buffered call as a contiguous start→args→end triple. The
+      // runtime pairs action:args with the action:end that follows it, so
+      // events for different calls must never interleave.
+      let usage:
+        | {
+            prompt_tokens: number;
+            completion_tokens: number;
+            total_tokens: number;
+          }
+        | undefined;
+
+      function* flushToolCalls(): Generator<StreamEvent> {
+        for (const call of toolCallsByIndex.values()) {
+          yield {
+            type: "action:start",
+            id: call.id,
+            name: call.name,
+          } as StreamEvent;
+          yield {
+            type: "action:args",
+            id: call.id,
+            args: call.arguments,
+          } as StreamEvent;
+          yield {
+            type: "action:end",
+            id: call.id,
+            name: call.name,
+          } as StreamEvent;
+        }
+        toolCallsByIndex.clear();
+      }
 
       for await (const chunk of stream) {
         logProviderPayload("azure", "stream chunk", chunk, request.debug);
@@ -218,62 +256,53 @@ export class AzureAdapter implements LLMAdapter {
         // Handle tool calls
         if (delta?.tool_calls) {
           for (const toolCall of delta.tool_calls) {
-            // New tool call
-            if (toolCall.id) {
-              // End previous tool call if any
-              if (currentToolCall) {
-                yield {
-                  type: "action:args",
-                  id: currentToolCall.id,
-                  args: currentToolCall.arguments,
-                };
-                yield {
-                  type: "action:end",
-                  id: currentToolCall.id,
-                  name: currentToolCall.name,
-                };
-              }
+            // Servers that omit `index` only stream one call at a time, so
+            // collapsing them onto slot 0 keeps that case working.
+            const index = toolCall.index ?? 0;
+            const existing = toolCallsByIndex.get(index);
 
-              currentToolCall = {
-                id: toolCall.id,
+            if (!existing) {
+              toolCallsByIndex.set(index, {
+                id: toolCall.id || "",
                 name: toolCall.function?.name || "",
                 arguments: toolCall.function?.arguments || "",
-              };
-
-              yield {
-                type: "action:start",
-                id: currentToolCall.id,
-                name: currentToolCall.name,
-              };
-            } else if (currentToolCall && toolCall.function?.arguments) {
-              // Append to current tool call arguments
-              currentToolCall.arguments += toolCall.function.arguments;
+              });
+            } else {
+              // Continuations: id and name are sent once up front, arguments
+              // arrive as fragments to append.
+              if (toolCall.id && !existing.id) existing.id = toolCall.id;
+              if (toolCall.function?.name && !existing.name) {
+                existing.name = toolCall.function.name;
+              }
+              if (toolCall.function?.arguments) {
+                existing.arguments += toolCall.function.arguments;
+              }
             }
           }
         }
 
+        // Capture usage from the final chunk (sent with include_usage)
+        if (chunk.usage) {
+          usage = {
+            prompt_tokens: chunk.usage.prompt_tokens,
+            completion_tokens: chunk.usage.completion_tokens,
+            total_tokens: chunk.usage.total_tokens,
+          };
+        }
+
         // Check for finish
         if (chunk.choices[0]?.finish_reason) {
-          // Complete any pending tool call
-          if (currentToolCall) {
-            yield {
-              type: "action:args",
-              id: currentToolCall.id,
-              args: currentToolCall.arguments,
-            };
-            yield {
-              type: "action:end",
-              id: currentToolCall.id,
-              name: currentToolCall.name,
-            };
-            currentToolCall = null;
-          }
+          yield* flushToolCalls();
         }
       }
 
+      // Flush again after the loop: a stream ending without a terminal
+      // finish_reason (truncation, abort) would otherwise drop pending calls.
+      yield* flushToolCalls();
+
       // Emit message end
       yield { type: "message:end" };
-      yield { type: "done" };
+      yield { type: "done", usage };
     } catch (error) {
       yield {
         type: "error",

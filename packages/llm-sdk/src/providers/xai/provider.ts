@@ -200,12 +200,32 @@ export function xai(
         stream: true,
       });
 
-      // Track current tool call being built
-      let currentToolCall: {
-        id: string;
-        name: string;
-        arguments: string;
-      } | null = null;
+      // Keyed by the streaming `index` used to demultiplex concurrent tool
+      // calls. A single `currentToolCall` cannot represent parallel calls:
+      // fragments for index 1 would be appended to index 0's arguments,
+      // leaving both unparseable. Map preserves insertion order.
+      const toolCallsByIndex = new Map<
+        number,
+        { id: string; name: string; arguments: string }
+      >();
+
+      // Emit every buffered call, then clear. Arguments that fail to parse
+      // degrade to {} rather than throwing and killing the whole stream.
+      function* flushToolCalls(): Generator<StreamChunk> {
+        for (const call of toolCallsByIndex.values()) {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(call.arguments || "{}");
+          } catch {
+            args = {};
+          }
+          yield {
+            type: "tool-call",
+            toolCall: { id: call.id, name: call.name, args },
+          } as StreamChunk;
+        }
+        toolCallsByIndex.clear();
+      }
 
       let totalPromptTokens = 0;
       let totalCompletionTokens = 0;
@@ -228,44 +248,35 @@ export function xai(
         // Tool calls
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
-            if (tc.id) {
-              // New tool call - emit previous if exists
-              if (currentToolCall) {
-                yield {
-                  type: "tool-call",
-                  toolCall: {
-                    id: currentToolCall.id,
-                    name: currentToolCall.name,
-                    args: JSON.parse(currentToolCall.arguments || "{}"),
-                  },
-                };
-              }
-              currentToolCall = {
-                id: tc.id,
+            // Servers that omit `index` only stream one call at a time, so
+            // collapsing them onto slot 0 keeps that case working.
+            const index = tc.index ?? 0;
+            const existing = toolCallsByIndex.get(index);
+
+            if (!existing) {
+              toolCallsByIndex.set(index, {
+                id: tc.id ?? "",
                 name: tc.function?.name ?? "",
                 arguments: tc.function?.arguments ?? "",
-              };
-            } else if (currentToolCall && tc.function?.arguments) {
-              // Append arguments
-              currentToolCall.arguments += tc.function.arguments;
+              });
+            } else {
+              // Continuations: id and name arrive once up front, arguments
+              // arrive as fragments to append.
+              if (tc.id && !existing.id) existing.id = tc.id;
+              if (tc.function?.name && !existing.name) {
+                existing.name = tc.function.name;
+              }
+              if (tc.function?.arguments) {
+                existing.arguments += tc.function.arguments;
+              }
             }
           }
         }
 
         // Finish reason
         if (choice?.finish_reason) {
-          // Emit pending tool call
-          if (currentToolCall) {
-            yield {
-              type: "tool-call",
-              toolCall: {
-                id: currentToolCall.id,
-                name: currentToolCall.name,
-                args: JSON.parse(currentToolCall.arguments || "{}"),
-              },
-            };
-            currentToolCall = null;
-          }
+          // Emit all pending tool calls
+          yield* flushToolCalls();
 
           // Usage from final chunk (if available)
           if (chunk.usage) {
@@ -284,6 +295,11 @@ export function xai(
           };
         }
       }
+
+      // Flush again after the loop: a stream ending without a terminal
+      // finish_reason (truncation, abort) would otherwise silently drop
+      // any tool calls still buffered.
+      yield* flushToolCalls();
     },
   };
 }

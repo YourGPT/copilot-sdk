@@ -673,12 +673,47 @@ export class OpenAIAdapter implements LLMAdapter {
       logProviderPayload("openai", "request payload", payload, request.debug);
       const stream = await client.chat.completions.create(payload);
 
-      let currentToolCall: {
-        id: string;
-        name: string;
-        arguments: string;
-        extra_content?: Record<string, unknown>;
-      } | null = null;
+      // Keyed by the streaming `index` OpenAI uses to demultiplex concurrent
+      // tool calls. A single `currentToolCall` cannot represent parallel calls:
+      // fragments for index 1 would be appended to index 0's arguments, and
+      // both would end up unparseable. Map preserves insertion order, so calls
+      // are emitted in the order the model opened them.
+      const toolCallsByIndex = new Map<
+        number,
+        {
+          id: string;
+          name: string;
+          arguments: string;
+          extra_content?: Record<string, unknown>;
+        }
+      >();
+
+      // Emit every buffered call as a contiguous args→end pair. The runtime
+      // pairs action:args with the action:end that follows it, so the two must
+      // never be interleaved across calls.
+      function* flushToolCalls(): Generator<StreamEvent> {
+        for (const call of toolCallsByIndex.values()) {
+          yield {
+            type: "action:start",
+            id: call.id,
+            name: call.name,
+            ...(call.extra_content
+              ? { extra_content: call.extra_content }
+              : {}),
+          } as StreamEvent;
+          yield {
+            type: "action:args",
+            id: call.id,
+            args: call.arguments,
+          } as StreamEvent;
+          yield {
+            type: "action:end",
+            id: call.id,
+            name: call.name,
+          } as StreamEvent;
+        }
+        toolCallsByIndex.clear();
+      }
 
       // Track citations from web search
       const collectedCitations: Citation[] = [];
@@ -742,44 +777,32 @@ export class OpenAIAdapter implements LLMAdapter {
         // Handle tool calls
         if (delta?.tool_calls) {
           for (const toolCall of delta.tool_calls) {
-            // New tool call
-            if (toolCall.id) {
-              // End previous tool call if any
-              if (currentToolCall) {
-                yield {
-                  type: "action:args",
-                  id: currentToolCall.id,
-                  args: currentToolCall.arguments,
-                };
-                yield {
-                  type: "action:end",
-                  id: currentToolCall.id,
-                  name: currentToolCall.name,
-                };
-              }
-
+            // Servers that omit `index` only ever stream one call at a time,
+            // so collapsing them onto slot 0 keeps that case working.
+            const index = toolCall.index ?? 0;
+            const existing = toolCallsByIndex.get(index);
+            if (!existing) {
               const tcExtraContent = (toolCall as any).extra_content as
                 | Record<string, unknown>
                 | undefined;
 
-              currentToolCall = {
-                id: toolCall.id,
+              const created = {
+                id: toolCall.id || "",
                 name: toolCall.function?.name || "",
                 arguments: toolCall.function?.arguments || "",
                 ...(tcExtraContent ? { extra_content: tcExtraContent } : {}),
               };
-
-              yield {
-                type: "action:start",
-                id: currentToolCall.id,
-                name: currentToolCall.name,
-                ...(currentToolCall.extra_content
-                  ? { extra_content: currentToolCall.extra_content }
-                  : {}),
-              };
-            } else if (currentToolCall && toolCall.function?.arguments) {
-              // Append to current tool call arguments
-              currentToolCall.arguments += toolCall.function.arguments;
+              toolCallsByIndex.set(index, created);
+            } else {
+              // Later chunks for a slot carry continuations: id and name are
+              // sent once up front, arguments arrive as fragments to append.
+              if (toolCall.id && !existing.id) existing.id = toolCall.id;
+              if (toolCall.function?.name && !existing.name) {
+                existing.name = toolCall.function.name;
+              }
+              if (toolCall.function?.arguments) {
+                existing.arguments += toolCall.function.arguments;
+              }
             }
           }
         }
@@ -795,22 +818,13 @@ export class OpenAIAdapter implements LLMAdapter {
 
         // Check for finish
         if (choice?.finish_reason) {
-          // Complete any pending tool call
-          if (currentToolCall) {
-            yield {
-              type: "action:args",
-              id: currentToolCall.id,
-              args: currentToolCall.arguments,
-            };
-            yield {
-              type: "action:end",
-              id: currentToolCall.id,
-              name: currentToolCall.name,
-            };
-            currentToolCall = null;
-          }
+          yield* flushToolCalls();
         }
       }
+      // Flush again after the loop: a stream that ends without a terminal
+      // finish_reason (truncation, abort) would otherwise drop pending calls
+      // and leave a dangling action:start with no action:end.
+      yield* flushToolCalls();
 
       // Emit citations if we collected any
       if (collectedCitations.length > 0) {
