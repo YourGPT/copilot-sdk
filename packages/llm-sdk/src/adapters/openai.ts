@@ -140,6 +140,48 @@ export class OpenAIAdapter implements LLMAdapter {
     }
   }
 
+  /**
+   * Convert one message's content to Responses content parts.
+   *
+   * The Responses API does not accept Chat Completions content blocks: input
+   * parts are `input_text` / `input_image` (with a bare `image_url` string)
+   * rather than `text` / `image_url: { url }`. Passing the Chat Completions
+   * shape through unchanged makes the API reject the request, so anything
+   * array-shaped has to be translated rather than forwarded.
+   */
+  private toResponsesContent(
+    content: unknown,
+    role: "user" | "assistant" | "developer",
+  ): unknown {
+    const textType = role === "assistant" ? "output_text" : "input_text";
+
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) {
+      return content == null ? "" : JSON.stringify(content);
+    }
+
+    return content.map((part) => {
+      const p = part as Record<string, any>;
+
+      if (p?.type === "text") return { type: textType, text: p.text ?? "" };
+
+      if (p?.type === "image_url") {
+        // Chat Completions nests the URL under image_url.url; Responses wants
+        // it flat. Data URIs and https URLs are both valid here.
+        const url =
+          typeof p.image_url === "string" ? p.image_url : p.image_url?.url;
+        return {
+          type: "input_image",
+          image_url: url,
+          ...(p.image_url?.detail ? { detail: p.image_url.detail } : {}),
+        };
+      }
+
+      // Already in Responses shape (input_text/input_image/input_file) — keep.
+      return p;
+    });
+  }
+
   private buildResponsesInput(
     request: ChatCompletionRequest,
   ): Array<Record<string, unknown>> {
@@ -153,20 +195,28 @@ export class OpenAIAdapter implements LLMAdapter {
 
     for (const message of sourceMessages) {
       if (message.role === "system") {
+        // `instructions` carries the system prompt, but a caller may instead
+        // pass it as a message. Dropping it silently loses the prompt, so
+        // forward it as a developer turn (the Responses equivalent) unless
+        // instructions already covers it.
+        if (!request.systemPrompt && message.content) {
+          input.push({
+            type: "message",
+            role: "developer",
+            content: this.toResponsesContent(message.content, "developer"),
+          });
+        }
         continue;
       }
 
       if (message.role === "assistant") {
-        const content =
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content
-              : message.content
-                ? JSON.stringify(message.content)
-                : "";
+        const content = this.toResponsesContent(message.content, "assistant");
 
-        if (content) {
+        if (
+          typeof content === "string"
+            ? content
+            : Array.isArray(content) && content.length > 0
+        ) {
           input.push({
             type: "message",
             role: "assistant",
@@ -204,15 +254,11 @@ export class OpenAIAdapter implements LLMAdapter {
         continue;
       }
 
+      const role = message.role === "developer" ? "developer" : "user";
       input.push({
         type: "message",
-        role: message.role === "developer" ? "developer" : "user",
-        content:
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content
-              : JSON.stringify(message.content ?? ""),
+        role,
+        content: this.toResponsesContent(message.content, role),
       });
     }
 
@@ -284,10 +330,10 @@ export class OpenAIAdapter implements LLMAdapter {
     };
   }
 
-  private async completeWithResponses(
+  private buildResponsesPayload(
     request: ChatCompletionRequest,
-  ): Promise<CompletionResult> {
-    const client = await this.getClient();
+    stream: boolean,
+  ): Record<string, unknown> {
     const openaiToolOptions = request.providerToolOptions?.openai;
     const responsesTextFormat = toOpenAIResponsesTextFormat(
       request.config?.responseFormat,
@@ -317,8 +363,17 @@ export class OpenAIAdapter implements LLMAdapter {
           }),
       max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
       ...(responsesTextFormat ? { text: { format: responsesTextFormat } } : {}),
-      stream: false,
+      stream,
     };
+
+    return payload;
+  }
+
+  private async completeWithResponses(
+    request: ChatCompletionRequest,
+  ): Promise<CompletionResult> {
+    const client = await this.getClient();
+    const payload = this.buildResponsesPayload(request, false);
 
     logProviderPayload("openai", "request payload", payload, request.debug);
     const response = await client.responses.create(payload);
@@ -327,53 +382,135 @@ export class OpenAIAdapter implements LLMAdapter {
     return this.parseResponsesResult(response);
   }
 
+  /**
+   * Stream from /v1/responses as real SSE.
+   *
+   * The Responses API emits semantic events rather than Chat Completions
+   * deltas, so the interesting ones are:
+   *   response.output_text.delta       — incremental assistant text
+   *   response.output_item.added       — a function_call item begins (name/id)
+   *   response.function_call_arguments.delta / .done — tool arguments
+   *   response.completed               — terminal, carries usage
+   *
+   * Tool calls are buffered and flushed as contiguous start→args→end triples
+   * because the runtime pairs action:args with the action:end that follows it.
+   */
+  private async *streamWithResponses(
+    request: ChatCompletionRequest,
+  ): AsyncGenerator<StreamEvent> {
+    const client = await this.getClient();
+    const payload = this.buildResponsesPayload(request, true);
+    logProviderPayload("openai", "request payload", payload, request.debug);
+
+    const stream = await client.responses.create(payload);
+
+    // Keyed by the output_index the API uses to demultiplex concurrent items.
+    const toolCalls = new Map<
+      number,
+      { id: string; name: string; arguments: string }
+    >();
+    let usage:
+      | {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+        }
+      | undefined;
+
+    function* flushToolCalls(): Generator<StreamEvent> {
+      for (const call of toolCalls.values()) {
+        yield { type: "action:start", id: call.id, name: call.name };
+        yield { type: "action:args", id: call.id, args: call.arguments };
+        yield { type: "action:end", id: call.id, name: call.name };
+      }
+      toolCalls.clear();
+    }
+
+    for await (const event of stream as AsyncIterable<any>) {
+      if (request.signal?.aborted) break;
+      logProviderPayload("openai", "stream chunk", event, request.debug);
+
+      const index: number = event?.output_index ?? 0;
+
+      switch (event?.type) {
+        case "response.output_text.delta":
+          if (event.delta) {
+            yield { type: "message:delta", content: event.delta };
+          }
+          break;
+
+        case "response.output_item.added":
+          if (event.item?.type === "function_call") {
+            toolCalls.set(index, {
+              id: event.item.call_id ?? event.item.id ?? generateToolCallId(),
+              name: event.item.name ?? "",
+              arguments: event.item.arguments ?? "",
+            });
+          }
+          break;
+
+        case "response.function_call_arguments.delta": {
+          const existing = toolCalls.get(index);
+          if (existing && event.delta) existing.arguments += event.delta;
+          break;
+        }
+
+        case "response.function_call_arguments.done": {
+          // Authoritative full argument string — prefer it over accumulation.
+          const existing = toolCalls.get(index);
+          if (existing && typeof event.arguments === "string") {
+            existing.arguments = event.arguments;
+          }
+          break;
+        }
+
+        case "response.completed":
+        case "response.incomplete": {
+          const u = event.response?.usage;
+          if (u) {
+            usage = {
+              prompt_tokens: u.input_tokens ?? 0,
+              completion_tokens: u.output_tokens ?? 0,
+              total_tokens:
+                u.total_tokens ??
+                (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+            };
+          }
+          break;
+        }
+
+        case "error":
+        case "response.failed":
+          throw new Error(
+            event.message ??
+              event.response?.error?.message ??
+              "Responses stream failed",
+          );
+      }
+    }
+
+    // Flush after the loop so a stream that ends without a terminal event
+    // still emits its tool calls rather than dropping them.
+    yield* flushToolCalls();
+
+    yield { type: "message:end" };
+    yield { type: "done", usage };
+  }
+
   async *stream(request: ChatCompletionRequest): AsyncGenerator<StreamEvent> {
     if (this.shouldUseResponsesApi(request)) {
       const messageId = generateMessageId();
       yield { type: "message:start", id: messageId };
 
       try {
-        const result = await this.completeWithResponses(request);
-
-        if (result.content) {
-          yield { type: "message:delta", content: result.content };
-        }
-
-        for (const toolCall of result.toolCalls) {
-          yield {
-            type: "action:start",
-            id: toolCall.id,
-            name: toolCall.name,
-          };
-          yield {
-            type: "action:args",
-            id: toolCall.id,
-            args: JSON.stringify(toolCall.args),
-          };
-          // action:end is REQUIRED, not decorative: Runtime.processChatWithLoop
-          // invokes server-side tool handlers exclusively in its `case "action:end"`
-          // branch. Without it a server tool is never executed, never lands in
-          // serverToolResults, and is then misclassified as a client tool — the
-          // runtime suspends with requiresAction and dispatches it to a browser that
-          // has no such tool, hanging the turn forever. Every other adapter emits it.
-          yield {
-            type: "action:end",
-            id: toolCall.id,
-            name: toolCall.name,
-          };
-        }
-
-        yield { type: "message:end" };
-        yield {
-          type: "done",
-          usage: result.usage
-            ? {
-                prompt_tokens: result.usage.promptTokens,
-                completion_tokens: result.usage.completionTokens,
-                total_tokens: result.usage.totalTokens,
-              }
-            : undefined,
-        };
+        // Real SSE. action:end is emitted per tool call inside — it is REQUIRED,
+        // not decorative: Runtime.processChatWithLoop invokes server-side tool
+        // handlers exclusively in its `case "action:end"` branch. Without it a
+        // server tool never executes, never lands in serverToolResults, and is
+        // then misclassified as a client tool — the runtime suspends with
+        // requiresAction and dispatches it to a browser that has no such tool,
+        // hanging the turn forever.
+        yield* this.streamWithResponses(request);
         return;
       } catch (error) {
         yield {
