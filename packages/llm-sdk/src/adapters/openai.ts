@@ -15,6 +15,7 @@ import {
   buildOpenAITokenParams,
   formatMessagesForOpenAI,
   formatTools,
+  isOpenAIReasoningModel,
   logProviderPayload,
   normalizeObjectJsonSchema,
   toOpenAIResponseFormat,
@@ -77,13 +78,66 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   private shouldUseResponsesApi(request: ChatCompletionRequest): boolean {
-    return (
+    const hasTools =
+      Array.isArray(request.toolDefinitions) &&
+      request.toolDefinitions.length > 0;
+    if (!hasTools) return false;
+
+    // Native tool search is Responses-only — this is what the path was built for.
+    if (
       request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true &&
       request.providerToolOptions.openai.nativeToolSearch.useResponsesApi !==
-        false &&
-      Array.isArray(request.toolDefinitions) &&
-      request.toolDefinitions.length > 0
+        false
+    ) {
+      return true;
+    }
+
+    // gpt-5.4+ reject function tools on /v1/chat/completions whenever reasoning is
+    // in play. Only two ways out: send reasoning_effort:'none' (which disables
+    // reasoning entirely — a real quality loss on a model billed for reasoning), or
+    // use /v1/responses, which supports tools WITH reasoning intact. We take the
+    // latter.
+    //
+    // Why this is model-gated rather than always-on: only 5.4+ have the restriction,
+    // and Chat Completions remains the better-tested path here (true token streaming,
+    // vision/attachment handling). Routing everything to Responses would regress
+    // those for no benefit.
+    //
+    // Note this fires even though the SDK never sets reasoning_effort: gpt-5.6
+    // reasons BY DEFAULT, so the conflict is server-side and omitting the param
+    // does not opt out. On <=5.5 omitting it was sufficient, which is why this only
+    // began failing with 5.6.
+    return this.requiresResponsesApiForTools(
+      request.config?.model || this.model,
     );
+  }
+
+  /**
+   * Whether this model rejects function tools on /v1/chat/completions.
+   *
+   * Applies to OpenAI proper only — the adapter is reused for OpenAI-compatible
+   * providers (Azure, xAI, Google, Fireworks) whose endpoints have no such
+   * restriction and may not implement /v1/responses at all.
+   */
+  private requiresResponsesApiForTools(modelId: string | undefined): boolean {
+    if (!modelId) return false;
+    // gpt-5.4, 5.5, 5.6, ... — but NOT gpt-5 / gpt-5.1 / gpt-5-chat.
+    if (!/^gpt-5\.(?:[4-9]|\d{2,})/i.test(modelId)) return false;
+
+    // Must be OpenAI's OWN endpoint. `this.provider` is NOT sufficient:
+    // resolveProviderName defaults to "openai" for any unrecognised baseUrl, so
+    // TogetherAI, LiteLLM/vLLM gateways and self-hosted proxies all report
+    // "openai". Those speak Chat Completions and may not implement /v1/responses
+    // at all — routing them there would turn a working call into a 404.
+    // Check the URL itself, and treat only api.openai.com (or an unset baseUrl,
+    // which the openai client resolves to api.openai.com) as OpenAI proper.
+    const baseUrl = this.config.baseUrl;
+    if (!baseUrl) return true;
+    try {
+      return new URL(baseUrl).hostname === "api.openai.com";
+    } catch {
+      return false;
+    }
   }
 
   private buildResponsesInput(
@@ -167,6 +221,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
   private buildResponsesTools(
     tools: ToolDefinition[],
+    includeToolSearch: boolean,
   ): Array<Record<string, unknown>> {
     const nativeTools = tools
       .filter((tool) => tool.available !== false)
@@ -185,7 +240,12 @@ export class OpenAIAdapter implements LLMAdapter {
         defer_loading: tool.deferLoading === true,
       }));
 
-    return [{ type: "tool_search" }, ...nativeTools];
+    // The built-in tool_search tool belongs ONLY to the native-tool-search feature.
+    // Reasoning-model routing reaches this path too, and sending tool_search there
+    // would enable a capability the caller never asked for (and bill for it).
+    return includeToolSearch
+      ? [{ type: "tool_search" }, ...nativeTools]
+      : nativeTools;
   }
 
   private parseResponsesResult(response: any): CompletionResult {
@@ -232,11 +292,15 @@ export class OpenAIAdapter implements LLMAdapter {
     const responsesTextFormat = toOpenAIResponsesTextFormat(
       request.config?.responseFormat,
     );
+    const modelIdForPayload = request.config?.model || this.model;
     const payload = {
-      model: request.config?.model || this.model,
+      model: modelIdForPayload,
       instructions: request.systemPrompt,
       input: this.buildResponsesInput(request),
-      tools: this.buildResponsesTools(request.toolDefinitions ?? []),
+      tools: this.buildResponsesTools(
+        request.toolDefinitions ?? [],
+        request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true,
+      ),
       tool_choice:
         openaiToolOptions?.toolChoice === "required"
           ? "required"
@@ -244,7 +308,13 @@ export class OpenAIAdapter implements LLMAdapter {
             ? "auto"
             : undefined,
       parallel_tool_calls: openaiToolOptions?.parallelToolCalls,
-      temperature: request.config?.temperature ?? this.config.temperature,
+      // Reasoning models reject `temperature` outright — sending it would swap one
+      // 400 for another. isOpenAIReasoningModel already encodes that family test.
+      ...(isOpenAIReasoningModel(modelIdForPayload)
+        ? {}
+        : {
+            temperature: request.config?.temperature ?? this.config.temperature,
+          }),
       max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
       ...(responsesTextFormat ? { text: { format: responsesTextFormat } } : {}),
       stream: false,
@@ -279,6 +349,17 @@ export class OpenAIAdapter implements LLMAdapter {
             type: "action:args",
             id: toolCall.id,
             args: JSON.stringify(toolCall.args),
+          };
+          // action:end is REQUIRED, not decorative: Runtime.processChatWithLoop
+          // invokes server-side tool handlers exclusively in its `case "action:end"`
+          // branch. Without it a server tool is never executed, never lands in
+          // serverToolResults, and is then misclassified as a client tool — the
+          // runtime suspends with requiresAction and dispatches it to a browser that
+          // has no such tool, hanging the turn forever. Every other adapter emits it.
+          yield {
+            type: "action:end",
+            id: toolCall.id,
+            name: toolCall.name,
           };
         }
 
