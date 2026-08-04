@@ -271,9 +271,20 @@ export function normalizeObjectJsonSchema(
       : [];
     normalized.required = Array.from(new Set([...required, ...propertyKeys]));
 
-    if (normalized.additionalProperties === undefined) {
-      normalized.additionalProperties = false;
-    }
+    // Strict mode requires this to be exactly `false` on EVERY object, nested
+    // ones included. An explicit `additionalProperties: true` — what
+    // zodToJsonSchema emits for a free-form `z.record()`/`.passthrough()` field
+    // (e.g. Cal.com create_booking's `metadata`) — is rejected outright:
+    //   "In context=('properties','metadata'), 'additionalProperties' is
+    //    required to be supplied and to be false."
+    // So overwrite unconditionally rather than only filling in the undefined
+    // case; a truthy value is precisely the one that 400s.
+    //
+    // The cost is that genuinely open-ended objects can no longer accept
+    // arbitrary keys. With `properties: {}` that yields an object the model may
+    // only send empty — lossy, but strict mode has no way to express "any keys",
+    // and a degraded field beats a request the API refuses to accept at all.
+    normalized.additionalProperties = false;
   } else if (
     type === "array" &&
     normalized.items &&
@@ -281,6 +292,20 @@ export function normalizeObjectJsonSchema(
   ) {
     normalized.items = normalizeObjectJsonSchema(
       normalized.items as Record<string, unknown>,
+    );
+  }
+
+  // Composition keywords carry subschemas that are just as subject to the rules
+  // above, and they appear WITHOUT a sibling `type` (so neither branch above
+  // runs). An un-normalized object nested inside a union 400s exactly like a
+  // top-level one, so recurse regardless of `type`.
+  for (const keyword of ["anyOf", "oneOf", "allOf"]) {
+    const branches = normalized[keyword];
+    if (!Array.isArray(branches)) continue;
+    normalized[keyword] = branches.map((branch) =>
+      branch && typeof branch === "object"
+        ? normalizeObjectJsonSchema(branch as Record<string, unknown>)
+        : branch,
     );
   }
 
