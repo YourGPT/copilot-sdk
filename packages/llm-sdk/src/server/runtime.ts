@@ -1076,7 +1076,13 @@ export class Runtime {
       actions: nativeToolSearch
         ? undefined
         : this.convertToolsToActions(effectiveSelectedTools),
-      toolDefinitions: nativeToolSearch ? effectiveSelectedTools : undefined,
+      // Always supplied. `actions` drives the Chat Completions path; adapters
+      // that must use /v1/responses (native tool search, or gpt-5.4+ where
+      // Chat Completions rejects function tools alongside reasoning) need the
+      // richer ToolDefinition shape. Gating this on nativeToolSearch meant the
+      // reasoning-model route could never see any tools, so it silently never
+      // engaged and those requests still 400'd on Chat Completions.
+      toolDefinitions: effectiveSelectedTools,
       systemPrompt: systemPrompt,
       config: request.config,
       signal,
@@ -1569,7 +1575,13 @@ export class Runtime {
         actions: nativeToolSearch
           ? undefined
           : this.convertToolsToActions(effectiveSelectedTools),
-        toolDefinitions: nativeToolSearch ? effectiveSelectedTools : undefined,
+        // Always supplied. `actions` drives the Chat Completions path; adapters
+        // that must use /v1/responses (native tool search, or gpt-5.4+ where
+        // Chat Completions rejects function tools alongside reasoning) need the
+        // richer ToolDefinition shape. Gating this on nativeToolSearch meant the
+        // reasoning-model route could never see any tools, so it silently never
+        // engaged and those requests still 400'd on Chat Completions.
+        toolDefinitions: effectiveSelectedTools,
         systemPrompt: systemPrompt,
         config: request.config,
         signal,

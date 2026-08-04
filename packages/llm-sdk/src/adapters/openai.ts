@@ -15,6 +15,7 @@ import {
   buildOpenAITokenParams,
   formatMessagesForOpenAI,
   formatTools,
+  isOpenAIReasoningModel,
   logProviderPayload,
   normalizeObjectJsonSchema,
   toOpenAIResponseFormat,
@@ -77,13 +78,108 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   private shouldUseResponsesApi(request: ChatCompletionRequest): boolean {
-    return (
+    const hasTools =
+      Array.isArray(request.toolDefinitions) &&
+      request.toolDefinitions.length > 0;
+    if (!hasTools) return false;
+
+    // Native tool search is Responses-only — this is what the path was built for.
+    if (
       request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true &&
       request.providerToolOptions.openai.nativeToolSearch.useResponsesApi !==
-        false &&
-      Array.isArray(request.toolDefinitions) &&
-      request.toolDefinitions.length > 0
+        false
+    ) {
+      return true;
+    }
+
+    // gpt-5.4+ reject function tools on /v1/chat/completions whenever reasoning is
+    // in play. Only two ways out: send reasoning_effort:'none' (which disables
+    // reasoning entirely — a real quality loss on a model billed for reasoning), or
+    // use /v1/responses, which supports tools WITH reasoning intact. We take the
+    // latter.
+    //
+    // Why this is model-gated rather than always-on: only 5.4+ have the restriction,
+    // and Chat Completions remains the better-tested path here (true token streaming,
+    // vision/attachment handling). Routing everything to Responses would regress
+    // those for no benefit.
+    //
+    // Note this fires even though the SDK never sets reasoning_effort: gpt-5.6
+    // reasons BY DEFAULT, so the conflict is server-side and omitting the param
+    // does not opt out. On <=5.5 omitting it was sufficient, which is why this only
+    // began failing with 5.6.
+    return this.requiresResponsesApiForTools(
+      request.config?.model || this.model,
     );
+  }
+
+  /**
+   * Whether this model rejects function tools on /v1/chat/completions.
+   *
+   * Applies to OpenAI proper only — the adapter is reused for OpenAI-compatible
+   * providers (Azure, xAI, Google, Fireworks) whose endpoints have no such
+   * restriction and may not implement /v1/responses at all.
+   */
+  private requiresResponsesApiForTools(modelId: string | undefined): boolean {
+    if (!modelId) return false;
+    // gpt-5.4, 5.5, 5.6, ... — but NOT gpt-5 / gpt-5.1 / gpt-5-chat.
+    if (!/^gpt-5\.(?:[4-9]|\d{2,})/i.test(modelId)) return false;
+
+    // Must be OpenAI's OWN endpoint. `this.provider` is NOT sufficient:
+    // resolveProviderName defaults to "openai" for any unrecognised baseUrl, so
+    // TogetherAI, LiteLLM/vLLM gateways and self-hosted proxies all report
+    // "openai". Those speak Chat Completions and may not implement /v1/responses
+    // at all — routing them there would turn a working call into a 404.
+    // Check the URL itself, and treat only api.openai.com (or an unset baseUrl,
+    // which the openai client resolves to api.openai.com) as OpenAI proper.
+    const baseUrl = this.config.baseUrl;
+    if (!baseUrl) return true;
+    try {
+      return new URL(baseUrl).hostname === "api.openai.com";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Convert one message's content to Responses content parts.
+   *
+   * The Responses API does not accept Chat Completions content blocks: input
+   * parts are `input_text` / `input_image` (with a bare `image_url` string)
+   * rather than `text` / `image_url: { url }`. Passing the Chat Completions
+   * shape through unchanged makes the API reject the request, so anything
+   * array-shaped has to be translated rather than forwarded.
+   */
+  private toResponsesContent(
+    content: unknown,
+    role: "user" | "assistant" | "developer",
+  ): unknown {
+    const textType = role === "assistant" ? "output_text" : "input_text";
+
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) {
+      return content == null ? "" : JSON.stringify(content);
+    }
+
+    return content.map((part) => {
+      const p = part as Record<string, any>;
+
+      if (p?.type === "text") return { type: textType, text: p.text ?? "" };
+
+      if (p?.type === "image_url") {
+        // Chat Completions nests the URL under image_url.url; Responses wants
+        // it flat. Data URIs and https URLs are both valid here.
+        const url =
+          typeof p.image_url === "string" ? p.image_url : p.image_url?.url;
+        return {
+          type: "input_image",
+          image_url: url,
+          ...(p.image_url?.detail ? { detail: p.image_url.detail } : {}),
+        };
+      }
+
+      // Already in Responses shape (input_text/input_image/input_file) — keep.
+      return p;
+    });
   }
 
   private buildResponsesInput(
@@ -99,20 +195,28 @@ export class OpenAIAdapter implements LLMAdapter {
 
     for (const message of sourceMessages) {
       if (message.role === "system") {
+        // `instructions` carries the system prompt, but a caller may instead
+        // pass it as a message. Dropping it silently loses the prompt, so
+        // forward it as a developer turn (the Responses equivalent) unless
+        // instructions already covers it.
+        if (!request.systemPrompt && message.content) {
+          input.push({
+            type: "message",
+            role: "developer",
+            content: this.toResponsesContent(message.content, "developer"),
+          });
+        }
         continue;
       }
 
       if (message.role === "assistant") {
-        const content =
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content
-              : message.content
-                ? JSON.stringify(message.content)
-                : "";
+        const content = this.toResponsesContent(message.content, "assistant");
 
-        if (content) {
+        if (
+          typeof content === "string"
+            ? content
+            : Array.isArray(content) && content.length > 0
+        ) {
           input.push({
             type: "message",
             role: "assistant",
@@ -150,23 +254,83 @@ export class OpenAIAdapter implements LLMAdapter {
         continue;
       }
 
+      const role = message.role === "developer" ? "developer" : "user";
       input.push({
         type: "message",
-        role: message.role === "developer" ? "developer" : "user",
-        content:
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content
-              : JSON.stringify(message.content ?? ""),
+        role,
+        content: this.toResponsesContent(message.content, role),
       });
     }
 
     return input;
   }
 
+  /**
+   * Build the web_search tool for the Responses API, or undefined when web
+   * search is off.
+   *
+   * The Chat Completions path uses `web_search_preview`; the Responses API
+   * names the same built-in `web_search`. Without this, enabling web search
+   * alongside a gpt-5.4+ function tool silently did nothing, because routing
+   * to /v1/responses skipped the Chat Completions tool assembly entirely.
+   */
+  private buildResponsesWebSearchTool(
+    request: ChatCompletionRequest,
+  ): Record<string, unknown> | undefined {
+    const webSearchConfig = request.webSearch ?? this.config.webSearch;
+    if (!webSearchConfig) return undefined;
+
+    const tool: Record<string, unknown> = { type: "web_search" };
+    const wsConfig = typeof webSearchConfig === "object" ? webSearchConfig : {};
+    if (wsConfig.userLocation) {
+      tool.search_context_size = "medium";
+    }
+    return tool;
+  }
+
+  /**
+   * Extract url_citation annotations from Responses output items.
+   *
+   * Annotations hang off the output_text content parts rather than arriving as
+   * their own stream events, so both the streaming and non-streaming paths read
+   * them from the same place.
+   */
+  private collectResponsesCitations(
+    output: unknown,
+    startIndex = 0,
+  ): Citation[] {
+    if (!Array.isArray(output)) return [];
+    const citations: Citation[] = [];
+    let index = startIndex;
+
+    for (const item of output as any[]) {
+      if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+      for (const part of item.content as any[]) {
+        if (!Array.isArray(part?.annotations)) continue;
+        for (const annotation of part.annotations as any[]) {
+          const url = annotation?.url;
+          if (annotation?.type !== "url_citation" || !url) continue;
+          index++;
+          const domain = extractDomain(url);
+          citations.push({
+            index,
+            url,
+            title: annotation.title || domain,
+            domain,
+            favicon: domain
+              ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+              : undefined,
+          });
+        }
+      }
+    }
+    return citations;
+  }
+
   private buildResponsesTools(
     tools: ToolDefinition[],
+    includeToolSearch: boolean,
+    webSearchTool?: Record<string, unknown>,
   ): Array<Record<string, unknown>> {
     const nativeTools = tools
       .filter((tool) => tool.available !== false)
@@ -185,12 +349,42 @@ export class OpenAIAdapter implements LLMAdapter {
         defer_loading: tool.deferLoading === true,
       }));
 
-    return [{ type: "tool_search" }, ...nativeTools];
+    // The built-in tool_search tool belongs ONLY to the native-tool-search feature.
+    // Reasoning-model routing reaches this path too, and sending tool_search there
+    // would enable a capability the caller never asked for (and bill for it).
+    const builtins: Array<Record<string, unknown>> = [];
+    if (includeToolSearch) builtins.push({ type: "tool_search" });
+    if (webSearchTool) builtins.push(webSearchTool);
+
+    return [...builtins, ...nativeTools];
   }
 
   private parseResponsesResult(response: any): CompletionResult {
+    // `output_text` is a convenience getter synthesized by the openai package,
+    // NOT a wire field — a raw HTTP response has no such key. Derive the text
+    // from the documented structure (output[].content[].text) so this keeps
+    // working if the response arrives by any route other than the SDK object,
+    // and fall back to the getter when present.
+    const textFromOutput = Array.isArray(response?.output)
+      ? response.output
+          .filter((item: any) => item?.type === "message")
+          .flatMap((item: any) =>
+            Array.isArray(item.content)
+              ? item.content
+                  .filter(
+                    (part: any) =>
+                      part?.type === "output_text" &&
+                      typeof part.text === "string",
+                  )
+                  .map((part: any) => part.text as string)
+              : [],
+          )
+          .join("")
+      : "";
     const content =
-      typeof response?.output_text === "string" ? response.output_text : "";
+      textFromOutput ||
+      (typeof response?.output_text === "string" ? response.output_text : "");
+
     const toolCalls = Array.isArray(response?.output)
       ? response.output
           .filter((item: any) => item?.type === "function_call")
@@ -224,19 +418,24 @@ export class OpenAIAdapter implements LLMAdapter {
     };
   }
 
-  private async completeWithResponses(
+  private buildResponsesPayload(
     request: ChatCompletionRequest,
-  ): Promise<CompletionResult> {
-    const client = await this.getClient();
+    stream: boolean,
+  ): Record<string, unknown> {
     const openaiToolOptions = request.providerToolOptions?.openai;
     const responsesTextFormat = toOpenAIResponsesTextFormat(
       request.config?.responseFormat,
     );
+    const modelIdForPayload = request.config?.model || this.model;
     const payload = {
-      model: request.config?.model || this.model,
+      model: modelIdForPayload,
       instructions: request.systemPrompt,
       input: this.buildResponsesInput(request),
-      tools: this.buildResponsesTools(request.toolDefinitions ?? []),
+      tools: this.buildResponsesTools(
+        request.toolDefinitions ?? [],
+        request.providerToolOptions?.openai?.nativeToolSearch?.enabled === true,
+        this.buildResponsesWebSearchTool(request),
+      ),
       tool_choice:
         openaiToolOptions?.toolChoice === "required"
           ? "required"
@@ -244,11 +443,26 @@ export class OpenAIAdapter implements LLMAdapter {
             ? "auto"
             : undefined,
       parallel_tool_calls: openaiToolOptions?.parallelToolCalls,
-      temperature: request.config?.temperature ?? this.config.temperature,
+      // Reasoning models reject `temperature` outright — sending it would swap one
+      // 400 for another. isOpenAIReasoningModel already encodes that family test.
+      ...(isOpenAIReasoningModel(modelIdForPayload)
+        ? {}
+        : {
+            temperature: request.config?.temperature ?? this.config.temperature,
+          }),
       max_output_tokens: request.config?.maxTokens ?? this.config.maxTokens,
       ...(responsesTextFormat ? { text: { format: responsesTextFormat } } : {}),
-      stream: false,
+      stream,
     };
+
+    return payload;
+  }
+
+  private async completeWithResponses(
+    request: ChatCompletionRequest,
+  ): Promise<CompletionResult> {
+    const client = await this.getClient();
+    const payload = this.buildResponsesPayload(request, false);
 
     logProviderPayload("openai", "request payload", payload, request.debug);
     const response = await client.responses.create(payload);
@@ -257,42 +471,148 @@ export class OpenAIAdapter implements LLMAdapter {
     return this.parseResponsesResult(response);
   }
 
+  /**
+   * Stream from /v1/responses as real SSE.
+   *
+   * The Responses API emits semantic events rather than Chat Completions
+   * deltas, so the interesting ones are:
+   *   response.output_text.delta       — incremental assistant text
+   *   response.output_item.added       — a function_call item begins (name/id)
+   *   response.function_call_arguments.delta / .done — tool arguments
+   *   response.completed               — terminal, carries usage
+   *
+   * Tool calls are buffered and flushed as contiguous start→args→end triples
+   * because the runtime pairs action:args with the action:end that follows it.
+   */
+  private async *streamWithResponses(
+    request: ChatCompletionRequest,
+  ): AsyncGenerator<StreamEvent> {
+    const client = await this.getClient();
+    const payload = this.buildResponsesPayload(request, true);
+    logProviderPayload("openai", "request payload", payload, request.debug);
+
+    const stream = await client.responses.create(payload);
+
+    // Keyed by the output_index the API uses to demultiplex concurrent items.
+    const toolCalls = new Map<
+      number,
+      { id: string; name: string; arguments: string }
+    >();
+    let usage:
+      | {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+        }
+      | undefined;
+    const citations: Citation[] = [];
+
+    function* flushToolCalls(): Generator<StreamEvent> {
+      for (const call of toolCalls.values()) {
+        yield { type: "action:start", id: call.id, name: call.name };
+        yield { type: "action:args", id: call.id, args: call.arguments };
+        yield { type: "action:end", id: call.id, name: call.name };
+      }
+      toolCalls.clear();
+    }
+
+    for await (const event of stream as AsyncIterable<any>) {
+      if (request.signal?.aborted) break;
+      logProviderPayload("openai", "stream chunk", event, request.debug);
+
+      const index: number = event?.output_index ?? 0;
+
+      switch (event?.type) {
+        case "response.output_text.delta":
+          if (event.delta) {
+            yield { type: "message:delta", content: event.delta };
+          }
+          break;
+
+        case "response.output_item.added":
+          if (event.item?.type === "function_call") {
+            toolCalls.set(index, {
+              id: event.item.call_id ?? event.item.id ?? generateToolCallId(),
+              name: event.item.name ?? "",
+              arguments: event.item.arguments ?? "",
+            });
+          }
+          break;
+
+        case "response.function_call_arguments.delta": {
+          const existing = toolCalls.get(index);
+          if (existing && event.delta) existing.arguments += event.delta;
+          break;
+        }
+
+        case "response.function_call_arguments.done": {
+          // Authoritative full argument string — prefer it over accumulation.
+          const existing = toolCalls.get(index);
+          if (existing && typeof event.arguments === "string") {
+            existing.arguments = event.arguments;
+          }
+          break;
+        }
+
+        case "response.completed":
+        case "response.incomplete": {
+          // Citations ride on the output_text annotations rather than arriving
+          // as their own events, so harvest them from the terminal payload.
+          const found = this.collectResponsesCitations(
+            event.response?.output,
+            citations.length,
+          );
+          if (found.length > 0) citations.push(...found);
+
+          const u = event.response?.usage;
+          if (u) {
+            usage = {
+              prompt_tokens: u.input_tokens ?? 0,
+              completion_tokens: u.output_tokens ?? 0,
+              total_tokens:
+                u.total_tokens ??
+                (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+            };
+          }
+          break;
+        }
+
+        case "error":
+        case "response.failed":
+          throw new Error(
+            event.message ??
+              event.response?.error?.message ??
+              "Responses stream failed",
+          );
+      }
+    }
+
+    // Flush after the loop so a stream that ends without a terminal event
+    // still emits its tool calls rather than dropping them.
+    yield* flushToolCalls();
+
+    if (citations.length > 0) {
+      yield { type: "citation", citations: deduplicateCitations(citations) };
+    }
+
+    yield { type: "message:end" };
+    yield { type: "done", usage };
+  }
+
   async *stream(request: ChatCompletionRequest): AsyncGenerator<StreamEvent> {
     if (this.shouldUseResponsesApi(request)) {
       const messageId = generateMessageId();
       yield { type: "message:start", id: messageId };
 
       try {
-        const result = await this.completeWithResponses(request);
-
-        if (result.content) {
-          yield { type: "message:delta", content: result.content };
-        }
-
-        for (const toolCall of result.toolCalls) {
-          yield {
-            type: "action:start",
-            id: toolCall.id,
-            name: toolCall.name,
-          };
-          yield {
-            type: "action:args",
-            id: toolCall.id,
-            args: JSON.stringify(toolCall.args),
-          };
-        }
-
-        yield { type: "message:end" };
-        yield {
-          type: "done",
-          usage: result.usage
-            ? {
-                prompt_tokens: result.usage.promptTokens,
-                completion_tokens: result.usage.completionTokens,
-                total_tokens: result.usage.totalTokens,
-              }
-            : undefined,
-        };
+        // Real SSE. action:end is emitted per tool call inside — it is REQUIRED,
+        // not decorative: Runtime.processChatWithLoop invokes server-side tool
+        // handlers exclusively in its `case "action:end"` branch. Without it a
+        // server tool never executes, never lands in serverToolResults, and is
+        // then misclassified as a client tool — the runtime suspends with
+        // requiresAction and dispatches it to a browser that has no such tool,
+        // hanging the turn forever.
+        yield* this.streamWithResponses(request);
         return;
       } catch (error) {
         yield {
