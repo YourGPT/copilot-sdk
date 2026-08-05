@@ -153,6 +153,12 @@ export interface AlphaConfig {
   compactionStrategy: CompactionStrategy;
   sessionPersistence: boolean;
   contextStats: boolean;
+  // Threads
+  concurrentThreads: boolean;
+  // YourGPT session auth (replaces onCreateSession callback on the provider)
+  yourgptAuthEnabled: boolean;
+  yourgptApiKey: string;
+  yourgptWidgetUid: string;
   // Tools
   hiddenAnalytics: boolean;
   deferredSearch: boolean;

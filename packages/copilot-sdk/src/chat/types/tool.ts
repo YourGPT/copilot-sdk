@@ -96,6 +96,13 @@ export interface AgentLoopConfig {
   tools?: ToolDefinition[];
   /** Max tool executions to keep in memory (default: 100). Oldest are pruned. */
   maxExecutionHistory?: number;
+  /**
+   * Returns the current thread id for tool handler context. Called once per
+   * tool invocation. Needed by consumers that need to scope per-tool state
+   * (e.g. per-thread browser-tab pinning in the Chrome extension). When
+   * omitted, `context.threadId` is undefined in handlers.
+   */
+  getThreadId?: () => string | undefined;
 }
 
 /**

@@ -364,6 +364,7 @@ function CopilotChatBase(
     getBranchInfo,
     editMessage,
     error: chatError,
+    disposeThreadInstance,
   } = useCopilot();
 
   // Convert tool executions to the expected format
@@ -604,13 +605,21 @@ function CopilotChatBase(
     : undefined;
 
   // Build thread picker element (if enabled)
-  const { threadManager, handleSwitchThread, handleNewThread, isBusy } =
-    threadManagerResult;
+  const {
+    threadManager,
+    handleSwitchThread,
+    handleNewThread,
+    isBusy,
+    busyThreadIds,
+  } = threadManagerResult;
 
   // Handle delete thread
   const handleDeleteThread = React.useCallback(
     (threadId: string) => {
       const isCurrentThread = threadManager.currentThreadId === threadId;
+      // Abort any in-flight stream for this thread and evict the backing chat
+      // instance. No-op when concurrentThreads is disabled.
+      disposeThreadInstance(threadId);
       threadManager.deleteThread(threadId);
 
       // If deleting the current thread, clear messages and show welcome screen
@@ -618,7 +627,7 @@ function CopilotChatBase(
         handleNewThread();
       }
     },
-    [threadManager, handleNewThread],
+    [threadManager, handleNewThread, disposeThreadInstance],
   );
 
   const threadPickerElement =
@@ -676,6 +685,7 @@ function CopilotChatBase(
       currentThreadId={threadManager.currentThreadId}
       onSwitchThread={isPersistenceEnabled ? handleSwitchThread : undefined}
       isThreadBusy={isBusy}
+      busyThreadIds={busyThreadIds}
       // Branching (auto-wired from context)
       getBranchInfo={getBranchInfo}
       onSwitchBranch={switchBranch}

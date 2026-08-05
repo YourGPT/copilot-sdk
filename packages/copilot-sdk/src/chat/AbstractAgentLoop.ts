@@ -399,9 +399,12 @@ export class AbstractAgentLoop implements AgentLoopActions {
         throw new Error("Tool execution cancelled");
       }
 
-      // Pass signal and approvalData to handler via context
+      // Pass signal, threadId, and approvalData to handler via context.
+      // threadId lets handlers scope per-run state (e.g. per-thread tab
+      // pinning when multiple threads stream concurrently).
       const result = await tool.handler(toolCall.args, {
         signal: this.abortController?.signal,
+        threadId: this.config.getThreadId?.(),
         data: { toolCallId: toolCall.id },
         approvalData,
       });
