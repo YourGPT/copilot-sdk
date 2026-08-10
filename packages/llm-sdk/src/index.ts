@@ -51,6 +51,9 @@ export type {
   ImagePart,
   FilePart,
 
+  // Content Parts
+  AudioPart,
+
   // Tools
   Tool,
   ToolContext,
@@ -159,6 +162,9 @@ export type {
   LLMAdapter,
   ChatCompletionRequest,
   AdapterFactory,
+  ResponseRequest,
+  ResponseResult,
+  McpServerConfig,
 } from "./adapters/base";
 
 // Provider types (no implementations - use subpath imports)

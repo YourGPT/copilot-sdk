@@ -179,8 +179,34 @@ function messageToGeminiContent(msg: Message): GeminiContent | null {
     return { role: "user", parts };
   }
 
-  // Add text content
-  if (msg.content) {
+  // Handle content as array of parts (e.g. input_audio + text from OpenAI format)
+  if (Array.isArray(msg.content)) {
+    for (const part of msg.content as Array<{
+      type: string;
+      text?: string;
+      input_audio?: { data: string; format: string };
+    }>) {
+      if (part.type === "text" && part.text) {
+        parts.push({ text: part.text });
+      } else if (part.type === "input_audio" && part.input_audio) {
+        const mimeMap: Record<string, string> = {
+          mp3: "audio/mp3",
+          wav: "audio/wav",
+          ogg: "audio/ogg",
+          webm: "audio/webm",
+          m4a: "audio/mp4",
+          flac: "audio/flac",
+        };
+        parts.push({
+          inlineData: {
+            mimeType: mimeMap[part.input_audio.format] || "audio/mp3",
+            data: part.input_audio.data,
+          },
+        });
+      }
+    }
+  } else if (msg.content) {
+    // Add text content
     parts.push({ text: msg.content });
   }
 

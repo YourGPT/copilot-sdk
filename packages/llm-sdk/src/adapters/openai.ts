@@ -10,6 +10,8 @@ import type {
   LLMAdapter,
   ChatCompletionRequest,
   CompletionResult,
+  ResponseRequest,
+  ResponseResult,
 } from "./base";
 import {
   buildOpenAITokenParams,
@@ -1036,6 +1038,73 @@ export class OpenAIAdapter implements LLMAdapter {
         : undefined,
       rawResponse: response as Record<string, unknown>,
     };
+  }
+
+  /**
+   * Responses API — MCP tools + reasoning + structured output via OpenAI /v1/responses
+   */
+  async respond(request: ResponseRequest): Promise<ResponseResult> {
+    const client = await this.getClient();
+
+    const tools: Array<Record<string, unknown>> = (
+      request.mcpServers ?? []
+    ).map((mcp) => ({
+      type: "mcp",
+      server_label: mcp.server_label,
+      server_url: mcp.server_url,
+      ...(mcp.headers ? { headers: mcp.headers } : {}),
+      ...(mcp.allowed_tools ? { allowed_tools: mcp.allowed_tools } : {}),
+      require_approval: mcp.require_approval ?? "never",
+    }));
+
+    const payload: Record<string, unknown> = {
+      model: this.model,
+      input: [
+        {
+          role: "developer",
+          content: [{ type: "input_text", text: request.prompt }],
+        },
+      ],
+      ...(tools.length ? { tools } : {}),
+      ...(request.reasoningEffort
+        ? { reasoning: { effort: request.reasoningEffort, summary: "auto" } }
+        : {}),
+      ...(request.outputSchema
+        ? {
+            text: {
+              format: {
+                type: "json_schema",
+                name: request.outputSchema.name,
+                schema: request.outputSchema.schema,
+                strict: true,
+              },
+            },
+          }
+        : {}),
+      store: false,
+    };
+
+    const response = await client.responses.create(payload);
+
+    const output: Array<{
+      type: string;
+      content?: Array<{ type: string; text?: string }>;
+    }> = response.output ?? [];
+    const messageItem = output.find((item) => item.type === "message");
+    const text =
+      messageItem?.content?.find((c) => c.type === "output_text")?.text ?? "";
+
+    const usage = response.usage
+      ? {
+          prompt_tokens: response.usage.input_tokens ?? 0,
+          completion_tokens: response.usage.output_tokens ?? 0,
+          total_tokens:
+            (response.usage.input_tokens ?? 0) +
+            (response.usage.output_tokens ?? 0),
+        }
+      : undefined;
+
+    return { text, usage };
   }
 }
 
