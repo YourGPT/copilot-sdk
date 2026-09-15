@@ -32,7 +32,7 @@ export interface MessageListProps {
  * If no children are provided, renders all messages with the default SDK layout.
  */
 export function MessageList({ children, className }: MessageListProps) {
-  const { messages, registeredTools } = useCopilotChatContext();
+  const { messages, registeredTools, rawHtml } = useCopilotChatContext();
 
   return (
     <div className={className}>
@@ -51,6 +51,7 @@ export function MessageList({ children, className }: MessageListProps) {
             userAvatar={{ fallback: "U" }}
             assistantAvatar={{ fallback: "AI" }}
             registeredTools={registeredTools}
+            markdown={rawHtml ? { rawHtml } : undefined}
             isLastMessage={index === messages.length - 1}
           />
         );

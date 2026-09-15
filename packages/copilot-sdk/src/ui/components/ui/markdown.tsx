@@ -38,19 +38,66 @@ type RemarkRehypeOptions = NonNullable<StreamdownProps["remarkRehypeOptions"]>;
 type HtmlHandler = NonNullable<
   NonNullable<RemarkRehypeOptions["handlers"]>["html"]
 >;
+type HastContent = Exclude<ReturnType<HtmlHandler>, undefined | unknown[]>;
 
-const htmlAsText: HtmlHandler = (state, node) => {
+// mdast parents whose children are flow (block) content. An `html` node under one of these is
+// a block-level HTML node; anywhere else (paragraph, heading, table cell, emphasis, link...) it
+// is inline. Listing the flow parents rather than the phrasing ones keeps the default the safe
+// one: an unknown parent is treated as inline and gets a bare text node.
+const FLOW_PARENTS = new Set([
+  "root",
+  "blockquote",
+  "listItem",
+  "footnoteDefinition",
+]);
+
+const htmlAsText: HtmlHandler = (state, node, parent) => {
+  const value = (node as { value: string }).value;
+
+  // Inline HTML already sits inside an element, so a bare text node lands in place.
+  if (parent && !FLOW_PARENTS.has(parent.type)) {
+    const text = { type: "text" as const, value };
+    state.patch(node, text);
+    return text;
+  }
+
+  // Block-level HTML is a direct child of the root (or a blockquote / list item), and the
+  // root handler does not wrap text in <p>. Left bare it would collapse onto one line under
+  // `whitespace-normal` and get neither paragraph spacing nor the streaming caret. Wrap it
+  // and turn its newlines into <br> so a multi-line snippet still reads as typed.
+  // (Indentation still collapses; only <pre> would keep it, and Streamdown treats <pre> as a
+  // code block.)
+  const children: HastContent[] = [];
+  value.split("\n").forEach((line, i) => {
+    if (i > 0) {
+      children.push({
+        type: "element",
+        tagName: "br",
+        properties: {},
+        children: [],
+      });
+    }
+    children.push({ type: "text", value: line });
+  });
   const result = {
-    type: "text" as const,
-    value: (node as { value: string }).value,
+    type: "element" as const,
+    tagName: "p",
+    properties: {},
+    children,
   };
   state.patch(node, result);
   return result;
 };
 
-const HTML_AS_TEXT = {
-  handlers: { html: htmlAsText },
-} satisfies RemarkRehypeOptions;
+const HTML_AS_TEXT: RemarkRehypeOptions = Object.assign(
+  { handlers: { html: htmlAsText } } satisfies RemarkRehypeOptions,
+  // Streamdown keys its module-global processor cache by `JSON.stringify(remarkRehypeOptions)`,
+  // and JSON drops function values — so this object would serialise to `{"handlers":{}}`, the
+  // same key as any other <Streamdown> on the page that passes its own `handlers`. Whichever
+  // mounted first would supply the processor for both. remark-rehype ignores unknown options,
+  // so this marker exists only to make the cache key distinct.
+  { __csdkRawHtml: "literal" },
+);
 
 // Hoisted so the identity is stable across renders — an inline object would be a new value
 // every time and defeat Streamdown's internal memoisation.
