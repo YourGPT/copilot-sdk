@@ -1,7 +1,6 @@
 import { memo, ComponentProps } from "react";
-import { Streamdown, LinkSafetyConfig } from "streamdown";
+import { Streamdown, LinkSafetyConfig, StreamdownProps } from "streamdown";
 import { code } from "@streamdown/code";
-import remarkGfm from "remark-gfm";
 
 export type MarkdownProps = {
   children: string;
@@ -22,27 +21,40 @@ export type MarkdownProps = {
 
 // Streamdown always runs rehype-raw, so raw HTML in the markdown becomes real DOM: the
 // sanitizer then strips `<script>` outright — an assistant reply consisting of a script tag
-// renders as an EMPTY bubble — and lets things like `<input>` through as live elements, which
-// for model output is also a prompt-injection surface. Neither `skipHtml` nor `allowedTags`
-// prevents that — both act after the raw pass. The one hook that runs BEFORE it is remark, so
-// convert html nodes to text there. Fenced and inline code are code nodes, not html nodes, so
-// they are untouched.
-type MdNode = { type: string; children?: MdNode[] };
-const remarkHtmlAsText = () => (tree: MdNode) => {
-  const walk = (node: MdNode) => {
-    if (node.type === "html") {
-      node.type = "text";
-      return;
-    }
-    node.children?.forEach(walk);
+// renders as an EMPTY bubble — and rewrites the rest into whatever its allow-list permits.
+// Neither `skipHtml` nor `allowedTags` prevents that: both act AFTER the raw pass.
+//
+// The conversion from markdown (mdast) to HTML (hast) is the last point before that pass, and
+// remark-rehype exposes it as a per-node handler. Turning an `html` node into a `text` node
+// there means the raw parser never sees markup at all. Preferred over passing `remarkPlugins`:
+// that prop REPLACES Streamdown's defaults rather than merging, so every default (remark-gfm —
+// tables, strikethrough, autolinks, task lists) would have to be repeated here and kept in sync
+// with upstream forever. This hook leaves the whole default pipeline, and the rehype
+// sanitization that follows it, untouched.
+type RemarkRehypeOptions = NonNullable<StreamdownProps["remarkRehypeOptions"]>;
+// Derived from Streamdown's own prop type rather than importing mdast-util-to-hast directly:
+// that package is a transitive dependency here, so naming it would add coupling (and a version
+// to keep in step) for two parameter types.
+type HtmlHandler = NonNullable<
+  NonNullable<RemarkRehypeOptions["handlers"]>["html"]
+>;
+
+const htmlAsText: HtmlHandler = (state, node) => {
+  const result = {
+    type: "text" as const,
+    value: (node as { value: string }).value,
   };
-  walk(tree);
+  state.patch(node, result);
+  return result;
 };
 
-// remarkGfm must be repeated here: Streamdown REPLACES its default remarkPlugins with whatever
-// this prop passes (it does not merge), and that default is exactly [remarkGfm]. Omitting it
-// silently drops tables, strikethrough, autolinks and task lists from every message.
-const literalHtmlPlugins = [remarkGfm, remarkHtmlAsText];
+const HTML_AS_TEXT = {
+  handlers: { html: htmlAsText },
+} satisfies RemarkRehypeOptions;
+
+// Hoisted so the identity is stable across renders — an inline object would be a new value
+// every time and defeat Streamdown's internal memoisation.
+const PLUGINS = { code };
 
 // Normalized heading component for chat UI (same size, just bold)
 // Ignore Streamdown's className to prevent its text-3xl etc. from overriding
@@ -79,8 +91,13 @@ function MarkdownComponent({
   return (
     <div className={className}>
       <Streamdown
-        plugins={{ code }}
-        remarkPlugins={rawHtml === "literal" ? literalHtmlPlugins : undefined}
+        // Remount when the policy flips. Streamdown memoises its rendered elements by source
+        // POSITION, and switching `rawHtml` leaves every position unchanged — so without a new
+        // key the already-rendered output survives the switch (literal text stays literal after
+        // switching to "render", and vice versa) until the message text itself changes.
+        key={rawHtml}
+        plugins={PLUGINS}
+        remarkRehypeOptions={rawHtml === "literal" ? HTML_AS_TEXT : undefined}
         isAnimating={isStreaming}
         components={headingComponents}
         linkSafety={linkSafety}

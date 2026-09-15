@@ -132,6 +132,8 @@ type DefaultMessageProps = {
   showUserAvatar?: boolean;
   userMessageClassName?: string;
   assistantMessageClassName?: string;
+  /** Markdown rendering policy — see ChatProps["markdown"]. */
+  markdown?: { rawHtml?: "render" | "literal" };
   /** Font size variant: 'sm' (14px), 'base' (16px), 'lg' (18px) */
   size?: "sm" | "base" | "lg";
   /** Whether this is the last message (for streaming state) */
@@ -208,6 +210,7 @@ export function DefaultMessage({
   showUserAvatar = false,
   userMessageClassName,
   assistantMessageClassName,
+  markdown,
   size = "sm",
   isLastMessage = false,
   isLoading = false,
@@ -497,6 +500,7 @@ export function DefaultMessage({
                     <MessageContent
                       className={cn("px-4 py-2")}
                       markdown
+                      rawHtml={markdown?.rawHtml}
                       size={size}
                     >
                       {message.content}
@@ -689,6 +693,7 @@ export function DefaultMessage({
                     assistantMessageClassName,
                   )}
                   markdown
+                  rawHtml={markdown?.rawHtml}
                   size={size}
                 >
                   {cleanContent}

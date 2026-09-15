@@ -547,6 +547,8 @@ function ChatComponent({
   citations,
   // Message Actions
   allowToCopyMessage = false,
+  // Markdown rendering policy
+  markdown,
   // Custom rendering
   messageView,
   renderMessage,
@@ -1137,6 +1139,7 @@ function ChatComponent({
                             assistantMessageClassName={
                               classNames.assistantMessage
                             }
+                            markdown={markdown}
                             size={fontSize}
                             isLastMessage={isLastMessage}
                             isLoading={isLoading}

@@ -332,6 +332,18 @@ export type ChatProps = {
     | "loading-dots";
   /** Font size for messages: 'sm' (14px), 'base' (16px), 'lg' (18px) */
   fontSize?: "sm" | "base" | "lg";
+  /**
+   * Markdown rendering policy, applied to every message this chat renders.
+   *
+   * `rawHtml` decides what happens to raw HTML in message text:
+   * - `"literal"` (default) shows it as typed — a chat surface shows text, and under
+   *   `"render"` a reply that is just a `<script>` tag renders as an empty bubble.
+   * - `"render"` parses it into elements (still sanitized). Opt in for trusted content
+   *   that is deliberately HTML.
+   */
+  markdown?: {
+    rawHtml?: "render" | "literal";
+  };
 
   // === Attachments ===
   /** Maximum file size in bytes (default: 5MB) */

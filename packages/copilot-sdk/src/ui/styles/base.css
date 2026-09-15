@@ -60,9 +60,12 @@
   }
 }
 
-/* Links inside user message bubble — override link color for visibility on primary background */
+/* Links inside user message bubble — override link color for visibility on primary background.
+   `--primary-foreground` is a COMPLETE colour (`hsl(0 0% 98%)`, or `oklch(...)` in some consumer
+   themes), so it cannot be re-wrapped in `hsl()` — that yields `hsl(hsl(...))` and the whole
+   declaration is dropped, leaving links the default blue on the primary background. */
 .csdk-message-user {
-  --csdk-link-color: hsl(var(--primary-foreground) / 0.9);
+  --csdk-link-color: color-mix(in oklab, var(--primary-foreground) 90%, transparent);
 }
 
 /* Message entrance animation — fires on React DOM mount via @starting-style.
@@ -301,56 +304,67 @@
   color: hsl(var(--muted-foreground));
 }
 
-/* ── Streamdown code block overrides ──────────────────────────────────────────
- * @streamdown/code injects hardcoded Tailwind classes (bg-sidebar, bg-background)
- * which can conflict with the host app's theme. We override them here using
- * SDK-scoped CSS variables so consumers can customise via --csdk-code-* vars.
+/* ── Streamdown code block surface ───────────────────────────────────────────
+ * A code block is its own surface: one background/foreground pair, the same in every
+ * message, independent of the bubble around it. Deriving it from the bubble instead put
+ * light syntax-theme tokens on a light body inside the (dark-text-on-primary) user bubble.
+ *
+ * Two things make this need more than plain declarations:
+ *
+ * 1. `@streamdown/code` sets the BODY's colours INLINE — `background-color: transparent;
+ *    color: inherit` before highlighting resolves, then the syntax theme's own pair after.
+ *    An inline style outranks every selector regardless of specificity, so only those
+ *    body declarations are `!important`. Nothing else here is: the wrapper's inline style
+ *    carries no colour (just `content-visibility`/`contain-intrinsic-size`) and its border
+ *    comes from the class `border-border` (0,1,0), which the selectors below already beat
+ *    at 0,2,0 — as the un-forced `code-block-header` rule demonstrates. Keep it that way,
+ *    so a consumer's plain override still wins wherever it can.
+ *    Token spans are deliberately NOT forced: they carry the syntax colours we want.
+ *
+ * 2. Token colours ship as a light/dark pair — the light one inline, the dark one in
+ *    `--shiki-dark` — switched by Tailwind utilities that live in streamdown's own bundle.
+ *    A consumer's `@source` does not scan that bundle (under pnpm it has no stable path to
+ *    point at), so those classes are never generated and dark mode kept light tokens. The
+ *    `.dark` rules at the end do that switch in plain CSS.
+ *
+ * Customisation: override `--csdk-code-*` anywhere above the message (`:root`, a chat
+ * wrapper, a theme class). They are READ here and never assigned on SDK elements, so an
+ * inherited value always wins. Defaults use `color-mix()` rather than `hsl(var(--token) / a)`
+ * because the tokens are COMPLETE colours (`--muted: hsl(240 4.8% 95.9%)`, and `oklch(...)`
+ * in some consumer themes) — re-wrapping one in `hsl()` yields `hsl(hsl(...))`, which is
+ * invalid and drops the declaration entirely.
  * --------------------------------------------------------------------------- */
 
 .csdk-message-content [data-streamdown="code-block"] {
-  background: var(--csdk-code-bg, hsl(var(--muted)));
-  border-color: var(--csdk-code-border, hsl(var(--border)));
+  background: var(--csdk-code-bg, var(--muted));
+  border-color: var(--csdk-code-border, var(--border));
   border-radius: var(--csdk-code-radius, 0.5rem);
 }
 
 .csdk-message-content [data-streamdown="code-block-body"] {
-  background: var(--csdk-code-body-bg, hsl(var(--card)));
-  border-color: var(--csdk-code-border, hsl(var(--border)));
-  /* The body gets a card background above, so its text must be card text too. Without this
-     it inherits the bubble colour — white on white inside the user bubble, which rendered
-     code blocks there as an empty box (the header was readable only because it sets its own
-     colour below). Highlighting is async, so this is also what shows before tokens arrive. */
-  color: var(--csdk-code-body-fg, hsl(var(--card-foreground)));
-}
-
-/* Inside the user bubble, derive the code colours from the bubble's own pair rather than
-   the card tokens: body = bubble text colour, text = bubble colour. Those two always contrast
-   with each other, in every theme — whereas card-foreground is light in dark mode and would
-   land on a light body here. Consumers can still override via the --csdk-code-* variables. */
-.csdk-message-user {
-  --csdk-code-body-bg: hsl(var(--primary-foreground) / 0.92);
-  --csdk-code-body-fg: hsl(var(--primary));
-  --csdk-code-bg: hsl(var(--primary-foreground) / 0.16);
-  --csdk-code-border: hsl(var(--primary-foreground) / 0.25);
+  /* These two are the only inline-styled properties on the <pre>, hence !important. */
+  background: var(--csdk-code-body-bg, var(--card)) !important;
+  /* Beats the inline `color: inherit` (pre-highlight) and gives unhighlighted code —
+     plain-text blocks, or any block whose grammar failed to load — a readable colour. */
+  color: var(--csdk-code-body-fg, var(--card-foreground)) !important;
+  /* The <pre> itself draws no border — the wrapper does — so this needs no !important. */
+  border-color: var(--csdk-code-border, var(--border));
 }
 
 .csdk-message-content [data-streamdown="code-block-header"] {
-  color: hsl(var(--muted-foreground));
+  color: var(--csdk-code-header-fg, var(--muted-foreground));
 }
 
-/* Dark-mode token colours. Streamdown highlights with a light/dark theme pair: each token
-   span carries the LIGHT colour inline and the dark one in `--shiki-dark` (bg likewise in
-   `--shiki-dark-bg`), then relies on the Tailwind utilities `dark:text-(--shiki-dark)!` /
-   `dark:bg-(--shiki-dark-bg)!` to switch. Those classes are in streamdown's bundle, which a
-   consumer's `@source` does not scan (and under pnpm the package is not even at a stable path
-   to point at), so they are never generated — leaving light-theme token colours on the dark
-   body we force above. Equivalent plain CSS here, keyed on the same `.dark` the rest of this
-   file uses, so it works with no Tailwind cooperation. Scoped to spans that actually carry the
-   variable so line-wrapper spans and unhighlighted (plain) code keep the body colour. */
-.dark .csdk-message-content [data-streamdown="code-block-body"] span[style*="--shiki-dark"] {
+/* Dark-mode token colours — see (2) above. Scoped to spans that actually carry the variable,
+   so line-wrapper spans and unhighlighted code keep the body colour set above.
+   The trailing colon matters: `*=` is a plain substring match, so `"--shiki-dark"` alone also
+   matches `--shiki-dark-bg`, and a span carrying only a background highlight would get
+   `color: var(--shiki-dark)` — unset there, so it would drop to the initial colour instead of
+   inheriting the body's. Matching `"--shiki-dark:"` keeps the two rules disjoint. */
+.dark .csdk-message-content [data-streamdown="code-block-body"] span[style*="--shiki-dark:"] {
   color: var(--shiki-dark) !important;
 }
-.dark .csdk-message-content [data-streamdown="code-block-body"] span[style*="--shiki-dark-bg"] {
+.dark .csdk-message-content [data-streamdown="code-block-body"] span[style*="--shiki-dark-bg:"] {
   background-color: var(--shiki-dark-bg) !important;
 }
 
