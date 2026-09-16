@@ -63,10 +63,20 @@ const htmlAsText: HtmlHandler = (state, node, parent) => {
 
   // Block-level HTML is a direct child of the root (or a blockquote / list item), and the
   // root handler does not wrap text in <p>. Left bare it would collapse onto one line under
-  // `whitespace-normal` and get neither paragraph spacing nor the streaming caret. Wrap it
+  // `whitespace-normal` and get neither block spacing nor the streaming caret. Wrap it
   // and turn its newlines into <br> so a multi-line snippet still reads as typed.
   // (Indentation still collapses; only <pre> would keep it, and Streamdown treats <pre> as a
   // code block.)
+  //
+  // A <div>, NOT a <p>: Streamdown renders `p` through a memoised MarkdownParagraph whose
+  // comparator only looks at the node's SOURCE POSITION. Replacing the message with a string
+  // of the SAME LENGTH leaves every position identical, so the paragraph keeps rendering the
+  // previous text — `<div>alpha</div>` → `<div>bravo</div>` did not update. `div` has no such
+  // component override, so it re-renders on content change like any other element.
+  //
+  // Spacing still works: Streamdown's block container applies `space-y-4` to its children, so
+  // this div is spaced like any other block. (It carries no attributes — the sanitizer that
+  // runs after this strips `style` and `class` from generated nodes alike.)
   const children: HastContent[] = [];
   value.split("\n").forEach((line, i) => {
     if (i > 0) {
@@ -81,7 +91,7 @@ const htmlAsText: HtmlHandler = (state, node, parent) => {
   });
   const result = {
     type: "element" as const,
-    tagName: "p",
+    tagName: "div",
     properties: {},
     children,
   };
