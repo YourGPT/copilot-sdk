@@ -407,6 +407,40 @@ If no `MessageActions` children are declared, the chat UI is identical to before
 
 ---
 
+## Markdown Rendering
+
+Message text is rendered as markdown. Raw HTML inside it is shown **as text** by default — a
+chat surface displays what was written, and a model asked for a snippet often returns tags
+unfenced.
+
+```tsx
+// Default — <script>alert(1)</script> is displayed, character for character
+<CopilotChat />
+
+// Opt in to parsing HTML into elements (still sanitized)
+<CopilotChat markdown={{ rawHtml: "render" }} />
+```
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `markdown.rawHtml` | `"literal"` \| `"render"` | `"literal"` | How raw HTML in message text is treated |
+
+The policy applies to user and assistant messages alike. Markdown itself is unaffected either
+way — headings, lists, tables, links and fenced code blocks render normally, and fenced code is
+never touched by this setting.
+
+<Callout type="warn">
+**Behaviour change.** Raw HTML was previously parsed into elements. Under that behaviour the
+sanitizer dropped anything outside its allow-list, so an assistant reply consisting only of a
+`<script>` tag rendered as an empty bubble. If your integration deliberately displays trusted
+HTML, set `markdown={{ rawHtml: "render" }}` to restore the previous behaviour.
+</Callout>
+
+To set the policy for one message rather than the whole chat, pass `rawHtml` to `MessageContent`
+or `Markdown` directly.
+
+---
+
 ## Next Steps
 
 - [Customizations](/docs/customizations) - Create custom themes, CSS classes, branding
