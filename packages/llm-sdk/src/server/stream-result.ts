@@ -190,7 +190,9 @@ export class StreamResult {
       ...options?.headers,
     };
 
-    return new Response(createEventStream(this.generator), { headers });
+    return new Response(createEventStream(this.generator, options), {
+      headers,
+    });
   }
 
   /**

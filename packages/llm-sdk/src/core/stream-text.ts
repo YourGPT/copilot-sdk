@@ -1,5 +1,8 @@
 import { resolveToolOutput } from "./tool-output";
-import type { ProviderMetadata } from "./openai-responses";
+import {
+  responseReplayMetadata,
+  type ProviderMetadata,
+} from "./openai-responses";
 /**
  * streamText - Stream text from a language model
  *
@@ -163,7 +166,7 @@ export async function streamText(
           content: stepText || null,
           ...(toolCalls.length ? { toolCalls } : {}),
           ...(stepProviderMetadata
-            ? { providerMetadata: stepProviderMetadata }
+            ? { providerMetadata: responseReplayMetadata(stepProviderMetadata) }
             : {}),
         },
       ];

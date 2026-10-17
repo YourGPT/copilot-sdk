@@ -836,27 +836,33 @@ export type AnthropicMessageContent =
 
 /**
  * Anthropic expects system instructions outside the conversation messages.
- * Keep the explicit prompt first, then system messages in their original order.
+ * Keep supported text in order. Legacy proxy inputs may contain null or non-text
+ * blocks; ignore those rather than turning an otherwise valid chat into an error.
  */
 export function extractAnthropicSystemPrompt(
   messages: ReadonlyArray<{ role?: unknown; content?: unknown }>,
   systemPrompt?: string,
 ): string {
-  const parts: string[] = systemPrompt ? [systemPrompt] : [];
+  const explicit = typeof systemPrompt === "string" ? systemPrompt : "";
+  const parts: string[] = explicit ? [explicit] : [];
   for (const message of messages) {
     if (message.role !== "system") continue;
-    if (typeof message.content === "string") {
-      if (message.content) parts.push(message.content);
-    } else if (Array.isArray(message.content)) {
-      for (const block of message.content) {
-        if (block?.type !== "text" || typeof block.text !== "string") {
-          throw new TypeError("Anthropic system messages must contain text.");
-        }
-        if (block.text) parts.push(block.text);
-      }
-    } else {
-      throw new TypeError("Anthropic system messages must contain text.");
-    }
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .filter(
+                (block) =>
+                  block?.type === "text" && typeof block.text === "string",
+              )
+              .map((block) => block.text)
+              .filter(Boolean)
+              .join("\n")
+          : "";
+    // Deduplicate only the two ways of supplying the same explicit prompt.
+    // Repeated message-only instructions retain the caller's intended order.
+    if (text && text !== explicit) parts.push(text);
   }
   return parts.join("\n");
 }

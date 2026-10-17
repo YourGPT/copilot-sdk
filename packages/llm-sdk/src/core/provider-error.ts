@@ -1,5 +1,14 @@
 import type { ErrorEvent } from "./stream-events";
 
+/** A malformed upstream response is a provider failure, not invalid user input. */
+export function invalidProviderResponse(message: string): Error {
+  return Object.assign(new Error(message), {
+    name: "InvalidProviderResponseError",
+    status: 502,
+    code: "INVALID_PROVIDER_RESPONSE",
+  });
+}
+
 /** Keep machine-readable provider fields without serializing SDK request objects. */
 export function providerErrorEvent(error: unknown, code: string): ErrorEvent {
   const details = (error ?? {}) as Record<string, unknown>;

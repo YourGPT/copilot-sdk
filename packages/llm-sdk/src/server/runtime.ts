@@ -1,3 +1,4 @@
+import { responseReplayMetadata } from "../core/openai-responses";
 import { resolveToolOutput, type ToolModelOutput } from "../core/tool-output";
 import type {
   Message,
@@ -1092,7 +1093,10 @@ export class Runtime {
           break;
 
         case "message:end":
-          yield event; // Natural order — always arrives after action:end from every provider
+          yield {
+            ...event,
+            providerMetadata: responseReplayMetadata(event.providerMetadata),
+          }; // Natural order — always arrives after action:end from every provider
           break;
 
         case "message:delta":
@@ -1236,7 +1240,9 @@ export class Runtime {
           return; // Exit on error
 
         case "done":
-          adapterProviderMetadata = event.providerMetadata;
+          adapterProviderMetadata = responseReplayMetadata(
+            event.providerMetadata,
+          );
           // Capture usage from adapter's done event (for onFinish callback)
           // We don't yield done yet - we need to check for tool calls first
           if (event.usage) {
@@ -1624,7 +1630,7 @@ export class Runtime {
         }
         yield {
           type: "message:end",
-          providerMetadata: result.providerMetadata,
+          providerMetadata: responseReplayMetadata(result.providerMetadata),
         } as StreamEvent;
 
         // Check for tool calls
@@ -1771,7 +1777,11 @@ export class Runtime {
               role: "assistant",
               content: result.content || null,
               ...(result.providerMetadata
-                ? { providerMetadata: result.providerMetadata }
+                ? {
+                    providerMetadata: responseReplayMetadata(
+                      result.providerMetadata,
+                    ),
+                  }
                 : {}),
               tool_calls: result.toolCalls.map((tc) => ({
                 id: tc.id,
@@ -1818,7 +1828,11 @@ export class Runtime {
               role: "assistant",
               content: result.content || null,
               ...(result.providerMetadata
-                ? { providerMetadata: result.providerMetadata }
+                ? {
+                    providerMetadata: responseReplayMetadata(
+                      result.providerMetadata,
+                    ),
+                  }
                 : {}),
               tool_calls: result.toolCalls.map((tc) => ({
                 id: tc.id,
@@ -1865,7 +1879,11 @@ export class Runtime {
               role: "assistant",
               content: result.content || null,
               ...(result.providerMetadata
-                ? { providerMetadata: result.providerMetadata }
+                ? {
+                    providerMetadata: responseReplayMetadata(
+                      result.providerMetadata,
+                    ),
+                  }
                 : {}),
               tool_calls: clientToolCalls.map((tc) => ({
                 id: tc.id,
@@ -1907,7 +1925,11 @@ export class Runtime {
             role: "assistant" as const,
             content: result.content,
             ...(result.providerMetadata
-              ? { providerMetadata: result.providerMetadata }
+              ? {
+                  providerMetadata: responseReplayMetadata(
+                    result.providerMetadata,
+                  ),
+                }
               : {}),
           });
         }

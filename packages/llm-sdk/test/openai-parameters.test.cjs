@@ -679,7 +679,8 @@ test("malformed Responses arguments are not converted into executable empty argu
   });
   await assert.rejects(
     run("runtime-complete", "gpt-6-luna", {}, { tools: true }),
-    SyntaxError,
+    (error) =>
+      error.status === 502 && error.code === "INVALID_PROVIDER_RESPONSE",
   );
   reply = () =>
     chunks([

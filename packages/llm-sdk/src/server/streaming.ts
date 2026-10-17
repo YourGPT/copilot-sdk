@@ -1,4 +1,5 @@
 import type { StreamEvent } from "../core/stream-events";
+import { responseReplayMetadata } from "../core/openai-responses";
 
 /**
  * Node.js ServerResponse interface (minimal subset for type safety)
@@ -37,7 +38,19 @@ export function createTextStreamHeaders(): Record<string, string> {
  * Format event as SSE data
  */
 export function formatSSEData(event: StreamEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
+  const safeEvent = { ...event };
+  if ("providerMetadata" in safeEvent)
+    safeEvent.providerMetadata = responseReplayMetadata(
+      safeEvent.providerMetadata,
+    );
+  if (safeEvent.type === "done" && safeEvent.messages)
+    safeEvent.messages = safeEvent.messages.map((message) => ({
+      ...message,
+      ...(message.providerMetadata
+        ? { providerMetadata: responseReplayMetadata(message.providerMetadata) }
+        : {}),
+    }));
+  return `data: ${JSON.stringify(safeEvent)}\n\n`;
 }
 
 /**
@@ -45,6 +58,7 @@ export function formatSSEData(event: StreamEvent): string {
  */
 export function createEventStream(
   generator: AsyncGenerator<StreamEvent>,
+  options?: { includeUsage?: boolean },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
 
@@ -52,7 +66,12 @@ export function createEventStream(
     async start(controller) {
       try {
         for await (const event of generator) {
-          const data = formatSSEData(event);
+          let clientEvent = event;
+          if (event.type === "done" && !options?.includeUsage) {
+            const { usage: _usage, ...withoutUsage } = event;
+            clientEvent = withoutUsage;
+          }
+          const data = formatSSEData(clientEvent);
           controller.enqueue(encoder.encode(data));
         }
       } catch (error) {

@@ -28,10 +28,17 @@ const model = openai(modelId, {
 });
 const checks = [];
 const observedOutput = [];
-function inspectState(metadata) {
+function inspectState(metadata, replay = false) {
   const r = metadata.openai.response;
-  assert.ok(r.id);
-  assert.equal(r.status, "completed");
+  if (replay) {
+    assert.equal(r.usage, undefined);
+    assert.equal(r.model, undefined);
+    assert.equal(r.status, undefined);
+    assert.ok(!JSON.stringify(r).includes('"logprobs"'));
+  } else {
+    assert.ok(r.id);
+    assert.equal(r.status, "completed");
+  }
   assert.ok(r.output.length);
   observedOutput.push({
     model: r.model,
@@ -131,7 +138,8 @@ async function resultOf(streaming, params) {
       assert.match(first.text, /RIVET-73/);
       const history = JSON.parse(JSON.stringify(first.response.messages));
       for (const message of history)
-        if (message.providerMetadata) inspectState(message.providerMetadata);
+        if (message.providerMetadata)
+          inspectState(message.providerMetadata, true);
       const next = await resultOf(streaming, {
         model,
         messages: [
@@ -193,7 +201,8 @@ async function resultOf(streaming, params) {
       assert.equal(executions, 1);
       assert.match(result.text, /COMET-81/);
       for (const message of result.messages)
-        if (message.providerMetadata) inspectState(message.providerMetadata);
+        if (message.providerMetadata)
+          inspectState(message.providerMetadata, true);
     });
     await check(
       `${mode}: stored previous_response_id continuation`,

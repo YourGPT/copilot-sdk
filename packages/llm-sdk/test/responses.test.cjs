@@ -41,6 +41,7 @@ const reasoning = {
   summary: [{ type: "summary_text", text: "Summary" }],
   encrypted_content: "opaque-complete-state",
 };
+const replayReasoning = { ...reasoning, summary: [] };
 const message = (text) => ({
   type: "message",
   id: "msg_1",
@@ -164,6 +165,124 @@ const metadataOf = (result) =>
     ? result.find((item) => ["done", "finish"].includes(item.type))
         .providerMetadata
     : result.providerMetadata;
+
+test("native replay retains tool schemas with diagnostic-like property names", async () => {
+  const item = {
+    type: "tool_search_output",
+    id: "search1",
+    call_id: "searchcall1",
+    tools: [
+      {
+        type: "function",
+        name: "inspect",
+        parameters: {
+          type: "object",
+          properties: {
+            usage: { type: "string" },
+            metadata: { type: "object" },
+            logprobs: { type: "number" },
+          },
+        },
+      },
+    ],
+  };
+  reply = (_, { body }) =>
+    body.stream
+      ? events(response([item, message("ok")]))
+      : response([item, message("ok")]);
+  const runtime = createRuntime({
+    provider: createOpenAI({ apiKey: "fixture", api: "responses" }),
+    model: "gpt-6-luna",
+  });
+  const result = await runtime.chat({
+    messages: [{ role: "user", content: "hello" }],
+    streaming: false,
+  });
+  assert.deepEqual(
+    result.messages[0].providerMetadata.openai.response.output[0],
+    item,
+  );
+});
+
+for (const streaming of [false, true]) {
+  test(`Runtime ${streaming ? "stream" : "JSON"}: replay excludes raw provider diagnostics and nested usage`, async () => {
+    const diagnosticOutput = [
+      { ...reasoning, private_extension: "PRIVATE_DIAGNOSTIC" },
+      {
+        ...message("safe answer"),
+        private_extension: "PRIVATE_DIAGNOSTIC",
+        content: [
+          {
+            type: "output_text",
+            text: "safe answer",
+            logprobs: [{ token: "PRIVATE_DIAGNOSTIC" }],
+            annotations: [{ type: "private", text: "PRIVATE_DIAGNOSTIC" }],
+          },
+        ],
+      },
+    ];
+    reply = (_, { body }) =>
+      body.stream
+        ? events(response(diagnosticOutput))
+        : response(diagnosticOutput);
+    const runtime = createRuntime({
+      provider: createOpenAI({
+        apiKey: "fixture",
+        api: "responses",
+        responses: { store: false },
+      }),
+      model: "gpt-6-luna",
+    });
+    const result = await runtime.chat({
+      messages: [{ role: "user", content: "hello" }],
+      streaming,
+    });
+    assert.equal(result.text, "safe answer");
+    assert.equal(
+      result.usage.total_tokens,
+      19,
+      "billing usage remains on the server result",
+    );
+    const { usage: billing, events: eventList, ...clientResult } = result;
+    const serialized = JSON.stringify(clientResult);
+    assert.ok(!serialized.includes('"usage"'));
+    assert.ok(!serialized.includes("PRIVATE_DIAGNOSTIC"));
+    assert.ok(!serialized.includes('"logprobs"'));
+    assert.ok(!serialized.includes("Summary"));
+    assert.ok(
+      serialized.includes("opaque-complete-state"),
+      "encrypted replay must survive",
+    );
+    for (const event of eventList) {
+      if (event.providerMetadata) {
+        assert.ok(!JSON.stringify(event.providerMetadata).includes('"usage"'));
+        assert.ok(
+          !JSON.stringify(event.providerMetadata).includes(
+            "PRIVATE_DIAGNOSTIC",
+          ),
+        );
+      }
+    }
+    const replay = result.messages[0].providerMetadata.openai.response;
+    assert.deepEqual(Object.keys(replay), ["output", "refusals"]);
+    assert.deepEqual(replay.output[0], replayReasoning);
+    const clientSSE = await runtime
+      .stream({ messages: [{ role: "user", content: "hello" }], streaming })
+      .toResponse()
+      .text();
+    assert.ok(!clientSSE.includes('"usage"'));
+    assert.ok(!clientSSE.includes("PRIVATE_DIAGNOSTIC"));
+    assert.ok(clientSSE.includes("opaque-complete-state"));
+    const serverSSE = await runtime
+      .stream({ messages: [{ role: "user", content: "hello" }], streaming })
+      .toResponse({ includeUsage: true })
+      .text();
+    assert.ok(
+      serverSSE.includes('"usage"'),
+      "explicit raw usage remains supported",
+    );
+  });
+}
 for (const mode of modes) {
   test(`${mode}: explicit Responses without tools and lossless output metadata`, async () => {
     const result = await run(mode, {
@@ -243,8 +362,13 @@ for (const mode of modes) {
     ];
     await run(mode, {}, messages);
     assert.equal(requests[0].path, "/responses");
-    assert.deepEqual(requests[0].body.input.slice(0, 3), output);
-    assert.deepEqual(requests[0].body.input[3], {
+    assert.deepEqual(
+      requests[0].body.input.slice(0, output.length),
+      output.map((item) =>
+        item.type === "reasoning" ? { ...item, summary: [] } : item,
+      ),
+    );
+    assert.deepEqual(requests[0].body.input[output.length], {
       type: "function_call_output",
       call_id: "call_1",
       output: "done",
@@ -268,7 +392,7 @@ for (const streaming of [false, true]) {
         (item) => item.type === "function_call_output",
       );
       if (second) {
-        assert.deepEqual(body.input.slice(1, 3), [reasoning, call()]);
+        assert.deepEqual(body.input.slice(1, 3), [replayReasoning, call()]);
         assert.equal(
           body.input.filter((item) => item.type === "function_call").length,
           1,
@@ -307,7 +431,7 @@ for (const streaming of [false, true]) {
     assert.equal(history.messages.at(-1).content, "done");
     assert.deepEqual(
       history.messages[1].providerMetadata.openai.response.output,
-      [reasoning, call()],
+      [replayReasoning, call()],
     );
     if (streaming) {
       const parts = [];
@@ -327,7 +451,7 @@ for (const streaming of [false, true]) {
       assert.equal(path, "/responses");
       const second = requests.length === 2;
       if (second) {
-        assert.deepEqual(body.input.slice(1, 3), [reasoning, call()]);
+        assert.deepEqual(body.input.slice(1, 3), [replayReasoning, call()]);
         assert.equal(body.input[3].type, "function_call_output");
       }
       const result = response(second ? [message("done")] : [reasoning, call()]);
@@ -364,7 +488,7 @@ for (const streaming of [false, true]) {
     assert.equal(executions, 1);
     assert.deepEqual(
       result.messages[0].providerMetadata.openai.response.output,
-      [reasoning, call()],
+      [replayReasoning, call()],
     );
     assert.deepEqual(
       mapOutputMessages(result.messages)[0].metadata.providerMetadata,
@@ -556,7 +680,7 @@ test("adapter typed Message input retains Responses replay and additional system
     content: "Additional instructions",
   });
   assert.deepEqual(requests[0].body.input.slice(1, 3), [
-    reasoning,
+    replayReasoning,
     message("ok"),
   ]);
 });
