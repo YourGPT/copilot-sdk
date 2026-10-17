@@ -1,3 +1,4 @@
+import { responseReplayMetadata } from "./openai-responses";
 import { resolveToolOutput } from "./tool-output";
 /**
  * generateText - Generate text using a language model
@@ -86,15 +87,17 @@ export async function generateText(
     });
     throwIfAborted(signal);
 
+    const toolCalls = result.toolCalls ?? [];
+
     // Record this step
     const stepToolResults: ToolResult[] = [];
 
     // If there are tool calls, execute them
-    if (result.toolCalls && result.toolCalls.length > 0 && tools) {
-      allToolCalls.push(...result.toolCalls);
+    if (toolCalls.length > 0 && tools) {
+      allToolCalls.push(...toolCalls);
 
       // Execute each tool
-      for (const call of result.toolCalls) {
+      for (const call of toolCalls) {
         throwIfAborted(signal);
         const toolDef = tools[call.name];
         if (!toolDef) {
@@ -147,7 +150,7 @@ export async function generateText(
     // Record step
     steps.push({
       text: result.text,
-      toolCalls: result.toolCalls,
+      toolCalls,
       toolResults: stepToolResults,
       finishReason: result.finishReason,
       usage: result.usage,
@@ -158,13 +161,13 @@ export async function generateText(
     const assistantMessage: AssistantMessage = {
       role: "assistant",
       content: result.text || null,
-      ...(result.toolCalls.length ? { toolCalls: result.toolCalls } : {}),
+      ...(toolCalls.length ? { toolCalls } : {}),
       ...(result.providerMetadata
-        ? { providerMetadata: result.providerMetadata }
+        ? { providerMetadata: responseReplayMetadata(result.providerMetadata) }
         : {}),
     };
     messages = [...messages, assistantMessage];
-    if (!result.toolCalls || result.toolCalls.length === 0) break;
+    if (toolCalls.length === 0) break;
 
     // Add tool result messages
     for (const tr of stepToolResults) {

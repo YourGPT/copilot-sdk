@@ -103,6 +103,32 @@ const cases = [
     request: { messages: [user] },
     expected: "",
   },
+  {
+    name: "duplicate explicit prompt is not repeated",
+    request: {
+      systemPrompt: instruction,
+      messages: [{ role: "system", content: instruction }, user],
+    },
+    expected: instruction,
+  },
+  {
+    name: "mixed system blocks keep valid text and ignore unsupported content",
+    request: {
+      messages: [
+        {
+          role: "system",
+          content: [
+            null,
+            { type: "text", text: instruction },
+            { type: "image", data: "fixture" },
+          ],
+        },
+        { role: "system", content: null },
+        user,
+      ],
+    },
+    expected: instruction,
+  },
 ];
 
 for (const method of ["chat", "generate", "stream", "processChat"]) {
@@ -190,21 +216,24 @@ test("Anthropic empty rawMessages falls back to typed messages", async () => {
   assert.equal(requests[0].system, instruction);
 });
 
-test("Anthropic invalid system content fails instead of silently losing instructions", async () => {
-  const { adapter, requests } = harness();
-  await assert.rejects(
-    () =>
-      adapter.complete({
-        messages: [],
-        rawMessages: [
-          { role: "system", content: [{ type: "image", data: "fixture" }] },
-          user,
-        ],
-      }),
-    /Anthropic system messages must contain text/,
-  );
-  assert.equal(requests.length, 0);
-});
+for (const content of [
+  null,
+  undefined,
+  42,
+  { unexpected: true },
+  [{ type: "image", data: "fixture" }],
+  [null, { type: "text", text: 42 }],
+]) {
+  test(`Anthropic ignores unsupported system content ${JSON.stringify(content)}`, async () => {
+    const { adapter, requests } = harness();
+    await adapter.complete({
+      messages: [],
+      rawMessages: [{ role: "system", content }, user],
+    });
+    assert.equal(requests[0].system, "");
+    assert.deepEqual(requests[0].messages, [user]);
+  });
+}
 
 for (const method of ["chat", "generate"]) {
   test(`Anthropic Runtime ${method}: instructions survive tool continuation exactly once`, async () => {
