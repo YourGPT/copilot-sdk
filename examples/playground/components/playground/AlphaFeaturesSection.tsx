@@ -11,9 +11,12 @@ import {
   LayoutList,
   BarChart2,
   ChevronRight,
+  Layers,
+  KeyRound,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -222,6 +225,58 @@ export function AlphaFeaturesSection({
         checked={alphaConfig.contextStats}
         onCheckedChange={(v) => onUpdate("contextStats", v)}
       />
+
+      <div className="h-px bg-zinc-100 dark:bg-zinc-800 my-2" />
+
+      {/* Threads */}
+      <p className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+        <Layers className="w-3 h-3" /> Threads
+      </p>
+      <FeatureRow
+        id="alpha-concurrent-threads"
+        icon={Layers}
+        label="Concurrent Threads"
+        description="Each thread streams independently — switch away mid-response"
+        checked={alphaConfig.concurrentThreads}
+        onCheckedChange={(v) => onUpdate("concurrentThreads", v)}
+      />
+
+      <div className="h-px bg-zinc-100 dark:bg-zinc-800 my-2" />
+
+      {/* YourGPT Auth */}
+      <p className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+        <KeyRound className="w-3 h-3" /> YourGPT Auth
+      </p>
+      <FeatureRow
+        id="alpha-ygpt-auth"
+        icon={KeyRound}
+        label="Use yourgptConfig"
+        description="Creates sessions via YourGPT createSession API (overrides onCreateSession)"
+        checked={alphaConfig.yourgptAuthEnabled}
+        onCheckedChange={(v) => onUpdate("yourgptAuthEnabled", v)}
+      />
+      {alphaConfig.yourgptAuthEnabled && (
+        <div className="space-y-1.5 pl-8 pr-1 pb-1">
+          <Label className="text-[10px] text-zinc-500">API Key</Label>
+          <Input
+            type="password"
+            value={alphaConfig.yourgptApiKey}
+            onChange={(e) => onUpdate("yourgptApiKey", e.target.value)}
+            placeholder="ygpt_..."
+            className="h-7 text-xs"
+          />
+          <Label className="text-[10px] text-zinc-500">Widget UID</Label>
+          <Input
+            value={alphaConfig.yourgptWidgetUid}
+            onChange={(e) => onUpdate("yourgptWidgetUid", e.target.value)}
+            placeholder="wgt_..."
+            className="h-7 text-xs"
+          />
+          <p className="text-[9px] text-zinc-400">
+            Stored in localStorage. Reload chat after saving.
+          </p>
+        </div>
+      )}
 
       <div className="h-px bg-zinc-100 dark:bg-zinc-800 my-2" />
 

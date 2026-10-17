@@ -352,6 +352,23 @@ export interface CopilotProviderProps {
    * Only inline skills (source.type === "inline") are supported client-side.
    */
   skills?: SkillDefinition[];
+  /**
+   * Allow multiple threads to stream concurrently. When enabled, switching away
+   * from a thread that is still generating does NOT cancel its request — it
+   * continues in the background. You can also start a new send on a different
+   * thread while another is still streaming.
+   *
+   * When enabled:
+   *   - `useCopilot().messages/status/error` always reflect the ACTIVE thread.
+   *   - A new `busyThreadIds` set reflects every thread currently streaming.
+   *   - The provider maintains one `ReactChatWithTools` instance per thread.
+   *
+   * When `onCreateSession` is provided, it may be called concurrently for
+   * different threads — ensure each call produces a distinct session id.
+   *
+   * @default false
+   */
+  concurrentThreads?: boolean;
 }
 
 // ============================================
@@ -490,8 +507,16 @@ export interface CopilotContextValue {
    * Switch to a different thread (or start a new one).
    * Pass the session/thread ID from persistence to reuse it (no new session call),
    * or null to start a fresh thread (new session created on first sendMessage).
+   *
+   * When `concurrentThreads` is enabled on the provider, `opts.hydrateMessages`
+   * is applied when the target instance is being created fresh (not yet
+   * streaming). It is ignored if the instance already exists (which would
+   * mean a stream is in-flight or completed) to avoid clobbering state.
    */
-  setActiveThread: (id: string | null) => void;
+  setActiveThread: (
+    id: string | null,
+    opts?: { hydrateMessages?: UIMessage[]; hydrateActiveLeafId?: string },
+  ) => void;
   /**
    * Force a new session to be created on the next sendMessage.
    * Call when the current session has expired or credits are exhausted.
@@ -527,6 +552,49 @@ export interface CopilotContextValue {
    * Use useMessageMeta(messageId) for the hook API.
    */
   messageMeta: MessageMetaStore;
+
+  /**
+   * Whether concurrent-thread streaming is enabled (via the `concurrentThreads`
+   * prop on CopilotProvider). When false, the provider uses a single chat
+   * instance and inactive threads cannot stream. When true, each thread has
+   * its own instance and streams in the background on switch.
+   */
+  concurrentThreads: boolean;
+
+  /**
+   * The set of thread IDs that currently have an in-flight request
+   * (status "submitted" or "streaming"). Always empty when `concurrentThreads`
+   * is false. UI can use this to render per-thread busy indicators in a
+   * thread picker.
+   */
+  busyThreadIds: ReadonlySet<string>;
+
+  /**
+   * Reactive map of per-thread pending tool approvals. Key = thread id,
+   * value = ToolExecutions whose approvalStatus is "required". Empty when
+   * `concurrentThreads` is false. UI can use this to light up indicators
+   * on background threads that are blocked waiting for the user to approve
+   * or reject a tool — the approval card only renders on the active thread,
+   * so without this, a background thread's block is invisible.
+   */
+  pendingApprovalsByThread: ReadonlyMap<string, ToolExecution[]>;
+
+  /**
+   * Dispose the chat instance backing a given thread ID and remove it from
+   * the registry. Aborts its in-flight stream if any. Call this when a
+   * thread is deleted so its background stream doesn't keep running.
+   * No-op when `concurrentThreads` is false.
+   */
+  disposeThreadInstance: (threadId: string) => void;
+
+  /**
+   * Commit a locally-generated thread id to the currently-active pending
+   * chat instance. Used by persistence hooks (e.g. useInternalThreadManager)
+   * to make a just-started thread visible in the picker immediately, without
+   * waiting for the server to assign its session id. No-op when
+   * `concurrentThreads` is false or the active instance is not a pending slot.
+   */
+  assignLocalThreadId: (localId: string) => void;
 }
 
 // ============================================
@@ -571,6 +639,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
     optimization,
     messageHistory,
     skills,
+    concurrentThreads = false,
   } = props;
   const isThreadIdControlled = Object.prototype.hasOwnProperty.call(
     props,
@@ -636,114 +705,514 @@ export function CopilotProvider(props: CopilotProviderProps) {
   });
 
   // ============================================
-  // ChatWithTools Instance
+  // ChatWithTools Instance Registry
   // ============================================
+  //
+  // In single-thread mode (`concurrentThreads === false`, default), there is
+  // exactly one ReactChatWithTools instance stored in the registry under the
+  // key SINGLE_INSTANCE_KEY. Behavior matches pre-registry semantics.
+  //
+  // In multi-thread mode (`concurrentThreads === true`), one instance per
+  // thread id is stored in the registry. A "__pending_<n>__" slot is used for
+  // new-thread sends whose server id hasn't been assigned yet; that slot is
+  // re-keyed to the real id when onThreadChange fires on that instance.
 
+  const SINGLE_INSTANCE_KEY = "__single__";
+
+  // chatRef.current always points to the active instance; other instances (if
+  // any) are stored in instancesRef. Using `chatRef.current` everywhere below
+  // keeps the existing code path unchanged for the single-thread case.
   const chatRef = useRef<ReactChatWithTools | null>(null);
+  const instancesRef = useRef<Map<string, ReactChatWithTools>>(new Map());
+  const activeInstanceKeyRef = useRef<string>(SINGLE_INSTANCE_KEY);
+  const pendingCounterRef = useRef(0);
 
-  // Initialize chat on first render
-  // If disposed (React StrictMode), revive instead of recreate to preserve tools
+  // Provider-level shared state that every instance inherits at creation.
+  // useTool / setInlineSkills / setContext fan out to every live instance so
+  // the registry is consistent across threads. New instances created later
+  // (e.g. when a user starts a new thread) are seeded from these refs.
+  const sharedToolsRef = useRef<
+    Map<string, { tool: ToolDefinition; refCount: number }>
+  >(new Map());
+  const sharedSkillsRef = useRef<
+    Array<{
+      name: string;
+      description: string;
+      content: string;
+      strategy?: string;
+    }>
+  >([]);
+  const sharedSystemContextRef = useRef<string>("");
+
+  // React subscribers (from useSyncExternalStore) registered on a stable
+  // wrapper. Each created instance pipes its `subscribe` callbacks through
+  // this set so swapping the active instance doesn't tear React state.
+  const subscribersRef = useRef<Set<() => void>>(new Set());
+  const stableSubscribe = useMemo(
+    () => (cb: () => void) => {
+      subscribersRef.current.add(cb);
+      return () => {
+        subscribersRef.current.delete(cb);
+      };
+    },
+    [],
+  );
+
+  // Reactive set of thread ids with an in-flight request. Empty in
+  // single-thread mode.
+  const [busyThreadIds, setBusyThreadIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  const recomputeBusyThreadIds = useCallback(() => {
+    if (!concurrentThreads) return;
+    const next = new Set<string>();
+    for (const [key, inst] of instancesRef.current) {
+      // Skip internal / pre-session keys — they aren't real thread ids.
+      if (key === SINGLE_INSTANCE_KEY) continue;
+      if (key.startsWith("__pending_")) continue;
+      const s = inst.status;
+      if (s === "streaming" || s === "submitted") next.add(key);
+    }
+    setBusyThreadIds((prev) => {
+      if (prev.size === next.size) {
+        let same = true;
+        for (const id of next) {
+          if (!prev.has(id)) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return prev;
+      }
+      return next;
+    });
+  }, [concurrentThreads]);
+
+  // Reactive map of per-thread pending approvals. Built by scanning every
+  // instance in instancesRef — the only place background threads are visible.
+  const [pendingApprovalsByThread, setPendingApprovalsByThread] = useState<
+    ReadonlyMap<string, ToolExecution[]>
+  >(() => new Map());
+
+  const recomputePendingApprovalsByThread = useCallback(() => {
+    if (!concurrentThreads) return;
+    const next = new Map<string, ToolExecution[]>();
+    for (const [key, inst] of instancesRef.current) {
+      if (key === SINGLE_INSTANCE_KEY) continue;
+      if (key.startsWith("__pending_")) continue;
+      const pending = inst.toolExecutions.filter(
+        (e) => e.approvalStatus === "required",
+      );
+      if (pending.length > 0) next.set(key, pending);
+    }
+    setPendingApprovalsByThread((prev) => {
+      if (prev.size !== next.size) return next;
+      for (const [id, execs] of next) {
+        const prevExecs = prev.get(id);
+        if (!prevExecs || prevExecs.length !== execs.length) return next;
+        for (let i = 0; i < execs.length; i++) {
+          if (prevExecs[i] !== execs[i]) return next;
+        }
+      }
+      return prev;
+    });
+  }, [concurrentThreads]);
+
+  const notifyStateChange = useCallback(() => {
+    for (const cb of subscribersRef.current) cb();
+    recomputeBusyThreadIds();
+    recomputePendingApprovalsByThread();
+  }, [recomputeBusyThreadIds, recomputePendingApprovalsByThread]);
+
+  // Keep latest prop/callback values in refs so the imperative factory doesn't
+  // need a useCallback dep list the size of the universe.
+  const configRef = useRef({
+    runtimeUrl,
+    systemPrompt,
+    threadId,
+    onCreateSession,
+    yourgptConfig,
+    initialMessages,
+    streaming,
+    headers,
+    body,
+    parseError,
+    debug,
+    maxIterations,
+    maxIterationsMessage,
+    optimization,
+  });
+  configRef.current = {
+    runtimeUrl,
+    systemPrompt,
+    threadId,
+    onCreateSession,
+    yourgptConfig,
+    initialMessages,
+    streaming,
+    headers,
+    body,
+    parseError,
+    debug,
+    maxIterations,
+    maxIterationsMessage,
+    optimization,
+  };
+  const callbacksRef = useRef({ onError, onThreadChange });
+  callbacksRef.current = { onError, onThreadChange };
+
+  // Handle a thread-id assignment from a chat instance (fires after
+  // onCreateSession resolves or when the server emits thread:created).
+  // Resolves the current key by instance identity (captured string keys in
+  // closures would go stale after a re-key), re-keys pending / internal
+  // slots to the real thread id, and only propagates to top-level state if
+  // the firing instance is the active one.
+  //
+  // Multi-thread-only guard: when `concurrentThreads` is enabled AND the
+  // current key is already a non-internal (committed) id, SKIP the re-key.
+  // This preserves the stable UI thread id that was assigned locally via
+  // assignLocalThreadId before streaming started — the server's id is kept
+  // internally on chat.config.threadId for backend communication, but the
+  // registry / picker keeps the local id so the row stays stable without
+  // flicker and so deletion / switching keeps working.
+  //
+  // In single-thread mode this guard does NOT apply: every server id change
+  // (including the one after renewSession()) re-keys the registry and
+  // updates actualThreadId / the user's onThreadChange prop, matching
+  // pre-multi-thread behavior.
+  const handleInstanceThreadAssigned = useCallback(
+    (inst: ReactChatWithTools, newId: string) => {
+      let oldKey: string | undefined;
+      for (const [k, v] of instancesRef.current) {
+        if (v === inst) {
+          oldKey = k;
+          break;
+        }
+      }
+      if (oldKey === undefined) return;
+
+      const isInternalKey =
+        oldKey === SINGLE_INSTANCE_KEY || oldKey.startsWith("__pending_");
+      // In single-thread mode, always re-key and propagate. In multi-thread
+      // mode, only re-key when we're leaving an internal slot; a committed
+      // id is preserved for UI stability.
+      const shouldRekey = !concurrentThreads || isInternalKey;
+
+      if (shouldRekey && oldKey !== newId && !instancesRef.current.has(newId)) {
+        instancesRef.current.delete(oldKey);
+        instancesRef.current.set(newId, inst);
+        if (activeInstanceKeyRef.current === oldKey) {
+          activeInstanceKeyRef.current = newId;
+        }
+        if (inst === chatRef.current) {
+          debugLog("Thread/session ID assigned:", newId);
+          setActualThreadId(newId);
+          callbacksRef.current.onThreadChange?.(newId);
+        }
+      }
+      // Multi-thread + non-internal oldKey: do nothing UI-facing.
+      // chat.config.threadId was already updated by AbstractChat to `newId`
+      // so future requests hit the server's session; we just don't propagate
+      // to React state or the registry key.
+      recomputeBusyThreadIds();
+      recomputePendingApprovalsByThread();
+    },
+    [
+      concurrentThreads,
+      debugLog,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
+  );
+
+  // Create a new chat instance and register it under `key`. Wires all
+  // callbacks so per-instance events are gated on the active-instance check.
+  const createInstance = useCallback(
+    (key: string, opts?: { initialMessages?: UIMessage[] }) => {
+      const cfg = configRef.current;
+      // For keys that look like real thread ids (not pending, not single),
+      // pass the key as the initial threadId so no new session is created.
+      // For pending / single keys, fall through to the controlled threadId prop.
+      const initialThreadId =
+        key === SINGLE_INSTANCE_KEY || key.startsWith("__pending_")
+          ? cfg.threadId
+          : key;
+      // Surrogate holder so the getThreadId closure can read back the
+      // instance's registry key without searching the whole map every tool
+      // call. It's updated in-place whenever the key changes (pending →
+      // local id, or during handleInstanceThreadAssigned).
+      const inst = new ReactChatWithTools(
+        {
+          runtimeUrl: cfg.runtimeUrl,
+          systemPrompt: cfg.systemPrompt,
+          threadId: initialThreadId,
+          onCreateSession: cfg.onCreateSession,
+          yourgptConfig: cfg.yourgptConfig,
+          initialMessages: opts?.initialMessages ?? cfg.initialMessages,
+          streaming: cfg.streaming,
+          headers: cfg.headers,
+          body: cfg.body,
+          parseError: cfg.parseError,
+          debug: cfg.debug,
+          maxIterations: cfg.maxIterations,
+          maxIterationsMessage: cfg.maxIterationsMessage,
+          optimization: cfg.optimization,
+          // Expose the registry key (usually the UI thread id after
+          // assignLocalThreadId runs) to tool handlers, NOT chat.config.threadId.
+          // For extensions that key per-thread state on context.threadId (e.g.
+          // browser-tab pinning), this guarantees a stable id — even while the
+          // backend session id is still being resolved. Internal keys
+          // (__single__, __pending_*) return undefined so handlers can treat
+          // them as "not yet committed".
+          getThreadId: () => {
+            for (const [k, v] of instancesRef.current) {
+              if (v === inst) {
+                if (k === SINGLE_INSTANCE_KEY || k.startsWith("__pending_")) {
+                  return undefined;
+                }
+                return k;
+              }
+            }
+            return undefined;
+          },
+        },
+        {
+          onToolExecutionsChange: (executions) => {
+            debugLog("Tool executions changed:", executions.length);
+            // Gate by instance identity — the captured `key` string would go
+            // stale after handleInstanceThreadAssigned re-keys the instance.
+            if (inst === chatRef.current) {
+              setToolExecutions(executions);
+              setAgentIteration(inst.iteration ?? 0);
+            }
+            // Per-thread pending-approvals must refresh for ANY instance —
+            // background threads entering approval-required won't be seen
+            // otherwise, since the reactState `subscribe` channel only fires
+            // on message changes.
+            recomputePendingApprovalsByThread();
+          },
+          onApprovalRequired: (execution) => {
+            debugLog("Tool approval required:", execution.name);
+            recomputePendingApprovalsByThread();
+          },
+          onContextUsageChange: (usage) => {
+            if (inst === chatRef.current) {
+              setContextUsage(usage);
+            }
+          },
+          onError: (error) => {
+            if (error && inst === chatRef.current) {
+              callbacksRef.current.onError?.(error);
+            }
+          },
+          onThreadChange: (id) => {
+            handleInstanceThreadAssigned(inst, id);
+          },
+          onSessionStatusChange: (status) => {
+            debugLog("Session status:", status);
+            if (inst === chatRef.current) {
+              setSessionStatus(status);
+            }
+          },
+          onStreamChunk: (chunk) => {
+            if (streamListenersRef.current.size > 0) {
+              for (const handler of streamListenersRef.current) {
+                handler(chunk);
+              }
+            }
+          },
+        },
+      );
+      // Seed the new instance with provider-level shared state (tools,
+      // skills, system-level context). Without this, instances created later
+      // — e.g. when the user starts a new thread — start out with no tools,
+      // so the LLM can't use them even though useTool hooks were set up.
+      for (const { tool } of sharedToolsRef.current.values()) {
+        inst.registerTool(tool);
+      }
+      if (sharedSkillsRef.current.length > 0) {
+        inst.setInlineSkills(sharedSkillsRef.current);
+      }
+      if (sharedSystemContextRef.current) {
+        inst.setContext(sharedSystemContextRef.current);
+      }
+
+      // Wire the instance's state changes into our unified subscriber set so
+      // every useSyncExternalStore call on stableSubscribe reacts.
+      inst.subscribe(notifyStateChange);
+      instancesRef.current.set(key, inst);
+      return inst;
+    },
+    [
+      debugLog,
+      handleInstanceThreadAssigned,
+      notifyStateChange,
+      recomputePendingApprovalsByThread,
+    ],
+  );
+
+  // Initialize the first instance on first render. If disposed (React
+  // StrictMode), revive every instance and re-wire our notification
+  // subscriber: ReactChatState.dispose() clears subscribers, and revive() is
+  // a no-op for them. Without re-subscribing here, state changes from a
+  // streaming instance never reach React, so the UI stays frozen until
+  // something else (like clicking Stop) forces a render.
   if (chatRef.current !== null && chatRef.current.disposed) {
-    chatRef.current.revive();
-    debugLog("Revived disposed instance (React StrictMode)");
+    for (const inst of instancesRef.current.values()) {
+      inst.revive();
+      inst.subscribe(notifyStateChange);
+    }
+    debugLog("Revived disposed instance(s) (React StrictMode)");
   }
 
   if (chatRef.current === null) {
-    const uiInitialMessages = initialMessages;
-
-    chatRef.current = new ReactChatWithTools(
-      {
-        runtimeUrl,
-        systemPrompt,
-        threadId,
-        onCreateSession,
-        yourgptConfig,
-        initialMessages: uiInitialMessages,
-        streaming,
-        headers,
-        body,
-        parseError,
-        debug,
-        maxIterations,
-        maxIterationsMessage,
-        optimization,
-      },
-      {
-        onToolExecutionsChange: (executions) => {
-          debugLog("Tool executions changed:", executions.length);
-          setToolExecutions(executions);
-          // Sync the agent loop iteration count at the same time — it increments
-          // once per executeToolCalls() call, which is what triggers this callback.
-          setAgentIteration(chatRef.current?.iteration ?? 0);
-        },
-        onApprovalRequired: (execution) => {
-          debugLog("Tool approval required:", execution.name);
-        },
-        onContextUsageChange: (usage) => {
-          setContextUsage(usage);
-        },
-        onError: (error) => {
-          if (error) onError?.(error);
-        },
-        onThreadChange: (id) => {
-          debugLog("Thread/session ID assigned:", id);
-          setActualThreadId(id);
-          onThreadChange?.(id);
-        },
-        onSessionStatusChange: (status) => {
-          debugLog("Session status:", status);
-          setSessionStatus(status);
-        },
-        onStreamChunk: (chunk) => {
-          // Broadcast to all useCopilotEvent() subscribers
-          if (streamListenersRef.current.size > 0) {
-            for (const handler of streamListenersRef.current) {
-              handler(chunk);
-            }
-          }
-        },
-      },
-    );
+    const initialKey =
+      concurrentThreads && threadId ? threadId : SINGLE_INSTANCE_KEY;
+    activeInstanceKeyRef.current = initialKey;
+    chatRef.current = createInstance(initialKey);
   }
+
+  // Swap the active instance to a different thread. In single-thread mode,
+  // falls back to legacy setActiveThread behavior on the single instance.
+  // In multi-thread mode, finds or creates the instance for `key` (or
+  // optionally hydrates it with the given messages if fresh) and swaps the
+  // active pointer; the in-flight stream of the previously-active instance
+  // keeps running in the background.
+  const switchActiveInstance = useCallback(
+    (
+      key: string | null,
+      opts?: { hydrateMessages?: UIMessage[]; hydrateActiveLeafId?: string },
+    ) => {
+      if (!concurrentThreads) {
+        chatRef.current?.setActiveThread(key);
+        return;
+      }
+      // Resolve the target key. Null means "start a new thread" — reuse the
+      // current fresh-empty slot if we're already sitting on one, otherwise
+      // mint a new pending slot. A specific string is used as-is.
+      let targetKey: string;
+      if (key == null) {
+        const currentKey = activeInstanceKeyRef.current;
+        const currentInst = instancesRef.current.get(currentKey);
+        const isCurrentFreshEmpty =
+          currentInst !== undefined &&
+          currentInst.messages.length === 0 &&
+          (currentKey === SINGLE_INSTANCE_KEY ||
+            currentKey.startsWith("__pending_"));
+        if (isCurrentFreshEmpty) {
+          return;
+        }
+        targetKey = `__pending_${++pendingCounterRef.current}__`;
+      } else {
+        targetKey = key;
+      }
+
+      let inst = instancesRef.current.get(targetKey);
+      const wasFresh = !inst;
+      if (!inst) {
+        // If the currently-active instance is an empty internal-keyed slot
+        // (__single__ or __pending_<n>__), promote it to the target id
+        // instead of creating a new instance. This happens during auto-restore
+        // when the app loads with a persisted thread: the initial active
+        // instance at SINGLE_INSTANCE_KEY gets promoted to the restored id
+        // so sends use the correct session and busyThreadIds tracks it.
+        const currentKey = activeInstanceKeyRef.current;
+        const currentInst = instancesRef.current.get(currentKey);
+        const currentIsPromotableSlot =
+          currentInst !== undefined &&
+          currentInst.messages.length === 0 &&
+          (currentKey === SINGLE_INSTANCE_KEY ||
+            currentKey.startsWith("__pending_"));
+        if (currentIsPromotableSlot) {
+          instancesRef.current.delete(currentKey);
+          instancesRef.current.set(targetKey, currentInst!);
+          currentInst!.setActiveThread(targetKey);
+          inst = currentInst;
+          if (opts?.hydrateMessages) {
+            inst!.setMessages(opts.hydrateMessages);
+          }
+          if (opts?.hydrateActiveLeafId) {
+            inst!.switchBranch(opts.hydrateActiveLeafId);
+          }
+        } else {
+          inst = createInstance(targetKey, {
+            initialMessages: opts?.hydrateMessages,
+          });
+          if (opts?.hydrateActiveLeafId) {
+            inst.switchBranch(opts.hydrateActiveLeafId);
+          }
+        }
+      } else if (
+        wasFresh &&
+        opts?.hydrateMessages &&
+        inst.messages.length === 0
+      ) {
+        inst.setMessages(opts.hydrateMessages);
+        if (opts.hydrateActiveLeafId)
+          inst.switchBranch(opts.hydrateActiveLeafId);
+      }
+      if (activeInstanceKeyRef.current === targetKey) return;
+      activeInstanceKeyRef.current = targetKey;
+      chatRef.current = inst!;
+      if (
+        targetKey === SINGLE_INSTANCE_KEY ||
+        targetKey.startsWith("__pending_")
+      ) {
+        setActualThreadId(undefined);
+      } else {
+        setActualThreadId(targetKey);
+      }
+      setSessionStatus(inst!.getSessionStatus());
+      setToolExecutions(inst!.toolExecutions);
+      setAgentIteration(inst!.iteration);
+      notifyStateChange();
+      debugLog("Active instance switched", { key: targetKey });
+    },
+    [concurrentThreads, createInstance, debugLog, notifyStateChange],
+  );
 
   // ============================================
   // System Prompt Reactivity
   // ============================================
 
-  // Watch for systemPrompt prop changes and update chat
+  // Watch for systemPrompt prop changes and update every instance. In
+  // single-thread mode this is just the one instance; in multi-thread mode
+  // we fan out so background and newly-created instances stay consistent.
   useEffect(() => {
-    if (chatRef.current && systemPrompt !== undefined) {
-      chatRef.current.setSystemPrompt(systemPrompt);
-      debugLog("System prompt updated from prop");
+    if (systemPrompt === undefined) return;
+    for (const inst of instancesRef.current.values()) {
+      inst.setSystemPrompt(systemPrompt);
     }
+    debugLog("System prompt updated from prop");
   }, [systemPrompt, debugLog]);
 
   // ============================================
   // Headers & Body Reactivity
   // ============================================
 
-  // Watch for headers prop changes and update chat
   useEffect(() => {
-    if (chatRef.current && headers !== undefined) {
-      chatRef.current.setHeaders(headers);
-      debugLog("Headers config updated from prop");
+    if (headers === undefined) return;
+    for (const inst of instancesRef.current.values()) {
+      inst.setHeaders(headers);
     }
+    debugLog("Headers config updated from prop");
   }, [headers, debugLog]);
 
-  // Watch for body prop changes
   useEffect(() => {
-    if (chatRef.current && body !== undefined) {
-      chatRef.current.setBody(body);
-      debugLog("Body config updated from prop");
+    if (body === undefined) return;
+    for (const inst of instancesRef.current.values()) {
+      inst.setBody(body);
     }
+    debugLog("Body config updated from prop");
   }, [body, debugLog]);
 
-  // Watch for runtimeUrl prop changes
   useEffect(() => {
-    if (chatRef.current && runtimeUrl !== undefined) {
-      chatRef.current.setUrl(runtimeUrl);
-      debugLog("URL config updated from prop");
+    if (runtimeUrl === undefined) return;
+    for (const inst of instancesRef.current.values()) {
+      inst.setUrl(runtimeUrl);
     }
+    debugLog("URL config updated from prop");
   }, [runtimeUrl, debugLog]);
 
   // Keep the chat instance aligned with controlled threadId prop changes.
@@ -765,11 +1234,21 @@ export function CopilotProvider(props: CopilotProviderProps) {
       return;
     }
 
-    chatRef.current?.setActiveThread(threadId ?? null);
-    setActualThreadId(threadId);
-    setSessionStatus(threadId ? "ready" : "idle");
+    if (concurrentThreads) {
+      switchActiveInstance(threadId ?? null);
+    } else {
+      chatRef.current?.setActiveThread(threadId ?? null);
+      setActualThreadId(threadId);
+      setSessionStatus(threadId ? "ready" : "idle");
+    }
     debugLog("Thread/session synced from prop", { threadId });
-  }, [debugLog, isThreadIdControlled, threadId]);
+  }, [
+    debugLog,
+    isThreadIdControlled,
+    threadId,
+    concurrentThreads,
+    switchActiveInstance,
+  ]);
 
   // Stable snapshot callbacks for useSyncExternalStore
   // getServerSnapshot must return a cached/stable value to avoid infinite loops
@@ -782,21 +1261,23 @@ export function CopilotProvider(props: CopilotProviderProps) {
   const getStatusSnapshot = useCallback(() => chatRef.current!.status, []);
   const getErrorSnapshot = useCallback(() => chatRef.current!.error, []);
 
-  // Subscribe to chat state with useSyncExternalStore
+  // Subscribe to chat state with useSyncExternalStore via the stable wrapper
+  // so that swapping the active instance in multi-thread mode doesn't tear
+  // subscriptions.
   const messages = useSyncExternalStore(
-    chatRef.current.subscribe,
+    stableSubscribe,
     getMessagesSnapshot,
     getServerMessagesSnapshot,
   );
 
   const status = useSyncExternalStore(
-    chatRef.current.subscribe,
+    stableSubscribe,
     getStatusSnapshot,
     () => "ready" as const,
   );
 
   const errorFromChat = useSyncExternalStore(
-    chatRef.current.subscribe,
+    stableSubscribe,
     getErrorSnapshot,
     () => undefined,
   );
@@ -808,11 +1289,97 @@ export function CopilotProvider(props: CopilotProviderProps) {
   // Actions
   // ============================================
 
-  const setActiveThread = useCallback((id: string | null) => {
-    chatRef.current?.setActiveThread(id);
-    // Sync React state: known ID → expose it; null (new thread) → clear until onThreadChange fires
-    setActualThreadId(id ?? undefined);
-  }, []);
+  const setActiveThread = useCallback(
+    (
+      id: string | null,
+      opts?: { hydrateMessages?: UIMessage[]; hydrateActiveLeafId?: string },
+    ) => {
+      if (concurrentThreads) {
+        switchActiveInstance(id, opts);
+      } else {
+        chatRef.current?.setActiveThread(id);
+        // Sync React state: known ID → expose it; null (new thread) → clear until onThreadChange fires
+        setActualThreadId(id ?? undefined);
+      }
+    },
+    [concurrentThreads, switchActiveInstance],
+  );
+
+  const disposeThreadInstance = useCallback(
+    (id: string) => {
+      if (!concurrentThreads) return;
+      const inst = instancesRef.current.get(id);
+      if (!inst) return;
+      inst.dispose();
+      instancesRef.current.delete(id);
+      if (activeInstanceKeyRef.current === id) {
+        // Deleted the active instance — switchActiveInstance(null) will mint
+        // a fresh pending slot and swap to it.
+        switchActiveInstance(null);
+      } else {
+        recomputeBusyThreadIds();
+        recomputePendingApprovalsByThread();
+      }
+    },
+    [
+      concurrentThreads,
+      switchActiveInstance,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
+  );
+
+  // Re-key the active pending instance to a caller-supplied local thread id
+  // so the thread becomes visible in the picker WHILE it's still streaming,
+  // without waiting for the server to emit `thread:created`.
+  //
+  // Why this exists: some backends only include the real session id in the
+  // final `done` chunk. Without this, a newly-started thread would not show
+  // up in the picker until the stream ended. With this, useInternalThreadManager
+  // mints a local id as soon as the first send starts, creates the thread
+  // in the manager, and calls assignLocalThreadId to bind the pending instance
+  // to that id. busyThreadIds then includes the local id and the picker shows
+  // a live row with a spinner.
+  //
+  // Side note on the backend session id: we do NOT call chat.setActiveThread
+  // here, so chat.config.threadId stays undefined and the server creates its
+  // own session as usual. When the server emits its session id (via
+  // thread:created or done), AbstractChat updates chat.config.threadId
+  // internally so subsequent sends on this thread reuse that server session.
+  // The registry key and the picker thread id stay the local id for stability.
+  const assignLocalThreadId = useCallback(
+    (localId: string) => {
+      if (!concurrentThreads) return;
+      if (!localId) return;
+      const currentKey = activeInstanceKeyRef.current;
+      if (currentKey === localId) return;
+      const currentInst = instancesRef.current.get(currentKey);
+      if (!currentInst) return;
+      const isInternalSlot =
+        currentKey === SINGLE_INSTANCE_KEY ||
+        currentKey.startsWith("__pending_");
+      if (!isInternalSlot) return;
+      // Someone else already owns this key — bail rather than clobber it.
+      if (instancesRef.current.has(localId)) return;
+
+      instancesRef.current.delete(currentKey);
+      instancesRef.current.set(localId, currentInst);
+      activeInstanceKeyRef.current = localId;
+      if (currentInst === chatRef.current) {
+        setActualThreadId(localId);
+        callbacksRef.current.onThreadChange?.(localId);
+      }
+      recomputeBusyThreadIds();
+      recomputePendingApprovalsByThread();
+      debugLog("Assigned local thread id", { localId });
+    },
+    [
+      concurrentThreads,
+      debugLog,
+      recomputeBusyThreadIds,
+      recomputePendingApprovalsByThread,
+    ],
+  );
 
   const renewSession = useCallback(() => {
     chatRef.current?.renewSession();
@@ -821,11 +1388,33 @@ export function CopilotProvider(props: CopilotProviderProps) {
   }, []);
 
   const registerTool = useCallback((tool: ToolDefinition) => {
-    chatRef.current?.registerTool(tool);
+    // Track at the provider level so new instances created later (e.g. on
+    // thread switch / new thread) can inherit the same tool set. Ref-count
+    // so StrictMode's register → unregister → register cycle is a no-op.
+    const existing = sharedToolsRef.current.get(tool.name);
+    if (existing) {
+      existing.tool = tool;
+      existing.refCount++;
+    } else {
+      sharedToolsRef.current.set(tool.name, { tool, refCount: 1 });
+    }
+    // Fan out to every live instance — the active one AND any background
+    // instances — so every thread can use the tool.
+    for (const inst of instancesRef.current.values()) {
+      inst.registerTool(tool);
+    }
   }, []);
 
   const unregisterTool = useCallback((name: string) => {
-    chatRef.current?.unregisterTool(name);
+    const entry = sharedToolsRef.current.get(name);
+    if (!entry) return;
+    entry.refCount = Math.max(0, entry.refCount - 1);
+    for (const inst of instancesRef.current.values()) {
+      inst.unregisterTool(name);
+    }
+    if (entry.refCount === 0) {
+      sharedToolsRef.current.delete(name);
+    }
   }, []);
 
   const approveToolExecution = useCallback(
@@ -887,6 +1476,20 @@ export function CopilotProvider(props: CopilotProviderProps) {
   const [contextChars, setContextChars] = useState(0);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
+  // Note: addContext / removeContext update ONLY the active instance.
+  //
+  // AI context (useAIContext) is often derived from the user's current state
+  // — e.g. "current_page" reflects whichever browser tab the user is on. If
+  // we fanned out to every instance, switching browser tabs would overwrite
+  // the context of a thread that was mid-task, which derails the AI (it may
+  // abandon the work it was doing because the "current page" suddenly
+  // changed out from under it).
+  //
+  // Background threads keep the context snapshot that was in place when
+  // their instance was created (via createInstance's seeding from
+  // sharedSystemContextRef). New instances created later still get the
+  // latest context at creation time. sharedSystemContextRef tracks the
+  // latest so new instances are seeded correctly.
   const addContext = useCallback(
     (context: string, parentId?: string): string => {
       const id = `ctx-${++contextIdCounter.current}`;
@@ -895,8 +1498,8 @@ export function CopilotProvider(props: CopilotProviderProps) {
         { id, value: context, parentId },
         parentId,
       );
-      // Update chat's context
       const contextString = printTree(contextTreeRef.current);
+      sharedSystemContextRef.current = contextString;
       chatRef.current?.setContext(contextString);
       setContextChars(contextString.length);
       debugLog("Context added:", id);
@@ -908,8 +1511,8 @@ export function CopilotProvider(props: CopilotProviderProps) {
   const removeContext = useCallback(
     (id: string): void => {
       contextTreeRef.current = removeNode(contextTreeRef.current, id);
-      // Update chat's context
       const contextString = printTree(contextTreeRef.current);
+      sharedSystemContextRef.current = contextString;
       chatRef.current?.setContext(contextString);
       setContextChars(contextString.length);
       debugLog("Context removed:", id);
@@ -923,7 +1526,9 @@ export function CopilotProvider(props: CopilotProviderProps) {
 
   const setSystemPrompt = useCallback(
     (prompt: string): void => {
-      chatRef.current?.setSystemPrompt(prompt);
+      for (const inst of instancesRef.current.values()) {
+        inst.setSystemPrompt(prompt);
+      }
       debugLog("System prompt updated via function");
     },
     [debugLog],
@@ -938,7 +1543,10 @@ export function CopilotProvider(props: CopilotProviderProps) {
         strategy?: string;
       }>,
     ): void => {
-      chatRef.current?.setInlineSkills(skills);
+      sharedSkillsRef.current = skills;
+      for (const inst of instancesRef.current.values()) {
+        inst.setInlineSkills(skills);
+      }
       debugLog("Inline skills updated", { count: skills.length });
     },
     [debugLog],
@@ -1000,7 +1608,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
     [],
   );
   const hasBranches = useSyncExternalStore(
-    chatRef.current.subscribe,
+    stableSubscribe,
     getHasBranchesSnapshot,
     () => false,
   );
@@ -1043,10 +1651,13 @@ export function CopilotProvider(props: CopilotProviderProps) {
     }
   }, [error, onError]);
 
-  // Cleanup
+  // Cleanup — dispose every registered instance so all in-flight streams are
+  // aborted on unmount (including background ones in multi-thread mode).
   useEffect(() => {
     return () => {
-      chatRef.current?.dispose();
+      for (const inst of instancesRef.current.values()) {
+        inst.dispose();
+      }
     };
   }, []);
 
@@ -1115,6 +1726,13 @@ export function CopilotProvider(props: CopilotProviderProps) {
       // Headless primitives
       subscribeToStreamEvents,
       messageMeta: messageMetaStoreRef.current,
+
+      // Multi-thread streaming
+      concurrentThreads,
+      busyThreadIds,
+      pendingApprovalsByThread,
+      disposeThreadInstance,
+      assignLocalThreadId,
     }),
     [
       messages,
@@ -1155,6 +1773,11 @@ export function CopilotProvider(props: CopilotProviderProps) {
       sessionStatus,
       runtimeUrl,
       toolsConfig,
+      concurrentThreads,
+      busyThreadIds,
+      pendingApprovalsByThread,
+      disposeThreadInstance,
+      assignLocalThreadId,
     ],
   );
 

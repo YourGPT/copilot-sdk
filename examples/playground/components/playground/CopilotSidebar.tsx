@@ -96,12 +96,23 @@ export function CopilotSidebar({
       <div className="flex-1 min-h-0 h-full rounded-2xl overflow-hidden shadow-[0_0_10px_0_rgba(0,0,0,0.05)] border">
         <CopilotProvider
           debug={true}
-          key={`${selectedProvider}-${selectedOpenRouterModel}`} // Force re-mount when provider or model changes
+          key={`${selectedProvider}-${selectedOpenRouterModel}-${alphaConfig.concurrentThreads ? "ct" : "st"}-${alphaConfig.yourgptAuthEnabled ? "ygpt" : "local"}`} // Force re-mount when provider, model, thread mode, or auth mode changes
           runtimeUrl={runtimeUrl}
           headers={runtimeHeaders}
           systemPrompt={systemPrompt}
           maxIterations={5}
           onError={handleError}
+          {...(alphaConfig.yourgptAuthEnabled &&
+          alphaConfig.yourgptApiKey &&
+          alphaConfig.yourgptWidgetUid
+            ? {
+                yourgptConfig: {
+                  apiKey: alphaConfig.yourgptApiKey,
+                  widgetUid: alphaConfig.yourgptWidgetUid,
+                },
+              }
+            : {})}
+          concurrentThreads={alphaConfig.concurrentThreads}
           messageHistory={
             alphaConfig.compactionStrategy !== "none"
               ? { strategy: alphaConfig.compactionStrategy }
