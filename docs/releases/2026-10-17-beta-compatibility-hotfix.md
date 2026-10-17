@@ -1,6 +1,6 @@
 # LLM SDK 2.6.0-beta.3 — compatibility hotfix
 
-Prepared for npm `beta` from the current beta base `321bef0`, with only the five compatibility/privacy fixes from `605c38c`. The source package version is `2.6.0-beta.3`. Publication awaits explicit version confirmation.
+Published to npm `beta` as `@yourgpt/llm-sdk@2.6.0-beta.3` on 2026-10-17 after explicit version confirmation. Release source commit `fa2e66f` starts from the beta base `321bef0`, with only the five compatibility/privacy fixes from `605c38c`. The downloaded registry archive is byte-identical to the tested release candidate. npm `latest` and `alpha` tags remain unchanged.
 
 Decisions, realtime voice, image generation/editing and the new playground remain on the separate next-beta branch and are excluded from this package. Copilot SDK stays at `2.5.1-beta.3`; it has no source changes in this release.
 
