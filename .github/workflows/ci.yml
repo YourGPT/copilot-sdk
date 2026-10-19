@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   secrets:
     name: Secret scan
@@ -62,6 +65,9 @@ jobs:
 
       - name: Build packages
         run: pnpm build
+
+      - name: Typecheck packages
+        run: pnpm typecheck
 
       - name: Copilot integration regressions
         run: pnpm test:compatibility

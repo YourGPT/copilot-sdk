@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "@yourgpt/copilot-sdk": "^1.2.11",
-    "@yourgpt/llm-sdk": "^1.3.0",
+    "@yourgpt/copilot-sdk": "^2.6.0",
+    "@yourgpt/llm-sdk": "^2.6.0",
     "hono": "^4.6.14",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

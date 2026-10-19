@@ -170,13 +170,12 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
-    "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && pnpm test:types && node --test test/*.test.cjs",
     "test:types": "tsc --noEmit --strict --skipLibCheck --moduleResolution node16 --module Node16 --target ES2020 test/public-types.ts test/public-types.mts"
   },
   "dependencies": {
-    "hono": "^4.3.0",
+    "hono": "^4.13.7",
     "zod": "^3.23.0"
   },
   "peerDependencies": {
@@ -206,7 +205,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourgpt/copilot-sdk.git",
+    "url": "https://github.com/YourGPT/copilot-sdk.git",
     "directory": "packages/llm-sdk"
   },
   "keywords": [

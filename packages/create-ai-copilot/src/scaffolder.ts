@@ -197,7 +197,7 @@ async function addToolsSetup(dir: string, framework: Framework): Promise<void> {
   // Add ToolDefinition import
   content = content.replace(
     /import { createRuntime } from '@yourgpt\/llm-sdk';/,
-    `import { createRuntime } from '@yourgpt/llm-sdk';\nimport type { ToolDefinition } from '@yourgpt/copilot-sdk/core';`,
+    `import { createRuntime, type ToolDefinition } from '@yourgpt/llm-sdk';`,
   );
 
   // Add sample weather tool before the runtime creation
@@ -214,9 +214,10 @@ const serverTools: ToolDefinition[] = [
       },
       required: ['city'],
     },
-    handler: async (args: { city: string }) => {
+    handler: async (params) => {
+      const { city } = params as { city: string };
       // Demo implementation - replace with real weather API
-      return { temperature: 22, condition: 'sunny', city: args.city };
+      return { temperature: 22, condition: 'sunny', city };
     },
   },
 ];

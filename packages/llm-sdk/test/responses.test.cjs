@@ -765,3 +765,34 @@ for (const output of [
     });
   }
 }
+
+for (const debug of [false, true]) {
+  test(`Runtime JSON HTTP response logs only when debug is ${debug}`, async (t) => {
+    reply = (_, { body }) =>
+      body.stream
+        ? events(response([message("ok")]))
+        : response([message("ok")]);
+    const log = t.mock.method(console, "log", () => {});
+    const runtime = createRuntime({
+      provider: createOpenAI({ apiKey: "fixture", api: "responses" }),
+      model: "gpt-6-luna",
+      debug,
+    });
+    const res = await runtime.handleRequest(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "hello" }],
+          streaming: false,
+        }),
+      }),
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).content, "ok");
+    const logged = log.mock.calls.some(
+      (c) => c.arguments[0] === "[Copilot SDK] Non-streaming response:",
+    );
+    assert.equal(logged, debug);
+  });
+}

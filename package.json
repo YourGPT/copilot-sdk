@@ -20,6 +20,7 @@
     "test:compatibility": "node --test test/*.test.cjs",
     "test:package-install": "node scripts/check-package-install.mjs",
     "lint": "turbo lint",
+    "typecheck": "turbo typecheck --filter=./packages/*",
     "clean": "turbo clean && rm -rf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "changeset": "changeset",

@@ -18,6 +18,10 @@ jobs:
     name: Release
     if: github.ref == 'refs/heads/main' && inputs.publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # changesets pushes the version commit and tags
+      pull-requests: write # changesets opens the release PR
+      id-token: write # npm provenance attestation
 
     steps:
       - name: Checkout
@@ -37,8 +41,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: LLM SDK regression tests
+        run: pnpm --filter @yourgpt/llm-sdk test
+
       - name: Build packages
         run: pnpm build
+
+      - name: Typecheck packages
+        run: pnpm typecheck
+
+      - name: Copilot integration regressions
+        run: pnpm test:compatibility
+
+      - name: Published package compatibility (React 18 and 19)
+        run: pnpm test:package-install
 
       - name: Create Release PR or Publish
         id: changesets
@@ -51,3 +67,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsup && chmod +x dist/index.js",
     "dev": "tsup --watch",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18.17.0"
@@ -41,7 +42,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/AiCopilotHub/yourgpt-copilot",
+    "url": "https://github.com/YourGPT/copilot-sdk.git",
     "directory": "packages/create-ai-copilot"
   },
   "publishConfig": {

@@ -573,14 +573,16 @@ export class Runtime {
         _events: this.config.debug ? events : undefined,
       };
 
-      console.log("[Copilot SDK] Non-streaming response:", {
-        contentLength: content.length,
-        toolCalls: toolCalls.length,
-        toolResults: toolResults.length,
-        messagesCount: messages?.length,
-        requiresAction,
-        hasError: !!error,
-      });
+      if (this.config.debug) {
+        console.log("[Copilot SDK] Non-streaming response:", {
+          contentLength: content.length,
+          toolCalls: toolCalls.length,
+          toolResults: toolResults.length,
+          messagesCount: messages?.length,
+          requiresAction,
+          hasError: !!error,
+        });
+      }
 
       return new Response(JSON.stringify(response), {
         status: error ? 500 : 200,
