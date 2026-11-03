@@ -13,6 +13,7 @@ import type {
 } from "../../core";
 import { zodToJsonSchema } from "../../core";
 import { useCopilot } from "../provider/CopilotProvider";
+import { stableSignature, withLatestFunctions } from "../utils/tool-signature";
 
 /**
  * Check if value is a Zod schema
@@ -25,6 +26,22 @@ function isZodSchema(value: unknown): boolean {
     ("_zod" in obj && typeof obj._zod === "object") ||
     "~standard" in obj
   );
+}
+
+// Zod schemas are immutable, so each schema object converts once. A schema
+// written inline is a new object every render and converts every render.
+const convertedSchemas = new WeakMap<object, ToolInputSchema>();
+
+/** JSON Schema for a config's `inputSchema`, converting a Zod schema once per object. */
+function toInputSchema(inputSchema: unknown): ToolInputSchema {
+  if (!isZodSchema(inputSchema)) return inputSchema as ToolInputSchema;
+  const schema = inputSchema as object;
+  let converted = convertedSchemas.get(schema);
+  if (!converted) {
+    converted = zodToJsonSchema(schema);
+    convertedSchemas.set(schema, converted);
+  }
+  return converted;
 }
 
 /**
@@ -93,6 +110,43 @@ export interface UseToolConfig<TParams = Record<string, unknown>> {
 }
 
 /**
+ * The definition registered for a config. Every field the config accepts is
+ * forwarded; the caller wraps the functions with `withLatestFunctions` so they
+ * always call the latest config.
+ */
+function toToolDefinition<TParams>(
+  config: UseToolConfig<TParams>,
+  inputSchema: ToolInputSchema,
+): ToolDefinition {
+  return {
+    name: config.name,
+    description: config.description,
+    location: "client",
+    inputSchema,
+    handler: config.handler as ToolDefinition["handler"],
+    toModelOutput: config.toModelOutput,
+    render: config.render as ToolDefinition["render"],
+    available: config.available ?? true,
+    needsApproval: config.needsApproval,
+    approvalTitle: config.approvalTitle as ToolDefinition["approvalTitle"],
+    approvalMessage:
+      config.approvalMessage as ToolDefinition["approvalMessage"],
+    hidden: config.hidden,
+    deferLoading: config.deferLoading,
+    profiles: config.profiles,
+    searchKeywords: config.searchKeywords,
+    group: config.group,
+    category: config.category,
+    resultConfig: config.resultConfig,
+    title: config.title as ToolDefinition["title"],
+    executingTitle: config.executingTitle as ToolDefinition["executingTitle"],
+    completedTitle: config.completedTitle as ToolDefinition["completedTitle"],
+    aiResponseMode: config.aiResponseMode,
+    aiContext: config.aiContext as ToolDefinition["aiContext"],
+  };
+}
+
+/**
  * Register a client-side tool
  *
  * This hook registers a tool that can be called by the AI during a conversation.
@@ -143,53 +197,31 @@ export function useTool<TParams = Record<string, unknown>>(
   configRef.current = config;
 
   // Convert Zod schema to JSON Schema if needed (memoized)
-  const inputSchema = useMemo(() => {
-    if (isZodSchema(config.inputSchema)) {
-      return zodToJsonSchema(config.inputSchema);
-    }
-    return config.inputSchema as ToolInputSchema;
-  }, [config.inputSchema]);
+  const inputSchema = useMemo(
+    () => toInputSchema(config.inputSchema),
+    [config.inputSchema],
+  );
+
+  // Re-register when the tool's content changes, not its identity: a config or
+  // schema written inline is a new object every render, and re-registering on
+  // each render updates provider state, which renders again (an infinite loop).
+  const signature = stableSignature({ ...config, inputSchema });
 
   useEffect(() => {
-    // Create tool definition
-    const tool: ToolDefinition = {
-      name: config.name,
-      description: config.description,
-      location: "client",
-      toModelOutput: (result) => configRef.current.toModelOutput?.(result),
-      inputSchema,
-      handler: async (params, context) => {
-        return configRef.current.handler(params as TParams, context);
-      },
-      render: config.render as ToolDefinition["render"],
-      available: config.available ?? true,
-      needsApproval: config.needsApproval,
-      approvalTitle: config.approvalTitle as ToolDefinition["approvalTitle"],
-      approvalMessage:
-        config.approvalMessage as ToolDefinition["approvalMessage"],
-      hidden: config.hidden,
-      deferLoading: config.deferLoading,
-      profiles: config.profiles,
-      searchKeywords: config.searchKeywords,
-      group: config.group,
-      category: config.category,
-      resultConfig: config.resultConfig,
-      title: config.title as ToolDefinition["title"],
-      executingTitle: config.executingTitle as ToolDefinition["executingTitle"],
-      completedTitle: config.completedTitle as ToolDefinition["completedTitle"],
-      aiResponseMode: config.aiResponseMode,
-      aiContext: config.aiContext as ToolDefinition["aiContext"],
-    };
+    const current = configRef.current;
+    // Function fields call the latest config, so new closures need no re-registration.
+    const tool = withLatestFunctions(
+      toToolDefinition(current, inputSchema),
+      () => configRef.current,
+    );
 
-    // Register tool
     registerTool(tool);
 
-    // Cleanup on unmount
     return () => {
-      unregisterTool(config.name);
+      unregisterTool(current.name);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.name, inputSchema, ...dependencies]);
+  }, [signature, ...dependencies]);
 }
 
 /**
@@ -242,12 +274,10 @@ export function useTools(tools: ToolSet): void {
   // Update ref when tools change
   toolsRef.current = tools;
 
-  // Create a stable key from tool names to detect actual changes
-  const toolsKey = JSON.stringify(
-    Object.entries(tools)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, definition]) => [name, definition.available ?? true]),
-  );
+  // Key on content (names, schemas, flags), not identity: a toolset written
+  // inline is new every render. Functions count only by presence; the latest
+  // ones are reached through toolsRef below.
+  const toolsKey = stableSignature(tools);
 
   useEffect(() => {
     const currentTools = toolsRef.current;
@@ -255,19 +285,11 @@ export function useTools(tools: ToolSet): void {
 
     // Register all tools from the toolset
     for (const [name, toolDef] of Object.entries(currentTools)) {
-      // Create full tool definition with name (override if toolDef has different name)
+      // The key is the name, overriding one on the definition. Function fields
+      // call the latest definition under that key.
       const fullTool: ToolDefinition = {
-        ...toolDef,
-        handler: toolDef.handler
-          ? (params, context) =>
-              toolsRef.current[name]?.handler?.(params, context) ?? {
-                success: false,
-                error: "Tool is no longer available",
-              }
-          : undefined,
-        toModelOutput: (result) =>
-          toolsRef.current[name]?.toModelOutput?.(result),
-        name, // Use the key as the name
+        ...withLatestFunctions(toolDef, () => toolsRef.current[name]),
+        name,
       };
 
       registerTool(fullTool);
@@ -284,7 +306,7 @@ export function useTools(tools: ToolSet): void {
       registeredToolsRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolsKey]); // Re-register when names or availability changes.
+  }, [toolsKey]); // Re-register only when a tool's content changes.
 }
 
 /**
@@ -310,53 +332,29 @@ export function useToolsArray<TParams = Record<string, unknown>>(
   // Update ref when tools change
   toolsRef.current = tools;
 
+  // Convert once per render; the content key and the registration share it.
+  const definitions = tools.map((config) =>
+    toToolDefinition(config, toInputSchema(config.inputSchema)),
+  );
+  const signature = stableSignature(definitions);
+
   useEffect(() => {
-    // Register all tools
-    const toolNames: string[] = [];
+    const toolNames = definitions.map((definition) => definition.name);
 
-    for (const config of tools) {
-      // Convert Zod schema if needed
-      const inputSchema = isZodSchema(config.inputSchema)
-        ? zodToJsonSchema(config.inputSchema)
-        : (config.inputSchema as ToolInputSchema);
-
-      const tool: ToolDefinition = {
-        name: config.name,
-        description: config.description,
-        location: "client",
-        toModelOutput: (result) =>
-          toolsRef.current
-            .find((tool) => tool.name === config.name)
-            ?.toModelOutput?.(result),
-        inputSchema,
-        handler: async (params, context) => {
-          const currentConfig = toolsRef.current.find(
-            (t) => t.name === config.name,
-          );
-          if (currentConfig) {
-            return currentConfig.handler(params as TParams, context);
-          }
-          return { success: false, error: "Tool handler not found" };
-        },
-        available: config.available ?? true,
-        needsApproval: config.needsApproval,
-        approvalTitle: config.approvalTitle as ToolDefinition["approvalTitle"],
-        approvalMessage:
-          config.approvalMessage as ToolDefinition["approvalMessage"],
-      };
-
-      registerTool(tool);
-      toolNames.push(config.name);
+    for (const definition of definitions) {
+      // Function fields call the latest config under this name.
+      const latest = () =>
+        toolsRef.current.find((tool) => tool.name === definition.name);
+      registerTool(withLatestFunctions(definition, latest));
     }
 
-    // Cleanup on unmount
     return () => {
       for (const name of toolNames) {
         unregisterTool(name);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tools.map((t) => t.name).join(","), ...dependencies]);
+  }, [signature, ...dependencies]);
 }
 
 export type { ToolDefinition, ToolResponse, ToolContext, ToolSet };
