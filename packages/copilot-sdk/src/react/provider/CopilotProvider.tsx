@@ -14,6 +14,7 @@ import React, {
   useCallback,
   useMemo,
   useEffect,
+  useLayoutEffect,
   useSyncExternalStore,
   useState,
 } from "react";
@@ -51,6 +52,7 @@ import {
   type ContextTreeNode,
 } from "../utils/context-tree";
 import { useMCPTools } from "../hooks/useMCPTools";
+import { toolSetSignature } from "../utils/tool-signature";
 import {
   MessageHistoryContext,
   defaultMessageHistoryConfig,
@@ -549,6 +551,22 @@ export function useCopilot(): CopilotContextValue {
 // Provider Component
 // ============================================
 
+// Layout effects do not run on the server; fall back to a passive effect there.
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+// A tool whose content differs on every render (a Date or a timestamp in its
+// description, for example) re-registers on every render and loops. In
+// development, name the tool before React's update-depth error does.
+const REGISTRATION_BURST_WINDOW_MS = 1000;
+const REGISTRATION_BURST_LIMIT = 25;
+
+/** Replace an array's contents in place, keeping its identity. */
+function replaceContents<T>(target: T[], source: readonly T[]): void {
+  target.length = 0;
+  target.push(...source);
+}
+
 export function CopilotProvider(props: CopilotProviderProps) {
   const {
     children,
@@ -822,16 +840,63 @@ export function CopilotProvider(props: CopilotProviderProps) {
     setSessionStatus("idle");
   }, []);
 
-  const [toolsRevision, setToolsRevision] = useState(0);
-  const registerTool = useCallback((tool: ToolDefinition) => {
-    chatRef.current?.registerTool(tool);
-    setToolsRevision((value) => value + 1);
+  // What the active tools look like, by content. Registering updates this only
+  // when it actually changes: a component that re-registers the same tool on
+  // every render (an inline definition, or registerTool in an effect without
+  // deps) must not re-render the provider, or the re-render registers again
+  // and the two loop forever. An unregister/register pair in one effect flush
+  // nets out to the same string, and React skips it. The exposed array is
+  // still brought up to date on every registration (see registeredTools), so
+  // a re-registration that only brings new closures is never served stale.
+  const [toolsSignature, setToolsSignature] = useState("");
+  const exposedToolsRef = useRef<ToolDefinition[]>([]);
+  const syncTools = useCallback((registered?: ToolDefinition) => {
+    const tools = chatRef.current?.tools ?? [];
+    replaceContents(exposedToolsRef.current, tools);
+    setToolsSignature(toolSetSignature(tools, registered));
   }, []);
 
-  const unregisterTool = useCallback((name: string) => {
-    chatRef.current?.unregisterTool(name);
-    setToolsRevision((value) => value + 1);
+  const registrationBursts = useRef(
+    new Map<string, { count: number; since: number }>(),
+  );
+  const warnOnRegistrationBurst = useCallback((name: string) => {
+    const now = Date.now();
+    const bursts = registrationBursts.current;
+    const burst = bursts.get(name);
+    if (!burst || now - burst.since > REGISTRATION_BURST_WINDOW_MS) {
+      bursts.set(name, { count: 1, since: now });
+      return;
+    }
+    burst.count += 1;
+    if (burst.count === REGISTRATION_BURST_LIMIT) {
+      console.warn(
+        `[copilot-sdk] Tool "${name}" was registered ${REGISTRATION_BURST_LIMIT} times ` +
+          `within ${REGISTRATION_BURST_WINDOW_MS}ms. Something in its config changes on ` +
+          "every render (a Date, a timestamp or a random value in the description or " +
+          "resultConfig, for example). Keep tool content stable across renders and " +
+          "read changing values through a ref inside the handler.",
+      );
+    }
   }, []);
+
+  const registerTool = useCallback(
+    (tool: ToolDefinition) => {
+      chatRef.current?.registerTool(tool);
+      if (process.env.NODE_ENV !== "production") {
+        warnOnRegistrationBurst(tool.name);
+      }
+      syncTools(tool);
+    },
+    [syncTools, warnOnRegistrationBurst],
+  );
+
+  const unregisterTool = useCallback(
+    (name: string) => {
+      chatRef.current?.unregisterTool(name);
+      syncTools();
+    },
+    [syncTools],
+  );
 
   const approveToolExecution = useCallback(
     (
@@ -851,11 +916,22 @@ export function CopilotProvider(props: CopilotProviderProps) {
     [],
   );
 
+  // The tools exposed to consumers. A new array only when the tool set's
+  // content changes, so identity-keyed memos and effects re-run only then. Its
+  // contents are refreshed on every registration (see syncTools), so a tool
+  // handed between two components under one name, or re-registered from an
+  // effect keyed on state, always exposes the latest closures.
   const registeredTools = useMemo(
     () => chatRef.current?.tools ?? [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [toolExecutions, toolsRevision],
+    [toolsSignature],
   );
+  useIsomorphicLayoutEffect(() => {
+    // Child effects that register run after this: point them at the array this
+    // commit exposes, and fold in anything registered since it was computed.
+    exposedToolsRef.current = registeredTools;
+    replaceContents(registeredTools, chatRef.current?.tools ?? []);
+  }, [registeredTools]);
   const getRegisteredTools = useCallback(
     () => chatRef.current?.tools ?? [],
     [],

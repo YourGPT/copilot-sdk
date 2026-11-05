@@ -11,6 +11,7 @@ import type {
 } from "../../core";
 import { zodObjectToInputSchema } from "../../core";
 import { useCopilot } from "../provider/CopilotProvider";
+import { stableSignature, withLatestFunctions } from "../utils/tool-signature";
 
 /**
  * Zod schema type (minimal interface)
@@ -56,6 +57,27 @@ function convertZodSchema(schema: unknown, _toolName: string): ToolInputSchema {
   return zodObjectToInputSchema(schema);
 }
 
+// Zod schemas are immutable, so each schema object converts once. A schema
+// written inline is a new object every render and converts every render.
+const convertedSchemas = new WeakMap<object, ToolInputSchema>();
+
+/** The JSON Schema for a tool's Zod schema, plus the error if conversion failed. */
+function prepareSchema(
+  schema: unknown,
+  toolName: string,
+): { inputSchema: ToolInputSchema; error?: unknown } {
+  const key = typeof schema === "object" && schema !== null ? schema : null;
+  const cached = key ? convertedSchemas.get(key) : undefined;
+  if (cached) return { inputSchema: cached };
+  try {
+    const inputSchema = convertZodSchema(schema, toolName);
+    if (key) convertedSchemas.set(key, inputSchema);
+    return { inputSchema };
+  } catch (error) {
+    return { inputSchema: { type: "object", properties: {} }, error };
+  }
+}
+
 /**
  * Configuration for registering a tool with Zod schema
  */
@@ -76,6 +98,26 @@ export interface UseToolWithSchemaConfig<TSchema extends ZodObjectSchema> {
   render?: (props: ToolRenderProps<TSchema["_output"]>) => React.ReactNode;
   /** Whether the tool is available */
   available?: boolean;
+}
+
+/**
+ * The definition registered for a config. The caller wraps its functions with
+ * `withLatestFunctions` so they always call the latest config.
+ */
+function toToolDefinition<TSchema extends ZodObjectSchema>(
+  config: UseToolWithSchemaConfig<TSchema>,
+  inputSchema: ToolInputSchema,
+): ToolDefinition {
+  return {
+    name: config.name,
+    description: config.description,
+    location: "client",
+    inputSchema,
+    handler: config.handler as ToolDefinition["handler"],
+    toModelOutput: config.toModelOutput,
+    render: config.render as ToolDefinition["render"],
+    available: config.available ?? true,
+  };
 }
 
 /**
@@ -114,45 +156,39 @@ export function useToolWithSchema<TSchema extends ZodObjectSchema>(
 
   // Convert Zod schema to JSON Schema (memoized)
   const inputSchema = useMemo(() => {
-    try {
-      return convertZodSchema(config.schema, config.name);
-    } catch (error) {
-      // Fallback to empty schema if conversion fails
+    const prepared = prepareSchema(config.schema, config.name);
+    if (prepared.error) {
       console.warn(
         `[useToolWithSchema] Failed to convert Zod schema for tool "${config.name}"`,
-        error,
+        prepared.error,
       );
-      return {
-        type: "object" as const,
-        properties: {},
-      };
     }
+    return prepared.inputSchema;
   }, [config.schema, config.name]);
 
-  useEffect(() => {
-    // Create tool definition
-    const tool: ToolDefinition<TSchema["_output"]> = {
-      name: config.name,
-      description: config.description,
-      location: "client",
-      toModelOutput: (result) => configRef.current.toModelOutput?.(result),
-      inputSchema,
-      handler: async (params, context) => {
-        return configRef.current.handler(params as TSchema["_output"], context);
-      },
-      render: config.render,
-      available: config.available ?? true,
-    };
+  // Re-register on content changes only: an inline z.object() is a new schema
+  // every render, and re-registering each render loops (see useTool).
+  const signature = stableSignature({
+    ...config,
+    schema: undefined,
+    inputSchema,
+  });
 
-    // Register tool
+  useEffect(() => {
+    const current = configRef.current;
+    // Function fields call the latest config, so new closures need no re-registration.
+    const tool = withLatestFunctions(
+      toToolDefinition(current, inputSchema),
+      () => configRef.current,
+    );
+
     registerTool(tool);
 
-    // Cleanup on unmount
     return () => {
-      unregisterTool(config.name);
+      unregisterTool(current.name);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.name, inputSchema, ...dependencies]);
+  }, [signature, ...dependencies]);
 }
 
 /**
@@ -188,54 +224,43 @@ export function useToolsWithSchema<TSchema extends ZodObjectSchema>(
   // Update ref when tools change
   toolsRef.current = tools;
 
+  // Convert once per render; the content key and the registration share it.
+  const prepared = tools.map((config) => ({
+    config,
+    ...prepareSchema(config.schema, config.name),
+  }));
+  const signature = stableSignature(
+    prepared.map(({ config, inputSchema }) => ({
+      ...config,
+      schema: undefined,
+      inputSchema,
+    })),
+  );
+
   useEffect(() => {
-    // Register all tools
     const toolNames: string[] = [];
 
-    for (const config of tools) {
-      let inputSchema: ToolDefinition["inputSchema"];
-
-      try {
-        inputSchema = convertZodSchema(config.schema, config.name);
-      } catch (error) {
+    for (const { config, inputSchema, error } of prepared) {
+      if (error) {
         console.warn(
           `[useToolsWithSchema] Failed to convert Zod schema for tool "${config.name}"`,
           error,
         );
-        inputSchema = { type: "object", properties: {} };
       }
-
-      const tool: ToolDefinition = {
-        name: config.name,
-        description: config.description,
-        location: "client",
-        toModelOutput: (result) =>
-          toolsRef.current
-            .find((tool) => tool.name === config.name)
-            ?.toModelOutput?.(result),
-        inputSchema,
-        handler: async (params, context) => {
-          const currentConfig = toolsRef.current.find(
-            (t) => t.name === config.name,
-          );
-          if (currentConfig) {
-            return currentConfig.handler(params as TSchema["_output"], context);
-          }
-          return { success: false, error: "Tool handler not found" };
-        },
-        available: config.available ?? true,
-      };
-
-      registerTool(tool);
+      // Function fields call the latest config under this name.
+      const latest = () =>
+        toolsRef.current.find((tool) => tool.name === config.name);
+      registerTool(
+        withLatestFunctions(toToolDefinition(config, inputSchema), latest),
+      );
       toolNames.push(config.name);
     }
 
-    // Cleanup on unmount
     return () => {
       for (const name of toolNames) {
         unregisterTool(name);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tools.map((t) => t.name).join(","), ...dependencies]);
+  }, [signature, ...dependencies]);
 }
