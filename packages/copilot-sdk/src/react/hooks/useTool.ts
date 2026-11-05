@@ -154,6 +154,12 @@ function toToolDefinition<TParams>(
  *
  * Supports both Zod schemas and JSON schemas for inputSchema.
  *
+ * Registration is keyed on the config's content, so inline objects and
+ * schemas are safe. Non-function fields must describe the tool by value:
+ * React elements are treated as equal to each other, and a value that
+ * changes on every render (a Date or timestamp in the description, for
+ * example) re-registers the tool on every render.
+ *
  * @example
  * ```tsx
  * // Using Zod schema (recommended)

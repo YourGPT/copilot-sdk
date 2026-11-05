@@ -650,3 +650,112 @@ test("a skills change does not re-register load_skill", async () => {
   );
   assertSettled();
 });
+
+// ---------------------------------------------------------------------------
+// Latest-closure wrappers: `this`, removed tools, per-render content
+// ---------------------------------------------------------------------------
+
+test("handlers written as methods keep `this`", async () => {
+  function Methods() {
+    useTools({
+      lookup: {
+        description: "lookup",
+        inputSchema: { type: "object", properties: {} },
+        helper(params) {
+          return { success: true, via: "helper", params };
+        },
+        handler(params) {
+          return this.helper(params);
+        },
+      },
+    });
+    useTool({
+      name: "single",
+      description: "single",
+      inputSchema: { type: "object", properties: {} },
+      helper() {
+        return "ok";
+      },
+      handler() {
+        return { success: true, value: this.helper() };
+      },
+    });
+    return null;
+  }
+  await mount(h(Methods));
+  assert.deepEqual(await live("lookup").handler({ q: 1 }, {}), {
+    success: true,
+    via: "helper",
+    params: { q: 1 },
+  });
+  assert.equal((await live("single").handler({}, {})).value, "ok");
+  assertSettled();
+});
+
+test("a tool dropped from a toolset reports unavailable instead of running its old handler", async () => {
+  let ran = 0;
+  const toolset = (withB) => ({
+    a: {
+      description: "a",
+      inputSchema: { type: "object", properties: {} },
+      handler: () => ({ success: true }),
+    },
+    ...(withB
+      ? {
+          b: {
+            description: "b",
+            inputSchema: { type: "object", properties: {} },
+            handler: () => {
+              ran++;
+              return { success: true };
+            },
+          },
+        }
+      : {}),
+  });
+  function Toolset({ withB }) {
+    useTools(toolset(withB));
+    return null;
+  }
+  const root = await mount(h(Toolset, { withB: true }));
+  // The chat loop holds the definition while a call waits on approval.
+  const held = live("b");
+  await update(root, h(Toolset, { withB: false }));
+  assert.equal(live("b"), undefined, "b is unregistered");
+  assert.deepEqual(await held.handler({}, {}), {
+    success: false,
+    error: "Tool is no longer available",
+  });
+  assert.equal(ran, 0, "the removed handler did not run");
+  assertSettled();
+});
+
+test("a config that changes on every render is named in a warning before React gives up", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(String(args[0]));
+  let tick = 0;
+  function Clock() {
+    countRender("Clock");
+    useTool({
+      name: "now",
+      description: `Time is ${++tick}`,
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => ({ success: true }),
+    });
+    return null;
+  }
+  let threw;
+  try {
+    await mount(h(Clock));
+  } catch (error) {
+    threw = error;
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(threw || depthErrors > 0, "the loop is still a loop");
+  assert.ok(
+    warnings.some((w) => w.includes('Tool "now"')),
+    "the warning names the tool",
+  );
+});

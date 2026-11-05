@@ -119,6 +119,12 @@ export function toolSetSignature(
 
 type AnyFunction = ((...args: unknown[]) => unknown) & { displayName?: string };
 
+/** What a handler returns once its tool has left the toolset. */
+const unavailableToolResult = () => ({
+  success: false,
+  error: "Tool is no longer available",
+});
+
 /**
  * Replace each function on `definition` with a wrapper that calls the latest
  * version from `latest()` at call time. Lets a registered tool use fresh
@@ -126,6 +132,13 @@ type AnyFunction = ((...args: unknown[]) => unknown) & { displayName?: string };
  * again. Wrappers keep the original's `name` and `displayName`. They are
  * called, never mounted: `render` is invoked as a plain function, so its
  * identity may change between registrations without remounting anything.
+ *
+ * Each function is invoked as a method on the latest entry, so a handler
+ * written as `handler(params) { return this.helper(params) }` keeps working.
+ * When `latest()` has no entry (the key left the toolset, or the component
+ * unmounted while a call was waiting on approval), `handler` reports the tool
+ * as unavailable instead of running the removed closure; display functions
+ * fall back to the original.
  */
 export function withLatestFunctions<T extends object>(
   definition: T,
@@ -136,10 +149,15 @@ export function withLatestFunctions<T extends object>(
     if (typeof result[key] !== "function") continue;
     const original = result[key] as AnyFunction;
     const wrapper: AnyFunction = (...args: unknown[]) => {
-      const current = (latest() as Record<string, unknown> | undefined)?.[key];
-      if (typeof current === "function") return current(...args);
+      const entry = latest() as Record<string, unknown> | undefined;
+      const current = entry?.[key];
+      if (typeof current === "function") {
+        return (current as AnyFunction).apply(entry, args);
+      }
       // Shape changes (function → string) re-register, so this is only a guard.
-      return current === undefined ? original(...args) : current;
+      if (current !== undefined) return current;
+      if (key === "handler") return unavailableToolResult();
+      return original(...args);
     };
     Object.defineProperty(wrapper, "name", {
       value: original.name,

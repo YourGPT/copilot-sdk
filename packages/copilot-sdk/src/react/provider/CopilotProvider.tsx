@@ -555,6 +555,12 @@ export function useCopilot(): CopilotContextValue {
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
+// A tool whose content differs on every render (a Date or a timestamp in its
+// description, for example) re-registers on every render and loops. In
+// development, name the tool before React's update-depth error does.
+const REGISTRATION_BURST_WINDOW_MS = 1000;
+const REGISTRATION_BURST_LIMIT = 25;
+
 /** Replace an array's contents in place, keeping its identity. */
 function replaceContents<T>(target: T[], source: readonly T[]): void {
   target.length = 0;
@@ -850,12 +856,38 @@ export function CopilotProvider(props: CopilotProviderProps) {
     setToolsSignature(toolSetSignature(tools, registered));
   }, []);
 
+  const registrationBursts = useRef(
+    new Map<string, { count: number; since: number }>(),
+  );
+  const warnOnRegistrationBurst = useCallback((name: string) => {
+    const now = Date.now();
+    const bursts = registrationBursts.current;
+    const burst = bursts.get(name);
+    if (!burst || now - burst.since > REGISTRATION_BURST_WINDOW_MS) {
+      bursts.set(name, { count: 1, since: now });
+      return;
+    }
+    burst.count += 1;
+    if (burst.count === REGISTRATION_BURST_LIMIT) {
+      console.warn(
+        `[copilot-sdk] Tool "${name}" was registered ${REGISTRATION_BURST_LIMIT} times ` +
+          `within ${REGISTRATION_BURST_WINDOW_MS}ms. Something in its config changes on ` +
+          "every render (a Date, a timestamp or a random value in the description or " +
+          "resultConfig, for example). Keep tool content stable across renders and " +
+          "read changing values through a ref inside the handler.",
+      );
+    }
+  }, []);
+
   const registerTool = useCallback(
     (tool: ToolDefinition) => {
       chatRef.current?.registerTool(tool);
+      if (process.env.NODE_ENV !== "production") {
+        warnOnRegistrationBurst(tool.name);
+      }
       syncTools(tool);
     },
-    [syncTools],
+    [syncTools, warnOnRegistrationBurst],
   );
 
   const unregisterTool = useCallback(
@@ -892,7 +924,7 @@ export function CopilotProvider(props: CopilotProviderProps) {
   const registeredTools = useMemo(
     () => chatRef.current?.tools ?? [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [toolExecutions, toolsSignature],
+    [toolsSignature],
   );
   useIsomorphicLayoutEffect(() => {
     // Child effects that register run after this: point them at the array this
