@@ -89,6 +89,18 @@ function EagerSkillInjector({ skill }: { skill: SkillDefinition }) {
 // any "auto" skills in the registry
 // ============================================================
 
+// Module-level so the tool definition is the same object on every render.
+const LOAD_SKILL_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: {
+      type: "string",
+      description: "Name of the skill to load",
+    },
+  },
+  required: ["name"],
+} as const;
+
 function LoadSkillTool({
   registryRef,
   registryVersion,
@@ -140,16 +152,7 @@ function LoadSkillTool({
     description:
       "Load specialized instructions for a task. Call this when you need detailed guidance on a specific domain.",
     hidden: false,
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: {
-          type: "string",
-          description: "Name of the skill to load",
-        },
-      },
-      required: ["name"],
-    },
+    inputSchema: LOAD_SKILL_INPUT_SCHEMA,
     handler: async ({ name }: { name: string }) => {
       const registryKeys = Array.from(registryRef.current.keys());
       logOnce("skills", true, `load_skill called: ${name}`, {

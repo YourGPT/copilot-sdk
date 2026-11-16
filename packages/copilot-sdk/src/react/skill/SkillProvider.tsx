@@ -26,6 +26,7 @@ import { SkillContext } from "./SkillContext";
 import { useAIContext } from "../hooks/useAIContext";
 import { useTool } from "../hooks/useTool";
 import { useCopilot } from "../provider/CopilotProvider";
+import { stableSignature } from "../utils/tool-signature";
 
 // ============================================
 // Types
@@ -94,59 +95,54 @@ function SkillRequestSync({ skills }: { skills: ResolvedSkill[] }) {
   return null;
 }
 
-function SkillToolRegistrar({
-  registry,
-  skills,
-}: {
-  registry: SkillRegistry;
-  skills: ResolvedSkill[];
-}) {
-  useTool(
-    {
-      name: "load_skill",
-      description:
-        "Load a skill by name to get full instructions for a specialized task.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-            description: "The name of the skill to load.",
-          },
-        },
-        required: ["name"],
-      },
-      handler: async ({ name }: { name: string }) => {
-        const skill = registry.get(name);
-        if (!skill) {
-          const available =
-            registry
-              .getAuto()
-              .map((s) => s.name)
-              .join(", ") || "none";
-          return {
-            success: false,
-            error: `Skill "${name}" not found. Available skills: ${available}`,
-          };
-        }
-        const sourceTypeMap = {
-          inline: "client-inline",
-          url: "remote-url",
-          file: "server-dir",
-        } as const;
-        return {
-          success: true,
-          name: skill.name,
-          description: skill.description,
-          strategy: skill.strategy ?? "auto",
-          content: skill.content,
-          source: sourceTypeMap[skill.source.type],
-        };
-      },
+// Module-level so the tool definition is the same object on every render.
+const LOAD_SKILL_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: {
+      type: "string",
+      description: "The name of the skill to load.",
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [skills],
-  );
+  },
+  required: ["name"],
+} as const;
+
+function SkillToolRegistrar({ registry }: { registry: SkillRegistry }) {
+  // The handler reads the registry directly, so the registration never has to
+  // follow skill changes: it is made once per mount.
+  useTool({
+    name: "load_skill",
+    description:
+      "Load a skill by name to get full instructions for a specialized task.",
+    inputSchema: LOAD_SKILL_INPUT_SCHEMA,
+    handler: async ({ name }: { name: string }) => {
+      const skill = registry.get(name);
+      if (!skill) {
+        const available =
+          registry
+            .getAuto()
+            .map((s) => s.name)
+            .join(", ") || "none";
+        return {
+          success: false,
+          error: `Skill "${name}" not found. Available skills: ${available}`,
+        };
+      }
+      const sourceTypeMap = {
+        inline: "client-inline",
+        url: "remote-url",
+        file: "server-dir",
+      } as const;
+      return {
+        success: true,
+        name: skill.name,
+        description: skill.description,
+        strategy: skill.strategy ?? "auto",
+        content: skill.content,
+        source: sourceTypeMap[skill.source.type],
+      };
+    },
+  });
 
   return null;
 }
@@ -169,11 +165,17 @@ export function SkillProvider({
   // Reactive skills snapshot (triggers re-renders when skills change)
   const [skills, setSkills] = useState<ResolvedSkill[]>([]);
 
-  // Register skills passed as props
-  useEffect(() => {
-    if (!skillsProp?.length) return;
+  // Register skills passed as props. Keyed on content: `skills={[a, b]}` is a
+  // new array on every render, and re-registering each time churns state.
+  const skillsPropRef = useRef(skillsProp);
+  skillsPropRef.current = skillsProp;
+  const skillsKey = stableSignature(skillsProp ?? []);
 
-    for (const def of skillsProp) {
+  useEffect(() => {
+    const definitions = skillsPropRef.current;
+    if (!definitions?.length) return;
+
+    for (const def of definitions) {
       if (def.source.type !== "inline") {
         // url/file skills need content resolved — not supported client-side
         console.warn(
@@ -196,12 +198,13 @@ export function SkillProvider({
 
     // Cleanup prop-provided skills on unmount or prop change
     return () => {
-      for (const def of skillsProp ?? []) {
+      for (const def of definitions) {
         registry.unregister(def.name);
       }
       setSkills(registry.getAll());
     };
-  }, [skillsProp]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillsKey]);
 
   // Context-exposed register/unregister (for useSkill hook)
   const register = useCallback((skill: ResolvedSkill) => {
@@ -222,7 +225,7 @@ export function SkillProvider({
   return (
     <SkillContext.Provider value={contextValue}>
       <SkillContextInjector registry={registry} skills={skills} />
-      <SkillToolRegistrar registry={registry} skills={skills} />
+      <SkillToolRegistrar registry={registry} />
       <SkillRequestSync skills={skills} />
       {children}
     </SkillContext.Provider>
