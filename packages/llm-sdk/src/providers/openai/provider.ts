@@ -2,6 +2,7 @@ import { textToolOutput } from "../../core/tool-output";
 import {
   parseToolArguments,
   validateToolCalls,
+  finishReasonAllowsToolCalls,
 } from "../../core/tool-validation";
 import {
   resolveOpenAITransport,
@@ -330,16 +331,21 @@ export function openai(
       if (
         toolCalls.length &&
         choice.finish_reason &&
-        !["tool_calls", "function_call"].includes(choice.finish_reason)
+        !finishReasonAllowsToolCalls(choice.finish_reason)
       )
         throw invalidProviderResponse(
           "OpenAI response ended with incomplete tool calls",
         );
+      const finishReason = mapFinishReason(choice.finish_reason);
 
       return {
         text: message.content ?? "",
         toolCalls,
-        finishReason: mapFinishReason(choice.finish_reason),
+        // A tool-calling turn that ended with "stop" (Gemini) is reported as the tool turn it is.
+        finishReason:
+          toolCalls.length && finishReason === "stop"
+            ? "tool-calls"
+            : finishReason,
         usage: {
           promptTokens: response.usage?.prompt_tokens ?? 0,
           completionTokens: response.usage?.completion_tokens ?? 0,
@@ -483,13 +489,19 @@ export function openai(
           args: parseToolArguments(call.arguments),
         };
       });
-      if (calls.length && finishReason !== "tool-calls")
+      if (calls.length && !finishReasonAllowsToolCalls(finishReason))
         throw invalidProviderResponse(
           "OpenAI stream ended with incomplete tool calls",
         );
       validateToolCalls(calls);
       for (const toolCall of calls) yield { type: "tool-call", toolCall };
-      yield { type: "finish", finishReason, usage };
+      yield {
+        type: "finish",
+        // A tool-calling turn that ended with "stop" (Gemini) is reported as the tool turn it is.
+        finishReason:
+          calls.length && finishReason === "stop" ? "tool-calls" : finishReason,
+        usage,
+      };
     },
   };
 }

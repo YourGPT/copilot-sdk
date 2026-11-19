@@ -535,17 +535,29 @@ export class StreamResult {
         break;
 
       case "tool_calls":
-        collected.toolCalls.push(...event.toolCalls);
+        // A client tool is announced twice: action:start (and action:args) while it streams, then
+        // here when the turn suspends. Update that entry rather than listing the call again — a
+        // duplicate makes the caller run the tool twice and send two results for one call id,
+        // which providers reject ("each tool_use must have a single result").
+        for (const call of event.toolCalls) {
+          const existing = collected.toolCalls.find((tc) => tc.id === call.id);
+          if (existing)
+            Object.assign(existing, call, {
+              hidden: existing.hidden ?? call.hidden,
+            });
+          else collected.toolCalls.push(call);
+        }
         break;
 
       case "action:start":
         // Capture tool call with hidden flag (for server-side tools)
-        collected.toolCalls.push({
-          id: event.id,
-          name: event.name,
-          args: {},
-          hidden: event.hidden,
-        });
+        if (!collected.toolCalls.some((tc) => tc.id === event.id))
+          collected.toolCalls.push({
+            id: event.id,
+            name: event.name,
+            args: {},
+            hidden: event.hidden,
+          });
         break;
 
       case "action:args": {

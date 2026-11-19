@@ -102,7 +102,16 @@ export function formatToolResults(
 export function isToolUseStop(response: unknown): boolean {
   const resp = response as Record<string, unknown>;
   const choices = resp?.choices as Array<Record<string, unknown>> | undefined;
-  return choices?.[0]?.finish_reason === "tool_calls";
+  const choice = choices?.[0];
+  if (choice?.finish_reason === "tool_calls") return true;
+  // Some OpenAI-compatible APIs (Gemini's) end a tool-calling turn with "stop".
+  const toolCalls = (choice?.message as Record<string, unknown> | undefined)
+    ?.tool_calls;
+  return (
+    choice?.finish_reason === "stop" &&
+    Array.isArray(toolCalls) &&
+    toolCalls.length > 0
+  );
 }
 
 /**

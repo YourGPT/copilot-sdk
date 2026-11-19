@@ -38,6 +38,26 @@ export function validateToolCalls(
   }
 }
 
+/**
+ * Whether a provider's finish reason can end a turn that made tool calls.
+ *
+ * OpenAI reports "tool_calls" (legacy "function_call"), but several OpenAI-compatible APIs end a
+ * tool-calling turn with "stop": Gemini's OpenAI endpoint does it on every tool call. A "stop" turn
+ * is still complete: truncation reports "length" and filtering "content_filter", both rejected here,
+ * and a call missing its id or name, or with unparsable arguments, is rejected by validateToolCalls
+ * and parseToolArguments. Accepts raw ("tool_calls") and mapped ("tool-calls") reasons.
+ */
+export function finishReasonAllowsToolCalls(
+  reason: string | null | undefined,
+): boolean {
+  return (
+    reason === "tool_calls" ||
+    reason === "function_call" ||
+    reason === "tool-calls" ||
+    reason === "stop"
+  );
+}
+
 export function validateMaxSteps(value: number): void {
   if (!Number.isSafeInteger(value) || value < 1)
     throw new Error("maxSteps must be a positive safe integer");

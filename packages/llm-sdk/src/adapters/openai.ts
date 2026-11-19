@@ -1,5 +1,9 @@
 import { toolOutputForProvider, textToolOutput } from "../core/tool-output";
-import { parseToolArguments, validateToolCalls } from "../core/tool-validation";
+import {
+  finishReasonAllowsToolCalls,
+  parseToolArguments,
+  validateToolCalls,
+} from "../core/tool-validation";
 import {
   resolveOpenAITransport,
   useOpenAIResponses,
@@ -1073,10 +1077,7 @@ export class OpenAIAdapter implements LLMAdapter {
         throw invalidProviderResponse(
           "OpenAI stream ended without a finish reason",
         );
-      if (
-        toolCalls.size &&
-        !["tool_calls", "function_call"].includes(finishReason)
-      ) {
+      if (toolCalls.size && !finishReasonAllowsToolCalls(finishReason)) {
         throw invalidProviderResponse(
           "OpenAI stream ended with incomplete tool calls",
         );
@@ -1207,7 +1208,7 @@ export class OpenAIAdapter implements LLMAdapter {
     if (
       toolCalls.length &&
       choice?.finish_reason &&
-      !["tool_calls", "function_call"].includes(choice.finish_reason)
+      !finishReasonAllowsToolCalls(choice.finish_reason)
     )
       throw invalidProviderResponse(
         "OpenAI response ended with incomplete tool calls",
