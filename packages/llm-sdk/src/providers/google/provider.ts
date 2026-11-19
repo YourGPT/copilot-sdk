@@ -1,4 +1,5 @@
 import { textToolOutput } from "../../core/tool-output";
+import { mapOpenAIFinishReason } from "../../core/tool-validation";
 /**
  * Google Provider - OpenAI-Compatible
  *
@@ -231,7 +232,10 @@ export function google(
       return {
         text: message.content ?? "",
         toolCalls,
-        finishReason: mapFinishReason(choice.finish_reason),
+        finishReason: mapOpenAIFinishReason(
+          choice.finish_reason,
+          toolCalls.length > 0,
+        ),
         usage: {
           promptTokens: response.usage?.prompt_tokens ?? 0,
           completionTokens: response.usage?.completion_tokens ?? 0,
@@ -262,6 +266,8 @@ export function google(
         name: string;
         arguments: string;
       } | null = null;
+      // Gemini can end a tool-calling turn with "stop"; report it as the tool turn it is.
+      let madeToolCalls = false;
 
       let totalPromptTokens = 0;
       let totalCompletionTokens = 0;
@@ -287,6 +293,7 @@ export function google(
             if (tc.id) {
               // New tool call - emit previous if exists
               if (currentToolCall) {
+                madeToolCalls = true;
                 yield {
                   type: "tool-call",
                   toolCall: {
@@ -312,6 +319,7 @@ export function google(
         if (choice?.finish_reason) {
           // Emit pending tool call
           if (currentToolCall) {
+            madeToolCalls = true;
             yield {
               type: "tool-call",
               toolCall: {
@@ -331,7 +339,10 @@ export function google(
 
           yield {
             type: "finish",
-            finishReason: mapFinishReason(choice.finish_reason),
+            finishReason: mapOpenAIFinishReason(
+              choice.finish_reason,
+              madeToolCalls,
+            ),
             usage: {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
@@ -347,25 +358,6 @@ export function google(
 // ============================================
 // Helper Functions
 // ============================================
-
-/**
- * Map finish reason to our FinishReason type
- */
-function mapFinishReason(reason: string | null): FinishReason {
-  switch (reason) {
-    case "stop":
-      return "stop";
-    case "length":
-      return "length";
-    case "tool_calls":
-    case "function_call":
-      return "tool-calls";
-    case "content_filter":
-      return "content-filter";
-    default:
-      return "unknown";
-  }
-}
 
 /**
  * Format CoreMessage[] for Google's OpenAI-compatible API

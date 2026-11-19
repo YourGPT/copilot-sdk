@@ -1,6 +1,7 @@
 import { toolOutputForProvider, textToolOutput } from "../core/tool-output";
 import {
-  finishReasonAllowsToolCalls,
+  assertToolTurnComplete,
+  createToolCallSlotter,
   parseToolArguments,
   validateToolCalls,
 } from "../core/tool-validation";
@@ -979,7 +980,7 @@ export class OpenAIAdapter implements LLMAdapter {
       });
 
       const toolCalls = new Map<
-        number,
+        string,
         {
           id: string;
           name: string;
@@ -987,6 +988,7 @@ export class OpenAIAdapter implements LLMAdapter {
           extra_content?: Record<string, unknown>;
         }
       >();
+      const slotOf = createToolCallSlotter();
       let finishReason: string | undefined;
 
       // Track citations from web search
@@ -1047,8 +1049,8 @@ export class OpenAIAdapter implements LLMAdapter {
         }
 
         for (const part of delta?.tool_calls ?? []) {
-          const index = part.index ?? 0;
-          const call = toolCalls.get(index) ?? {
+          const slot = slotOf(part);
+          const call = toolCalls.get(slot) ?? {
             id: "",
             name: "",
             arguments: "",
@@ -1058,7 +1060,7 @@ export class OpenAIAdapter implements LLMAdapter {
           if (part.function?.arguments)
             call.arguments += part.function.arguments;
           if (part.extra_content) call.extra_content = part.extra_content;
-          toolCalls.set(index, call);
+          toolCalls.set(slot, call);
         }
 
         // Capture usage from final chunk (OpenAI sends it with stream_options.include_usage)
@@ -1077,11 +1079,11 @@ export class OpenAIAdapter implements LLMAdapter {
         throw invalidProviderResponse(
           "OpenAI stream ended without a finish reason",
         );
-      if (toolCalls.size && !finishReasonAllowsToolCalls(finishReason)) {
-        throw invalidProviderResponse(
-          "OpenAI stream ended with incomplete tool calls",
-        );
-      }
+      assertToolTurnComplete(
+        finishReason,
+        [...toolCalls.values()].map((call) => call.arguments),
+        "OpenAI stream",
+      );
       validateToolCalls(
         [...toolCalls.values()].map((call) => ({
           ...call,
@@ -1205,13 +1207,13 @@ export class OpenAIAdapter implements LLMAdapter {
         : {}),
     }));
     validateToolCalls(toolCalls);
-    if (
-      toolCalls.length &&
-      choice?.finish_reason &&
-      !finishReasonAllowsToolCalls(choice.finish_reason)
-    )
-      throw invalidProviderResponse(
-        "OpenAI response ended with incomplete tool calls",
+    if (choice?.finish_reason)
+      assertToolTurnComplete(
+        choice.finish_reason,
+        (message?.tool_calls ?? []).map(
+          (toolCall: any) => toolCall.function?.arguments,
+        ),
+        "OpenAI response",
       );
     return {
       content: message?.content ?? "",

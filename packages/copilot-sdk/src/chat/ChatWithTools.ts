@@ -253,7 +253,7 @@ export class ChatWithTools {
       this.debug("Tool calls received:", toolCalls.length);
 
       // Convert tool calls to the format expected by agent loop
-      const toolCallInfos = toolCalls.map((tc) => {
+      const receivedToolCalls = toolCalls.map((tc) => {
         const tcAny = tc as {
           id: string;
           function?: { name: string; arguments: string };
@@ -275,6 +275,15 @@ export class ChatWithTools {
 
         return { id: tc.id, name, args };
       });
+
+      // One execution per call id, whichever path emitted the calls (JSON response, streamed
+      // tool_calls, or the last-message fallback). A server can list a call more than once —
+      // llm-sdk 2.6.0's runtime.chat() listed each pending client call twice — and running it
+      // twice sends two results for one id, which providers reject. The later entry carries the
+      // final arguments, so it replaces the earlier one (Map keeps the first position).
+      const latestById = new Map<string, (typeof receivedToolCalls)[number]>();
+      for (const call of receivedToolCalls) latestById.set(call.id, call);
+      const toolCallInfos = [...latestById.values()];
 
       const toolRun = this.toolRun;
       for (const call of toolCallInfos) this.pendingToolCalls.add(call.id);

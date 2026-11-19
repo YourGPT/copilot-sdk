@@ -1,8 +1,10 @@
 import { textToolOutput } from "../../core/tool-output";
 import {
+  assertToolTurnComplete,
+  createToolCallSlotter,
+  mapOpenAIFinishReason,
   parseToolArguments,
   validateToolCalls,
-  finishReasonAllowsToolCalls,
 } from "../../core/tool-validation";
 import {
   resolveOpenAITransport,
@@ -328,24 +330,20 @@ export function openai(
       );
 
       validateToolCalls(toolCalls);
-      if (
-        toolCalls.length &&
-        choice.finish_reason &&
-        !finishReasonAllowsToolCalls(choice.finish_reason)
-      )
-        throw invalidProviderResponse(
-          "OpenAI response ended with incomplete tool calls",
+      if (choice.finish_reason)
+        assertToolTurnComplete(
+          choice.finish_reason,
+          (message.tool_calls ?? []).map((tc: any) => tc.function?.arguments),
+          "OpenAI response",
         );
-      const finishReason = mapFinishReason(choice.finish_reason);
 
       return {
         text: message.content ?? "",
         toolCalls,
-        // A tool-calling turn that ended with "stop" (Gemini) is reported as the tool turn it is.
-        finishReason:
-          toolCalls.length && finishReason === "stop"
-            ? "tool-calls"
-            : finishReason,
+        finishReason: mapOpenAIFinishReason(
+          choice.finish_reason,
+          toolCalls.length > 0,
+        ),
         usage: {
           promptTokens: response.usage?.prompt_tokens ?? 0,
           completionTokens: response.usage?.completion_tokens ?? 0,
@@ -436,11 +434,12 @@ export function openai(
       );
 
       const toolCalls = new Map<
-        number,
+        string,
         { id: string; name: string; arguments: string }
       >();
+      const slotOf = createToolCallSlotter();
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      let finishReason: FinishReason | undefined;
+      let finishReason: string | undefined;
       for await (const chunk of stream) {
         throwIfAborted(params.signal);
         if (chunk.usage) {
@@ -457,8 +456,8 @@ export function openai(
         if (choice?.delta?.content)
           yield { type: "text-delta", text: choice.delta.content };
         for (const part of choice?.delta?.tool_calls ?? []) {
-          const index = part.index ?? 0;
-          const call = toolCalls.get(index) ?? {
+          const slot = slotOf(part);
+          const call = toolCalls.get(slot) ?? {
             id: "",
             name: "",
             arguments: "",
@@ -467,10 +466,9 @@ export function openai(
           if (part.function?.name) call.name += part.function.name;
           if (part.function?.arguments)
             call.arguments += part.function.arguments;
-          toolCalls.set(index, call);
+          toolCalls.set(slot, call);
         }
-        if (choice?.finish_reason)
-          finishReason = mapFinishReason(choice.finish_reason);
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
       }
       throwIfAborted(params.signal);
       if (!finishReason)
@@ -489,17 +487,16 @@ export function openai(
           args: parseToolArguments(call.arguments),
         };
       });
-      if (calls.length && !finishReasonAllowsToolCalls(finishReason))
-        throw invalidProviderResponse(
-          "OpenAI stream ended with incomplete tool calls",
-        );
+      assertToolTurnComplete(
+        finishReason,
+        [...toolCalls.values()].map((call) => call.arguments),
+        "OpenAI stream",
+      );
       validateToolCalls(calls);
       for (const toolCall of calls) yield { type: "tool-call", toolCall };
       yield {
         type: "finish",
-        // A tool-calling turn that ended with "stop" (Gemini) is reported as the tool turn it is.
-        finishReason:
-          calls.length && finishReason === "stop" ? "tool-calls" : finishReason,
+        finishReason: mapOpenAIFinishReason(finishReason, calls.length > 0),
         usage,
       };
     },
@@ -509,25 +506,6 @@ export function openai(
 // ============================================
 // Helper Functions
 // ============================================
-
-/**
- * Map OpenAI finish reason to our FinishReason type
- */
-function mapFinishReason(reason: string | null): FinishReason {
-  switch (reason) {
-    case "stop":
-      return "stop";
-    case "length":
-      return "length";
-    case "tool_calls":
-    case "function_call":
-      return "tool-calls";
-    case "content_filter":
-      return "content-filter";
-    default:
-      return "unknown";
-  }
-}
 
 /**
  * Format CoreMessage[] for OpenAI API

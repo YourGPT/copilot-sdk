@@ -538,13 +538,18 @@ export class StreamResult {
         // A client tool is announced twice: action:start (and action:args) while it streams, then
         // here when the turn suspends. Update that entry rather than listing the call again — a
         // duplicate makes the caller run the tool twice and send two results for one call id,
-        // which providers reject ("each tool_use must have a single result").
+        // which providers reject ("each tool_use must have a single result"). This later event
+        // carries the final arguments, so its fields win; a field it leaves out keeps the earlier
+        // value, so the arguments and the hidden flag always come from the same announcement.
         for (const call of event.toolCalls) {
           const existing = collected.toolCalls.find((tc) => tc.id === call.id);
           if (existing)
-            Object.assign(existing, call, {
-              hidden: existing.hidden ?? call.hidden,
-            });
+            Object.assign(
+              existing,
+              Object.fromEntries(
+                Object.entries(call).filter(([, value]) => value !== undefined),
+              ),
+            );
           else collected.toolCalls.push(call);
         }
         break;

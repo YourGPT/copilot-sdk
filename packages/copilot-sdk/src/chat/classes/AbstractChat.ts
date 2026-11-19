@@ -2089,16 +2089,8 @@ export class AbstractChat<T extends UIMessage = UIMessage> {
         : undefined;
 
     if (response.requiresAction && response.toolCalls?.length) {
-      // One execution per call id: a server that lists a call twice (llm-sdk 2.6.0's collect() did)
-      // would otherwise run the tool twice and send two results for one id, which providers reject.
-      const seenToolCallIds = new Set<string>();
-      const uniqueToolCalls = response.toolCalls.filter((tc) => {
-        if (seenToolCallIds.has(tc.id)) return false;
-        seenToolCallIds.add(tc.id);
-        return true;
-      });
       this.emit("toolCalls", {
-        toolCalls: uniqueToolCalls.map((tc) => ({
+        toolCalls: response.toolCalls.map((tc) => ({
           id: tc.id,
           type: "function" as const,
           function: {

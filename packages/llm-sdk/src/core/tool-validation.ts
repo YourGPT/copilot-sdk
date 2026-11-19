@@ -1,4 +1,5 @@
 import { invalidProviderResponse } from "./provider-error";
+import type { FinishReason } from "./types";
 
 /** Never turn malformed or truncated provider arguments into an executable empty call. */
 export function parseToolArguments(value: unknown): Record<string, unknown> {
@@ -56,6 +57,76 @@ export function finishReasonAllowsToolCalls(
     reason === "tool-calls" ||
     reason === "stop"
   );
+}
+
+/**
+ * Maps an OpenAI-format finish reason. A turn that made tool calls is reported as "tool-calls" even
+ * when the provider says "stop" (Gemini's OpenAI endpoint does), so every OpenAI-format provider and
+ * formatter describes the same response the same way.
+ */
+export function mapOpenAIFinishReason(
+  reason: string | null | undefined,
+  hasToolCalls = false,
+): FinishReason {
+  switch (reason) {
+    case "stop":
+      return hasToolCalls ? "tool-calls" : "stop";
+    case "length":
+      return "length";
+    case "tool_calls":
+    case "function_call":
+      return "tool-calls";
+    case "content_filter":
+      return "content-filter";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Throws unless a turn that made tool calls ended cleanly. `rawArguments` holds each call's argument
+ * text as the provider sent it. A "stop" turn carries no tool-call marker confirming the calls
+ * finished, so each call must also have received argument text: an empty string would otherwise
+ * parse as {} and run the tool with nothing filled in.
+ */
+export function assertToolTurnComplete(
+  reason: string | null | undefined,
+  rawArguments: readonly unknown[],
+  source: string,
+): void {
+  if (!rawArguments.length) return;
+  if (!finishReasonAllowsToolCalls(reason))
+    throw invalidProviderResponse(`${source} ended with incomplete tool calls`);
+  if (
+    reason === "stop" &&
+    rawArguments.some((args) => typeof args !== "string" || !args.trim())
+  )
+    throw invalidProviderResponse(
+      `${source} ended with a tool call that has no arguments`,
+    );
+}
+
+/**
+ * Returns a function that picks the slot a streamed tool-call chunk belongs to. OpenAI tags every
+ * chunk with `index`, but some OpenAI-compatible APIs (Gemini's) can omit it; defaulting to slot 0
+ * merged parallel calls into one ("firstsecond", "{}{}"). Without an index, a chunk with an `id`
+ * gets that call's slot, and a chunk with neither continues the call before it.
+ */
+export function createToolCallSlotter(): (part: {
+  index?: number | null;
+  id?: string | null;
+}) => string {
+  let previous: string | undefined;
+  return (part) => {
+    const key =
+      typeof part.index === "number"
+        ? `index:${part.index}`
+        : part.id
+          ? `id:${part.id}`
+          : (previous ?? "index:0");
+    previous = key;
+    return key;
+  };
 }
 
 export function validateMaxSteps(value: number): void {
