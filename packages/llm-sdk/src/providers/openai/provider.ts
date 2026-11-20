@@ -1,7 +1,7 @@
 import { textToolOutput } from "../../core/tool-output";
 import {
   assertToolTurnComplete,
-  createToolCallSlotter,
+  createToolCallAssembler,
   mapOpenAIFinishReason,
   parseToolArguments,
   validateToolCalls,
@@ -320,6 +320,15 @@ export function openai(
       const choice = response.choices[0];
       const message = choice.message;
 
+      // Check the turn ended cleanly before parsing: truncated arguments then report as an
+      // incomplete turn rather than as invalid JSON.
+      if (choice.finish_reason)
+        assertToolTurnComplete(
+          choice.finish_reason,
+          (message.tool_calls ?? []).map((tc: any) => tc.function?.arguments),
+          "OpenAI response",
+        );
+
       // Parse tool calls
       const toolCalls: ToolCall[] = (message.tool_calls ?? []).map(
         (tc: any) => ({
@@ -330,12 +339,6 @@ export function openai(
       );
 
       validateToolCalls(toolCalls);
-      if (choice.finish_reason)
-        assertToolTurnComplete(
-          choice.finish_reason,
-          (message.tool_calls ?? []).map((tc: any) => tc.function?.arguments),
-          "OpenAI response",
-        );
 
       return {
         text: message.content ?? "",
@@ -433,11 +436,8 @@ export function openai(
         { signal: params.signal },
       );
 
-      const toolCalls = new Map<
-        string,
-        { id: string; name: string; arguments: string }
-      >();
-      const slotOf = createToolCallSlotter();
+      // Groups streamed chunks into calls; see createToolCallAssembler for the rules.
+      const assembler = createToolCallAssembler();
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       let finishReason: string | undefined;
       for await (const chunk of stream) {
@@ -455,19 +455,7 @@ export function openai(
         const choice = chunk.choices?.[0];
         if (choice?.delta?.content)
           yield { type: "text-delta", text: choice.delta.content };
-        for (const part of choice?.delta?.tool_calls ?? []) {
-          const slot = slotOf(part);
-          const call = toolCalls.get(slot) ?? {
-            id: "",
-            name: "",
-            arguments: "",
-          };
-          if (part.id) call.id = part.id;
-          if (part.function?.name) call.name += part.function.name;
-          if (part.function?.arguments)
-            call.arguments += part.function.arguments;
-          toolCalls.set(slot, call);
-        }
+        for (const part of choice?.delta?.tool_calls ?? []) assembler.add(part);
         if (choice?.finish_reason) finishReason = choice.finish_reason;
       }
       throwIfAborted(params.signal);
@@ -475,8 +463,16 @@ export function openai(
         throw invalidProviderResponse(
           "OpenAI stream ended without a finish reason",
         );
+      const toolCalls = assembler.finish();
+      // Check the turn ended cleanly before parsing: truncated arguments then report as an
+      // incomplete turn rather than as invalid JSON.
+      assertToolTurnComplete(
+        finishReason,
+        toolCalls.map((call) => call.arguments),
+        "OpenAI stream",
+      );
       // Parse all calls before yielding any executable call.
-      const calls = [...toolCalls.values()].map((call) => {
+      const calls = toolCalls.map((call) => {
         if (!call.id || !call.name)
           throw invalidProviderResponse(
             "OpenAI stream contains an incomplete tool call",
@@ -487,11 +483,6 @@ export function openai(
           args: parseToolArguments(call.arguments),
         };
       });
-      assertToolTurnComplete(
-        finishReason,
-        [...toolCalls.values()].map((call) => call.arguments),
-        "OpenAI stream",
-      );
       validateToolCalls(calls);
       for (const toolCall of calls) yield { type: "tool-call", toolCall };
       yield {

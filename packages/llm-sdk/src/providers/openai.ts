@@ -1,4 +1,5 @@
 import {
+  assertToolTurnComplete,
   mapOpenAIFinishReason,
   parseToolArguments,
 } from "../core/tool-validation";
@@ -57,6 +58,16 @@ export function parseToolCalls(response: unknown): UnifiedToolCall[] {
   const choices = resp?.choices as Array<Record<string, unknown>> | undefined;
   const message = choices?.[0]?.message as Record<string, unknown> | undefined;
   const toolCalls = (message?.tool_calls as OpenAIToolCall[]) || [];
+
+  // isToolUseStop accepts a "stop" turn that made tool calls (Gemini), so apply the adapters'
+  // guard too: a call with no argument text must not run with {}. Other finish reasons keep
+  // their existing handling in the agent loop.
+  if (choices?.[0]?.finish_reason === "stop")
+    assertToolTurnComplete(
+      "stop",
+      toolCalls.map((tc) => tc.function?.arguments),
+      "OpenAI response",
+    );
 
   return toolCalls.map((tc) => {
     const input = parseToolArguments(tc.function.arguments);

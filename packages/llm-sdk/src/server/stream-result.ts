@@ -523,6 +523,22 @@ export class StreamResult {
     };
   }
 
+  /** Client calls the runtime listed as pending (its tool_calls event), per collected result. */
+  private pendingClientCalls = new WeakMap<
+    CollectedResult,
+    Set<ToolCallInfo>
+  >();
+
+  /** The most recently started call with this id; ids can repeat across loop iterations. */
+  private latestToolCall(
+    collected: CollectedResult,
+    id: string,
+  ): ToolCallInfo | undefined {
+    for (let i = collected.toolCalls.length - 1; i >= 0; i--)
+      if (collected.toolCalls[i].id === id) return collected.toolCalls[i];
+    return undefined;
+  }
+
   /**
    * Collect event into result
    */
@@ -534,40 +550,44 @@ export class StreamResult {
         collected.text += event.content;
         break;
 
-      case "tool_calls":
-        // A client tool is announced twice: action:start (and action:args) while it streams, then
-        // here when the turn suspends. Update that entry rather than listing the call again — a
-        // duplicate makes the caller run the tool twice and send two results for one call id,
-        // which providers reject ("each tool_use must have a single result"). This later event
-        // carries the final arguments, so its fields win; a field it leaves out keeps the earlier
-        // value, so the arguments and the hidden flag always come from the same announcement.
+      case "tool_calls": {
+        // The runtime's list of client calls the caller must run. Each was already recorded by its
+        // action:start, so update that entry instead of listing the call again: a duplicate makes
+        // the caller run the tool twice and send two results for one id, which providers reject
+        // ("each tool_use must have a single result"). The entries are remembered as the pending
+        // set for the done event below.
+        const pending = new Set<ToolCallInfo>();
         for (const call of event.toolCalls) {
-          const existing = collected.toolCalls.find((tc) => tc.id === call.id);
-          if (existing)
-            Object.assign(
-              existing,
-              Object.fromEntries(
-                Object.entries(call).filter(([, value]) => value !== undefined),
-              ),
-            );
-          else collected.toolCalls.push(call);
+          const defined = Object.fromEntries(
+            Object.entries(call).filter(([, value]) => value !== undefined),
+          );
+          let entry = this.latestToolCall(collected, call.id);
+          if (entry) Object.assign(entry, defined);
+          else {
+            // A copy, so later updates never rewrite the event kept in collected.events.
+            entry = { ...call };
+            collected.toolCalls.push(entry);
+          }
+          pending.add(entry);
         }
+        this.pendingClientCalls.set(collected, pending);
         break;
+      }
 
       case "action:start":
-        // Capture tool call with hidden flag (for server-side tools)
-        if (!collected.toolCalls.some((tc) => tc.id === event.id))
-          collected.toolCalls.push({
-            id: event.id,
-            name: event.name,
-            args: {},
-            hidden: event.hidden,
-          });
+        // One entry per started call. Ids are unique within one model reply (the runtime rejects
+        // a repeat), so the same id again is a new call from a later loop iteration.
+        collected.toolCalls.push({
+          id: event.id,
+          name: event.name,
+          args: {},
+          hidden: event.hidden,
+        });
         break;
 
       case "action:args": {
-        // Update args for the tool call
-        const tc = collected.toolCalls.find((t) => t.id === event.id);
+        // Arguments belong to the call that started last with this id.
+        const tc = this.latestToolCall(collected, event.id);
         if (tc) {
           try {
             tc.args = JSON.parse(event.args || "{}");
@@ -599,7 +619,15 @@ export class StreamResult {
               .filter((m) => m.role === "tool" && m.tool_call_id)
               .map((m) => m.tool_call_id as string),
           );
-          if (resolvedToolIds.size > 0) {
+          // When the runtime announced the pending client calls (tool_calls), that list is exact.
+          // Matching ids against results is only the fallback: it drops a pending call whenever
+          // a backend reuses an id that an earlier iteration already answered ("call_0" each turn).
+          const pending = this.pendingClientCalls.get(collected);
+          if (pending?.size) {
+            collected.toolCalls = collected.toolCalls.filter((tc) =>
+              pending.has(tc),
+            );
+          } else if (resolvedToolIds.size > 0) {
             collected.toolCalls = collected.toolCalls.filter(
               (tc) => !resolvedToolIds.has(tc.id),
             );

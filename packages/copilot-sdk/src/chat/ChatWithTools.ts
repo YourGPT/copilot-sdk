@@ -113,6 +113,11 @@ export interface ChatWithToolsCallbacks extends ChatCallbacks<UIMessage> {
 export class ChatWithTools {
   private toolRun = 0;
   private pendingToolCalls = new Set<string>();
+  /**
+   * Call ids executing right now, with the run (see toolRun) that started them. Only used to avoid
+   * starting the same call twice; cancellation bookkeeping stays in pendingToolCalls.
+   */
+  private runningToolCalls = new Map<string, number>();
   private chat: AbstractChat<UIMessage>;
   private agentLoop: AbstractAgentLoop;
   private config: ChatWithToolsConfig;
@@ -279,17 +284,47 @@ export class ChatWithTools {
       // One execution per call id, whichever path emitted the calls (JSON response, streamed
       // tool_calls, or the last-message fallback). A server can list a call more than once —
       // llm-sdk 2.6.0's runtime.chat() listed each pending client call twice — and running it
-      // twice sends two results for one id, which providers reject. The later entry carries the
-      // final arguments, so it replaces the earlier one (Map keeps the first position).
-      const latestById = new Map<string, (typeof receivedToolCalls)[number]>();
-      for (const call of receivedToolCalls) latestById.set(call.id, call);
-      const toolCallInfos = [...latestById.values()];
-
+      // twice sends two results for one id, which providers reject.
+      // - Within an event, a repeated id keeps its first position but takes the later entry,
+      //   which carries the final arguments.
+      // - An id that is still executing in this run is not started again.
+      // - Calls without an id cannot be matched, so each one is passed on untouched: the same
+      //   as when this handler did no deduplication at all. (llm-sdk rejects id-less calls on
+      //   the server, so they do not normally reach here.)
       const toolRun = this.toolRun;
+      const toolCallInfos: typeof receivedToolCalls = [];
+      const positionById = new Map<string, number>();
+      for (const call of receivedToolCalls) {
+        if (!call.id) {
+          toolCallInfos.push(call);
+          continue;
+        }
+        if (this.runningToolCalls.get(call.id) === toolRun) continue;
+        const position = positionById.get(call.id);
+        if (position === undefined) {
+          positionById.set(call.id, toolCallInfos.length);
+          toolCallInfos.push(call);
+        } else toolCallInfos[position] = call;
+      }
+      if (!toolCallInfos.length) return;
+
+      // pendingToolCalls is cancellation bookkeeping and is deliberately left as it was: ids stay
+      // in it when a run throws, so stop() can still close those calls with a cancelled result
+      // instead of leaving a tool call without a result in the history.
       for (const call of toolCallInfos) this.pendingToolCalls.add(call.id);
+      for (const id of positionById.keys())
+        this.runningToolCalls.set(id, toolRun);
       // Execute tools
       try {
-        const results = await this.agentLoop.executeToolCalls(toolCallInfos);
+        // Released as soon as execution settles, before the chat continues: the next reply may
+        // legitimately reuse an id (some servers send "call_0" every turn) and must run.
+        const results = await this.agentLoop
+          .executeToolCalls(toolCallInfos)
+          .finally(() => {
+            for (const id of positionById.keys())
+              if (this.runningToolCalls.get(id) === toolRun)
+                this.runningToolCalls.delete(id);
+          });
         this.debug("Tool results:", results);
 
         if (toolRun !== this.toolRun || this.agentLoop.isCancelled) return;
