@@ -1,4 +1,8 @@
-import { parseToolArguments } from "../core/tool-validation";
+import {
+  assertToolTurnComplete,
+  mapOpenAIFinishReason,
+  parseToolArguments,
+} from "../core/tool-validation";
 /**
  * OpenAI Provider Formatter
  *
@@ -55,6 +59,16 @@ export function parseToolCalls(response: unknown): UnifiedToolCall[] {
   const message = choices?.[0]?.message as Record<string, unknown> | undefined;
   const toolCalls = (message?.tool_calls as OpenAIToolCall[]) || [];
 
+  // isToolUseStop accepts a "stop" turn that made tool calls (Gemini), so apply the adapters'
+  // guard too: a call with no argument text must not run with {}. Other finish reasons keep
+  // their existing handling in the agent loop.
+  if (choices?.[0]?.finish_reason === "stop")
+    assertToolTurnComplete(
+      "stop",
+      toolCalls.map((tc) => tc.function?.arguments),
+      "OpenAI response",
+    );
+
   return toolCalls.map((tc) => {
     const input = parseToolArguments(tc.function.arguments);
     return {
@@ -96,22 +110,32 @@ export function formatToolResults(
 // Stop Reason Detection
 // ========================================
 
-/**
- * Check if response indicates the AI wants to use tools
- */
-export function isToolUseStop(response: unknown): boolean {
+/** The finish reason as the adapters see it, including whether the response made tool calls. */
+function finishReasonOf(response: unknown) {
   const resp = response as Record<string, unknown>;
   const choices = resp?.choices as Array<Record<string, unknown>> | undefined;
-  return choices?.[0]?.finish_reason === "tool_calls";
+  const choice = choices?.[0];
+  const toolCalls = (choice?.message as Record<string, unknown> | undefined)
+    ?.tool_calls;
+  return mapOpenAIFinishReason(
+    choice?.finish_reason as string | null | undefined,
+    Array.isArray(toolCalls) && toolCalls.length > 0,
+  );
+}
+
+/**
+ * Check if response indicates the AI wants to use tools. Includes a "stop" turn that made tool
+ * calls (Gemini's OpenAI endpoint), the same rule the adapters apply.
+ */
+export function isToolUseStop(response: unknown): boolean {
+  return finishReasonOf(response) === "tool-calls";
 }
 
 /**
  * Check if response indicates conversation should end
  */
 export function isEndTurnStop(response: unknown): boolean {
-  const resp = response as Record<string, unknown>;
-  const choices = resp?.choices as Array<Record<string, unknown>> | undefined;
-  return choices?.[0]?.finish_reason === "stop";
+  return finishReasonOf(response) === "stop";
 }
 
 /**

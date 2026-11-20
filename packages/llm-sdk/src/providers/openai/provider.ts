@@ -1,5 +1,8 @@
 import { textToolOutput } from "../../core/tool-output";
 import {
+  assertToolTurnComplete,
+  createToolCallAssembler,
+  mapOpenAIFinishReason,
   parseToolArguments,
   validateToolCalls,
 } from "../../core/tool-validation";
@@ -317,6 +320,15 @@ export function openai(
       const choice = response.choices[0];
       const message = choice.message;
 
+      // Check the turn ended cleanly before parsing: truncated arguments then report as an
+      // incomplete turn rather than as invalid JSON.
+      if (choice.finish_reason)
+        assertToolTurnComplete(
+          choice.finish_reason,
+          (message.tool_calls ?? []).map((tc: any) => tc.function?.arguments),
+          "OpenAI response",
+        );
+
       // Parse tool calls
       const toolCalls: ToolCall[] = (message.tool_calls ?? []).map(
         (tc: any) => ({
@@ -327,19 +339,14 @@ export function openai(
       );
 
       validateToolCalls(toolCalls);
-      if (
-        toolCalls.length &&
-        choice.finish_reason &&
-        !["tool_calls", "function_call"].includes(choice.finish_reason)
-      )
-        throw invalidProviderResponse(
-          "OpenAI response ended with incomplete tool calls",
-        );
 
       return {
         text: message.content ?? "",
         toolCalls,
-        finishReason: mapFinishReason(choice.finish_reason),
+        finishReason: mapOpenAIFinishReason(
+          choice.finish_reason,
+          toolCalls.length > 0,
+        ),
         usage: {
           promptTokens: response.usage?.prompt_tokens ?? 0,
           completionTokens: response.usage?.completion_tokens ?? 0,
@@ -429,12 +436,10 @@ export function openai(
         { signal: params.signal },
       );
 
-      const toolCalls = new Map<
-        number,
-        { id: string; name: string; arguments: string }
-      >();
+      // Groups streamed chunks into calls; see createToolCallAssembler for the rules.
+      const assembler = createToolCallAssembler();
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      let finishReason: FinishReason | undefined;
+      let finishReason: string | undefined;
       for await (const chunk of stream) {
         throwIfAborted(params.signal);
         if (chunk.usage) {
@@ -450,29 +455,24 @@ export function openai(
         const choice = chunk.choices?.[0];
         if (choice?.delta?.content)
           yield { type: "text-delta", text: choice.delta.content };
-        for (const part of choice?.delta?.tool_calls ?? []) {
-          const index = part.index ?? 0;
-          const call = toolCalls.get(index) ?? {
-            id: "",
-            name: "",
-            arguments: "",
-          };
-          if (part.id) call.id = part.id;
-          if (part.function?.name) call.name += part.function.name;
-          if (part.function?.arguments)
-            call.arguments += part.function.arguments;
-          toolCalls.set(index, call);
-        }
-        if (choice?.finish_reason)
-          finishReason = mapFinishReason(choice.finish_reason);
+        for (const part of choice?.delta?.tool_calls ?? []) assembler.add(part);
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
       }
       throwIfAborted(params.signal);
       if (!finishReason)
         throw invalidProviderResponse(
           "OpenAI stream ended without a finish reason",
         );
+      const toolCalls = assembler.finish();
+      // Check the turn ended cleanly before parsing: truncated arguments then report as an
+      // incomplete turn rather than as invalid JSON.
+      assertToolTurnComplete(
+        finishReason,
+        toolCalls.map((call) => call.arguments),
+        "OpenAI stream",
+      );
       // Parse all calls before yielding any executable call.
-      const calls = [...toolCalls.values()].map((call) => {
+      const calls = toolCalls.map((call) => {
         if (!call.id || !call.name)
           throw invalidProviderResponse(
             "OpenAI stream contains an incomplete tool call",
@@ -483,13 +483,13 @@ export function openai(
           args: parseToolArguments(call.arguments),
         };
       });
-      if (calls.length && finishReason !== "tool-calls")
-        throw invalidProviderResponse(
-          "OpenAI stream ended with incomplete tool calls",
-        );
       validateToolCalls(calls);
       for (const toolCall of calls) yield { type: "tool-call", toolCall };
-      yield { type: "finish", finishReason, usage };
+      yield {
+        type: "finish",
+        finishReason: mapOpenAIFinishReason(finishReason, calls.length > 0),
+        usage,
+      };
     },
   };
 }
@@ -497,25 +497,6 @@ export function openai(
 // ============================================
 // Helper Functions
 // ============================================
-
-/**
- * Map OpenAI finish reason to our FinishReason type
- */
-function mapFinishReason(reason: string | null): FinishReason {
-  switch (reason) {
-    case "stop":
-      return "stop";
-    case "length":
-      return "length";
-    case "tool_calls":
-    case "function_call":
-      return "tool-calls";
-    case "content_filter":
-      return "content-filter";
-    default:
-      return "unknown";
-  }
-}
 
 /**
  * Format CoreMessage[] for OpenAI API

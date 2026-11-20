@@ -166,6 +166,19 @@ function buildToolContext(
 }
 
 /**
+ * The most recently started call with this id. Ids are unique within one model reply, but some
+ * backends reuse them across loop iterations ("call_0" every turn), so the latest one is meant.
+ */
+function latestCallWithId<T extends { id: string }>(
+  calls: T[],
+  id: string,
+): T | undefined {
+  for (let i = calls.length - 1; i >= 0; i--)
+    if (calls[i].id === id) return calls[i];
+  return undefined;
+}
+
+/**
  * Copilot SDK Runtime
  *
  * Handles chat requests and manages LLM interactions.
@@ -470,6 +483,8 @@ export class Runtime {
       const toolResults: Array<{ id: string; result: unknown }> = [];
       let messages: DoneEventMessage[] | undefined;
       let requiresAction = false;
+      // The client calls the runtime listed as pending when it suspended (its tool_calls event).
+      let pendingClientCalls: ToolCallInfo[] | undefined;
       let error: { message: string; code?: string } | undefined;
       let doneUsage:
         | {
@@ -490,7 +505,7 @@ export class Runtime {
             toolCalls.push({ id: event.id, name: event.name, args: {} });
             break;
           case "action:args":
-            const tc = toolCalls.find((t) => t.id === event.id);
+            const tc = latestCallWithId(toolCalls, event.id);
             if (tc) {
               try {
                 tc.args = JSON.parse(event.args || "{}");
@@ -507,6 +522,11 @@ export class Runtime {
             break;
           case "tool_calls":
             // Client-side tool calls
+            pendingClientCalls = event.toolCalls.map(({ id, name, args }) => ({
+              id,
+              name,
+              args,
+            }));
             break;
           case "done":
             messages = event.messages;
@@ -555,8 +575,11 @@ export class Runtime {
           .filter((message) => message.role === "tool" && message.tool_call_id)
           .map((message) => message.tool_call_id),
       );
+      // The runtime's own pending list is exact. Matching ids against results is the fallback: it
+      // drops a pending call when a backend reuses an id an earlier iteration already answered.
       const responseToolCalls = requiresAction
-        ? toolCalls.filter((call) => !resolvedToolIds.has(call.id))
+        ? (pendingClientCalls ??
+          toolCalls.filter((call) => !resolvedToolIds.has(call.id)))
         : toolCalls;
       const response = {
         success: !error,
@@ -1696,6 +1719,11 @@ export class Runtime {
                 id: tc.id,
                 name: tc.name,
                 args: tc.args,
+                // Gemini rejects the follow-up request unless the thought_signature it sent
+                // with the call comes back; the streaming path already keeps it.
+                ...(tc.extra_content
+                  ? { extra_content: tc.extra_content }
+                  : {}),
               });
             }
           }
@@ -2326,6 +2354,8 @@ export class Runtime {
     const toolResults: Array<{ id: string; result: unknown }> = [];
     let messages: DoneEventMessage[] = [];
     let requiresAction = false;
+    // The client calls the runtime listed as pending when it suspended (its tool_calls event).
+    let pendingClientCalls: typeof toolCalls | undefined;
     let error: { message: string; code?: string } | undefined;
 
     try {
@@ -2338,7 +2368,7 @@ export class Runtime {
             toolCalls.push({ id: event.id, name: event.name, args: {} });
             break;
           case "action:args": {
-            const tc = toolCalls.find((t) => t.id === event.id);
+            const tc = latestCallWithId(toolCalls, event.id);
             if (tc) {
               try {
                 tc.args = JSON.parse(event.args || "{}");
@@ -2354,10 +2384,22 @@ export class Runtime {
               result: event.result || event.error,
             });
             break;
+          case "tool_calls":
+            pendingClientCalls = event.toolCalls.map(({ id, name, args }) => ({
+              id,
+              name,
+              args,
+            }));
+            break;
           case "done": {
             messages = event.messages || [];
             requiresAction = event.requiresAction || false;
-            if (requiresAction) {
+            if (requiresAction && pendingClientCalls) {
+              // The runtime's own pending list is exact; the id matching below is the fallback
+              // and drops a pending call when a backend reuses an already answered id.
+              toolCalls.length = 0;
+              toolCalls.push(...pendingClientCalls);
+            } else if (requiresAction) {
               // MIXED TURN: server tools executed inline still emit an `action:start`, so their
               // ids were pushed into toolCalls above. On a suspend (requiresAction), any tool
               // whose result is already present as a { role: "tool" } message in this done

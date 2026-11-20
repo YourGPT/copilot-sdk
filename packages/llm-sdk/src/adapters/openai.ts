@@ -1,5 +1,10 @@
 import { toolOutputForProvider, textToolOutput } from "../core/tool-output";
-import { parseToolArguments, validateToolCalls } from "../core/tool-validation";
+import {
+  assertToolTurnComplete,
+  createToolCallAssembler,
+  parseToolArguments,
+  validateToolCalls,
+} from "../core/tool-validation";
 import {
   resolveOpenAITransport,
   useOpenAIResponses,
@@ -974,15 +979,8 @@ export class OpenAIAdapter implements LLMAdapter {
         signal: request.signal,
       });
 
-      const toolCalls = new Map<
-        number,
-        {
-          id: string;
-          name: string;
-          arguments: string;
-          extra_content?: Record<string, unknown>;
-        }
-      >();
+      // Groups streamed chunks into calls; see createToolCallAssembler for the rules.
+      const assembler = createToolCallAssembler();
       let finishReason: string | undefined;
 
       // Track citations from web search
@@ -1042,20 +1040,7 @@ export class OpenAIAdapter implements LLMAdapter {
           }
         }
 
-        for (const part of delta?.tool_calls ?? []) {
-          const index = part.index ?? 0;
-          const call = toolCalls.get(index) ?? {
-            id: "",
-            name: "",
-            arguments: "",
-          };
-          if (part.id) call.id = part.id;
-          if (part.function?.name) call.name += part.function.name;
-          if (part.function?.arguments)
-            call.arguments += part.function.arguments;
-          if (part.extra_content) call.extra_content = part.extra_content;
-          toolCalls.set(index, call);
-        }
+        for (const part of delta?.tool_calls ?? []) assembler.add(part);
 
         // Capture usage from final chunk (OpenAI sends it with stream_options.include_usage)
         if (chunk.usage) {
@@ -1073,21 +1058,19 @@ export class OpenAIAdapter implements LLMAdapter {
         throw invalidProviderResponse(
           "OpenAI stream ended without a finish reason",
         );
-      if (
-        toolCalls.size &&
-        !["tool_calls", "function_call"].includes(finishReason)
-      ) {
-        throw invalidProviderResponse(
-          "OpenAI stream ended with incomplete tool calls",
-        );
-      }
+      const toolCalls = assembler.finish();
+      assertToolTurnComplete(
+        finishReason,
+        toolCalls.map((call) => call.arguments),
+        "OpenAI stream",
+      );
       validateToolCalls(
-        [...toolCalls.values()].map((call) => ({
+        toolCalls.map((call) => ({
           ...call,
           args: parseToolArguments(call.arguments),
         })),
       );
-      for (const call of toolCalls.values()) {
+      for (const call of toolCalls) {
         yield {
           type: "action:start",
           id: call.id,
@@ -1195,6 +1178,16 @@ export class OpenAIAdapter implements LLMAdapter {
 
     const choice = response.choices?.[0];
     const message = choice?.message;
+    // Check the turn ended cleanly before parsing: truncated arguments then report as an
+    // incomplete turn rather than as invalid JSON.
+    if (choice?.finish_reason)
+      assertToolTurnComplete(
+        choice.finish_reason,
+        (message?.tool_calls ?? []).map(
+          (toolCall: any) => toolCall.function?.arguments,
+        ),
+        "OpenAI response",
+      );
     const toolCalls = (message?.tool_calls ?? []).map((toolCall: any) => ({
       id: toolCall.id,
       name: toolCall.function?.name,
@@ -1204,14 +1197,6 @@ export class OpenAIAdapter implements LLMAdapter {
         : {}),
     }));
     validateToolCalls(toolCalls);
-    if (
-      toolCalls.length &&
-      choice?.finish_reason &&
-      !["tool_calls", "function_call"].includes(choice.finish_reason)
-    )
-      throw invalidProviderResponse(
-        "OpenAI response ended with incomplete tool calls",
-      );
     return {
       content: message?.content ?? "",
       toolCalls,
